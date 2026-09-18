@@ -5,9 +5,9 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio::sync::broadcast;
 
+use super::{ToolExecError, openai_schema};
 use crate::domain::events::ServerEvent;
 use crate::services::{memory_import, tool::*, vector::VectorStore};
-use super::{ToolExecError, openai_schema};
 
 pub struct ImportDataTool {
     workspace_dir: PathBuf,
@@ -62,7 +62,8 @@ impl Tool for ImportDataTool {
                 Accepts a path to files (JSON, text, markdown, CSV) — for example a Claude \
                 chat export, notes, or any personal data dump. The system uses AI to extract \
                 personal facts and organize them into your memory. This runs in the background; \
-                progress is shown via notifications.".into(),
+                progress is shown via notifications."
+                .into(),
             parameters: openai_schema::<ImportDataArgs>(),
         }
     }
@@ -72,7 +73,8 @@ impl Tool for ImportDataTool {
 
         // Resolve upload IDs
         let resolved = if args.path.starts_with("upload_") {
-            let uploads_dir = self.workspace_dir
+            let uploads_dir = self
+                .workspace_dir
                 .join("instances")
                 .join(&self.instance_slug)
                 .join("uploads");
@@ -93,11 +95,15 @@ impl Tool for ImportDataTool {
         };
 
         if !resolved.exists() {
-            return Err(ToolExecError(format!("path not found: {}", resolved.display())));
+            return Err(ToolExecError(format!(
+                "path not found: {}",
+                resolved.display()
+            )));
         }
 
         // Copy files to a temp import dir
-        let import_dir = self.workspace_dir
+        let import_dir = self
+            .workspace_dir
             .join("instances")
             .join(&self.instance_slug)
             .join(".import_temp");
@@ -128,9 +134,12 @@ impl Tool for ImportDataTool {
             self.google_ai_key.clone(),
         );
 
-        Ok("import started — I'll process the data in the background and extract \
+        Ok(
+            "import started — I'll process the data in the background and extract \
             personal facts into my memory library. this may take a few minutes \
-            depending on the data size.".to_string())
+            depending on the data size."
+                .to_string(),
+        )
     }
 }
 

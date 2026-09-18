@@ -60,8 +60,12 @@ pub struct EmailConfig {
     pub imap_password: String,
 }
 
-fn default_smtp_port() -> u16 { 587 }
-fn default_imap_port() -> u16 { 993 }
+fn default_smtp_port() -> u16 {
+    587
+}
+fn default_imap_port() -> u16 {
+    993
+}
 
 /// Per-instance configuration stored at `instances/{slug}/instance.toml`.
 /// Holds settings that are specific to one user/instance, such as GitHub token.
@@ -85,7 +89,9 @@ pub struct InstanceConfig {
     pub screen_recording: bool,
 }
 
-fn default_skin() -> String { "orb".to_string() }
+fn default_skin() -> String {
+    "orb".to_string()
+}
 
 impl InstanceConfig {
     /// Load per-instance config from `instances/{slug}/instance.toml`.
@@ -147,7 +153,9 @@ impl EmailAccounts {
         // Try new format first: [[accounts]]
         if let Ok(wrapper) = toml::from_str::<EmailAccounts>(&raw) {
             if !wrapper.accounts.is_empty() {
-                return wrapper.accounts.into_iter()
+                return wrapper
+                    .accounts
+                    .into_iter()
                     .filter(|c| !c.smtp_host.is_empty() || !c.imap_host.is_empty())
                     .collect();
             }
@@ -164,10 +172,16 @@ impl EmailAccounts {
     }
 
     /// Save email accounts to `instances/{slug}/email.toml`.
-    pub fn save(accounts: &[EmailConfig], workspace_dir: &Path, instance_slug: &str) -> anyhow::Result<()> {
+    pub fn save(
+        accounts: &[EmailConfig],
+        workspace_dir: &Path,
+        instance_slug: &str,
+    ) -> anyhow::Result<()> {
         let dir = workspace_dir.join("instances").join(instance_slug);
         fs::create_dir_all(&dir)?;
-        let wrapper = EmailAccounts { accounts: accounts.to_vec() };
+        let wrapper = EmailAccounts {
+            accounts: accounts.to_vec(),
+        };
         let raw = toml::to_string_pretty(&wrapper)?;
         fs::write(dir.join("email.toml"), raw)?;
         Ok(())
@@ -190,73 +204,101 @@ pub struct McpServerConfig {
     pub headers: std::collections::HashMap<String, String>,
 }
 
-/// Default heavy model (Opus).
-impl LlmProvider {
-    /// Heavy model for complex tasks.
-    pub fn heavy_model(&self) -> &'static str {
-        match self {
-            Self::Api => "claude-opus-4-6",
-            Self::Openai => "gpt-5.4",
-        }
-    }
+/// Model names belong to configuration, not provider identity.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+pub struct ProviderProfile {
+    pub heavy: String,
+    pub fast: String,
+    pub cheap: String,
+}
 
-    /// Fast model for casual tasks.
-    pub fn fast_model(&self) -> &'static str {
-        match self {
-            Self::Api => "claude-sonnet-4-6",
-            Self::Openai => "gpt-5.4",
-        }
-    }
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default)]
+pub struct ProviderProfiles {
+    #[serde(deserialize_with = "anthropic_profile")]
+    pub anthropic: ProviderProfile,
+    #[serde(deserialize_with = "openai_profile")]
+    pub openai: ProviderProfile,
+}
 
-    /// Cheapest model for background tasks (classification, extraction).
-    pub fn cheap_model(&self) -> &'static str {
-        match self {
-            Self::Api => "claude-haiku-4-5-20251001",
-            Self::Openai => "gpt-5.4-mini",
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct PartialProfile {
+    heavy: Option<String>,
+    fast: Option<String>,
+    cheap: Option<String>,
+}
+fn read_profile<'de, D: serde::Deserializer<'de>>(
+    d: D,
+    mut base: ProviderProfile,
+) -> Result<ProviderProfile, D::Error> {
+    let p = PartialProfile::deserialize(d)?;
+    if let Some(v) = p.heavy.filter(|s| !s.is_empty()) {
+        base.heavy = v;
+    }
+    if let Some(v) = p.fast.filter(|s| !s.is_empty()) {
+        base.fast = v;
+    }
+    if let Some(v) = p.cheap.filter(|s| !s.is_empty()) {
+        base.cheap = v;
+    }
+    Ok(base)
+}
+fn anthropic_profile<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ProviderProfile, D::Error> {
+    read_profile(d, ProviderProfiles::default().anthropic)
+}
+fn openai_profile<'de, D: serde::Deserializer<'de>>(d: D) -> Result<ProviderProfile, D::Error> {
+    read_profile(d, ProviderProfiles::default().openai)
+}
+
+impl Default for ProviderProfiles {
+    fn default() -> Self {
+        Self {
+            anthropic: ProviderProfile {
+                heavy: "claude-opus-4-6".into(),
+                fast: "claude-sonnet-4-6".into(),
+                cheap: "claude-haiku-4-5-20251001".into(),
+            },
+            openai: ProviderProfile {
+                heavy: "gpt-5.4".into(),
+                fast: "gpt-5.4".into(),
+                cheap: "gpt-5.4-mini".into(),
+            },
         }
     }
 }
-
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum LlmProvider {
     /// Direct Anthropic API (requires API key). Format: Anthropic Messages.
-    Api,
+    Anthropic,
     /// OpenAI API (requires API key). Format: OpenAI Responses.
     Openai,
+    /// Legacy selection retained for setup; no Codex adapter is implemented.
+    Codex,
 }
 
-// Custom deserializer: migrate removed providers (claude_cli → api, codex → openai)
+// Read legacy names, but always serialize the canonical provider name.
 impl<'de> serde::Deserialize<'de> for LlmProvider {
     fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
         let s = String::deserialize(deserializer)?;
         match s.as_str() {
-            "api" => Ok(LlmProvider::Api),
-            "openai" => Ok(LlmProvider::Openai),
-            // Migration: removed providers fall back to their closest replacement
-            "claude_cli" | "cli" => {
-                log::warn!("migrating provider 'claude_cli' → 'api' (Claude CLI removed)");
-                Ok(LlmProvider::Api)
-            }
-            "codex" => {
-                log::warn!("migrating provider 'codex' → 'openai' (Codex removed)");
-                Ok(LlmProvider::Openai)
-            }
-            other => Err(serde::de::Error::unknown_variant(other, &["api", "openai"])),
+            "api" | "anthropic" | "claude_cli" | "cli" => Ok(Self::Anthropic),
+            "openai" => Ok(Self::Openai),
+            "codex" => Ok(Self::Codex),
+            other => Err(serde::de::Error::unknown_variant(
+                other,
+                &["anthropic", "openai", "codex"],
+            )),
         }
     }
 }
 
-impl LlmProvider {
-    /// Whether this provider uses OpenAI chat completions format (vs Anthropic messages).
-    pub fn is_openai_format(&self) -> bool {
-        matches!(self, LlmProvider::Openai)
-    }
-}
-
 impl Default for LlmProvider {
-    fn default() -> Self { LlmProvider::Api }
+    fn default() -> Self {
+        LlmProvider::Anthropic
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize)]
@@ -268,12 +310,17 @@ pub enum ModelMode {
 }
 
 impl Default for ModelMode {
-    fn default() -> Self { ModelMode::Auto }
+    fn default() -> Self {
+        ModelMode::Auto
+    }
 }
 
-fn default_heavy_multiplier() -> f32 { 1.7 }
+fn default_heavy_multiplier() -> f32 {
+    1.7
+}
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(from = "LegacyLlmConfig")]
 pub struct LlmConfig {
     #[serde(default)]
     pub provider: LlmProvider,
@@ -283,6 +330,58 @@ pub struct LlmConfig {
     pub model_mode: ModelMode,
     #[serde(default = "default_heavy_multiplier")]
     pub heavy_multiplier: f32,
+    #[serde(default)]
+    pub profiles: ProviderProfiles,
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, toml::Value>,
+}
+
+#[derive(Deserialize)]
+struct LegacyLlmConfig {
+    #[serde(default)]
+    pub provider: LlmProvider,
+    #[serde(default)]
+    pub tokens: LlmTokens,
+    #[serde(default)]
+    pub model_mode: ModelMode,
+    #[serde(default = "default_heavy_multiplier")]
+    pub heavy_multiplier: f32,
+    #[serde(default)]
+    pub profiles: ProviderProfiles,
+    /// Preserve legacy model overrides (including the old example config).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(flatten)]
+    pub extra: std::collections::BTreeMap<String, toml::Value>,
+}
+
+impl From<LegacyLlmConfig> for LlmConfig {
+    fn from(mut old: LegacyLlmConfig) -> Self {
+        if let Some(model) = old.model.take().filter(|s| !s.is_empty()) {
+            // Claude overrides originate from Anthropic even if the provider was
+            // subsequently switched in an old config. Unknown names use that
+            // config's selected provider as their origin.
+            let profile = if model.starts_with("claude-")
+                || (old.provider != LlmProvider::Openai
+                    && !["gpt-", "chatgpt-", "o1", "o3", "o4"]
+                        .iter()
+                        .any(|prefix| model.starts_with(prefix)))
+            {
+                &mut old.profiles.anthropic
+            } else {
+                &mut old.profiles.openai
+            };
+            profile.heavy = model;
+        }
+        Self {
+            provider: old.provider,
+            tokens: old.tokens,
+            model_mode: old.model_mode,
+            heavy_multiplier: old.heavy_multiplier,
+            profiles: old.profiles,
+            extra: old.extra,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
@@ -291,16 +390,25 @@ pub struct LlmTokens {
     pub open_ai: String,
     #[serde(default, rename = "ANTHROPIC", alias = "anthropic")]
     pub anthropic: String,
-    #[serde(default, rename = "BRAVE_SEARCH", alias = "brave_search", alias = "brave")]
+    #[serde(
+        default,
+        rename = "BRAVE_SEARCH",
+        alias = "brave_search",
+        alias = "brave"
+    )]
     pub brave_search: String,
-    #[serde(default, rename = "OPENROUTER", alias = "open_router", alias = "openrouter")]
+    #[serde(
+        default,
+        rename = "OPENROUTER",
+        alias = "open_router",
+        alias = "openrouter"
+    )]
     pub open_router: String,
     #[serde(default, rename = "ELEVENLABS", alias = "elevenlabs")]
     pub elevenlabs: String,
     #[serde(default, rename = "GOOGLE_AI", alias = "google_ai", alias = "gemini")]
     pub google_ai: String,
 }
-
 
 fn default_host() -> String {
     "0.0.0.0".into()
@@ -333,43 +441,98 @@ impl Default for Config {
 }
 
 impl LlmConfig {
+    pub fn profile(&self) -> &ProviderProfile {
+        match self.provider {
+            LlmProvider::Openai => &self.profiles.openai,
+            // Unconfigured legacy selections cannot construct a backend.
+            _ => &self.profiles.anthropic,
+        }
+    }
+
+    pub fn setup_required(&self) -> Option<&'static str> {
+        if self.provider == LlmProvider::Codex {
+            Some(
+                "Codex requires setup and is not supported yet. Select Anthropic or OpenAI and configure its API key.",
+            )
+        } else if !self.is_configured() {
+            Some("Configure an API key for the selected provider.")
+        } else {
+            None
+        }
+    }
+
     /// The heavy model for the current provider.
-    pub fn model_name(&self) -> &'static str {
-        self.provider.heavy_model()
+    pub fn model_name(&self) -> &str {
+        if self.provider == LlmProvider::Codex {
+            ""
+        } else {
+            &self.profile().heavy
+        }
     }
 
     /// The fast model for the current provider.
-    pub fn fast_model_name(&self) -> &'static str {
-        self.provider.fast_model()
+    pub fn fast_model_name(&self) -> &str {
+        if self.provider == LlmProvider::Codex {
+            ""
+        } else {
+            &self.profile().fast
+        }
     }
 
     /// The Anthropic API key, or None if not configured.
     pub fn api_key(&self) -> Option<&str> {
-        if self.tokens.anthropic.is_empty() { None } else { Some(&self.tokens.anthropic) }
+        if self.tokens.anthropic.is_empty() {
+            None
+        } else {
+            Some(&self.tokens.anthropic)
+        }
     }
 
     /// Whether the LLM is fully configured.
     pub fn is_configured(&self) -> bool {
         match self.provider {
-            LlmProvider::Api => self.api_key().is_some(),
+            LlmProvider::Anthropic => self.api_key().is_some(),
             LlmProvider::Openai => !self.tokens.open_ai.is_empty(),
+            LlmProvider::Codex => false,
         }
     }
 
     /// List of service names that have API keys set.
     pub fn configured_providers(&self) -> Vec<&'static str> {
         let mut out = Vec::new();
-        if !self.tokens.anthropic.is_empty() { out.push("anthropic"); }
-        if !self.tokens.open_ai.is_empty() { out.push("openai"); }
-        if !self.tokens.open_router.is_empty() { out.push("openrouter"); }
-        if !self.tokens.brave_search.is_empty() { out.push("brave_search"); }
+        if !self.tokens.anthropic.is_empty() {
+            out.push("anthropic");
+        }
+        if !self.tokens.open_ai.is_empty() {
+            out.push("openai");
+        }
+        if !self.tokens.open_router.is_empty() {
+            out.push("openrouter");
+        }
+        if !self.tokens.brave_search.is_empty() {
+            out.push("brave_search");
+        }
         out
     }
 
     /// Get Anthropic API key + model (for count_tokens API etc.).
     pub fn anthropic_credentials(&self) -> Option<(&str, &str)> {
-        let key = if self.tokens.anthropic.is_empty() { return None } else { &self.tokens.anthropic };
-        Some((key, self.model_name()))
+        if self.provider != LlmProvider::Anthropic {
+            return None;
+        }
+        let key = if self.tokens.anthropic.is_empty() {
+            return None;
+        } else {
+            &self.tokens.anthropic
+        };
+        Some((
+            key,
+            if self.model_mode == ModelMode::Fast {
+                self.fast_model_name()
+            } else {
+                self.model_name()
+            },
+        ))
     }
 }
 
@@ -380,6 +543,8 @@ impl Default for LlmConfig {
             tokens: LlmTokens::default(),
             model_mode: ModelMode::default(),
             heavy_multiplier: default_heavy_multiplier(),
+            profiles: ProviderProfiles::default(),
+            extra: Default::default(),
         }
     }
 }
@@ -514,6 +679,204 @@ pub fn load_config() -> anyhow::Result<Config> {
     Ok(config)
 }
 
+/// Merge updates into the existing document so unrelated/forward-compatible keys
+/// survive a settings save. Arrays are replaced intentionally (e.g. MCP removal).
+pub fn serialize_config_preserving_keys(config: &Config, original: &str) -> anyhow::Result<String> {
+    fn merge(existing: &mut toml::Value, updated: toml::Value) {
+        match (existing, updated) {
+            (toml::Value::Table(existing), toml::Value::Table(updated)) => {
+                for (key, value) in updated {
+                    if let Some(old) = existing.get_mut(&key) {
+                        merge(old, value);
+                    } else {
+                        existing.insert(key, value);
+                    }
+                }
+            }
+            (existing, updated) => *existing = updated,
+        }
+    }
+    let mut document: toml::Value = toml::from_str(original)?;
+    // Avoid duplicate fields when an old token alias and its canonical spelling
+    // would otherwise coexist after merging the serialized config.
+    if let Some(tokens) = document
+        .get_mut("llm")
+        .and_then(|v| v.get_mut("tokens"))
+        .and_then(toml::Value::as_table_mut)
+    {
+        for alias in [
+            "open_ai",
+            "openai",
+            "anthropic",
+            "brave_search",
+            "brave",
+            "open_router",
+            "openrouter",
+            "elevenlabs",
+            "google_ai",
+            "gemini",
+        ] {
+            tokens.remove(alias);
+        }
+    }
+    if let Some(llm) = document.get_mut("llm").and_then(toml::Value::as_table_mut) {
+        llm.remove("model");
+    }
+    merge(&mut document, toml::Value::try_from(config)?);
+    Ok(toml::to_string_pretty(&document)?)
+}
+
+#[cfg(test)]
+mod llm_config_tests {
+    use super::*;
+
+    #[test]
+    fn legacy_names_migrate_without_losing_config_keys() {
+        for name in ["api", "anthropic", "cli", "claude_cli"] {
+            let original = format!(
+                r#"
+custom_global = "retained"
+[llm]
+provider = "{name}"
+model_mode = "fast"
+heavy_multiplier = 2.5
+model = "custom-model"
+custom_llm = "retained"
+[llm.tokens]
+ANTHROPIC = "anthropic-secret"
+OPEN_AI = "openai-secret"
+OPENROUTER = "router-secret"
+custom_token = "retained"
+[github]
+custom_github = "retained"
+"#
+            );
+            let config: Config = toml::from_str(&original).unwrap();
+            assert_eq!(config.llm.provider, LlmProvider::Anthropic);
+            assert_eq!(config.llm.model_name(), "custom-model");
+            let serialized = serialize_config_preserving_keys(&config, &original).unwrap();
+            let result: toml::Value = toml::from_str(&serialized).unwrap();
+            let source: toml::Value = toml::from_str(&original).unwrap();
+            assert_eq!(result["llm"]["provider"].as_str(), Some("anthropic"));
+            for (key, value) in source["llm"]["tokens"].as_table().unwrap() {
+                assert_eq!(&result["llm"]["tokens"][key], value);
+            }
+            for key in ["model_mode", "heavy_multiplier", "custom_llm"] {
+                assert_eq!(result["llm"][key], source["llm"][key]);
+            }
+            assert_eq!(result["custom_global"], source["custom_global"]);
+            assert_eq!(
+                result["github"]["custom_github"],
+                source["github"]["custom_github"]
+            );
+            let roundtrip: Config = toml::from_str(&serialized).unwrap();
+            assert_eq!(roundtrip.llm.tokens.open_ai, "openai-secret");
+        }
+    }
+
+    #[test]
+    fn codex_stays_unconfigured_even_with_openai_key() {
+        let config: Config =
+            toml::from_str("[llm]\nprovider='codex'\n[llm.tokens]\nOPEN_AI='key'").unwrap();
+        assert_eq!(config.llm.provider, LlmProvider::Codex);
+        assert!(!config.llm.is_configured());
+        assert!(config.llm.setup_required().unwrap().contains("Codex"));
+        assert!(matches!(
+            crate::services::llm::LlmBackend::from_config(&config)
+                .unwrap()
+                .adapter(),
+            Err(crate::services::llm::contract::LlmError::SetupRequired(_))
+        ));
+        let roundtrip: Config = toml::from_str(&toml::to_string(&config).unwrap()).unwrap();
+        assert_eq!(roundtrip.llm.provider, LlmProvider::Codex);
+    }
+
+    #[test]
+    fn legacy_models_are_scoped_before_provider_switch_and_save() {
+        for selected in ["api", "openai"] {
+            let raw = format!(
+                "[llm]\nprovider='{selected}'\nmodel='claude-historical'\n[llm.tokens]\nANTHROPIC='key'\nOPEN_AI='key'"
+            );
+            let mut config: Config = toml::from_str(&raw).unwrap();
+            assert_eq!(config.llm.profiles.anthropic.heavy, "claude-historical");
+            config.llm.provider = LlmProvider::Openai;
+            assert_eq!(
+                config.llm.model_name(),
+                ProviderProfiles::default().openai.heavy
+            );
+            let saved = serialize_config_preserving_keys(&config, &raw).unwrap();
+            let saved_value: toml::Value = toml::from_str(&saved).unwrap();
+            assert!(saved_value["llm"].get("model").is_none());
+            let mut restored: Config = toml::from_str(&saved).unwrap();
+            restored.llm.provider = LlmProvider::Anthropic;
+            assert_eq!(
+                restored.llm.anthropic_credentials().unwrap().1,
+                restored.llm.model_name()
+            );
+            assert_eq!(restored.llm.model_name(), "claude-historical");
+            restored.llm.model_mode = ModelMode::Fast;
+            assert_eq!(
+                restored.llm.anthropic_credentials().unwrap().1,
+                restored.llm.fast_model_name()
+            );
+        }
+    }
+
+    #[test]
+    fn partial_profiles_use_their_own_provider_defaults() {
+        let config: Config = toml::from_str("[llm.profiles.openai]\nfast='custom-fast'\n[llm.profiles.anthropic]\ncheap='custom-cheap'").unwrap();
+        let defaults = ProviderProfiles::default();
+        assert_eq!(config.llm.profiles.openai.heavy, defaults.openai.heavy);
+        assert_eq!(config.llm.profiles.openai.cheap, defaults.openai.cheap);
+        assert_eq!(config.llm.profiles.openai.fast, "custom-fast");
+        assert_eq!(config.llm.profiles.anthropic.fast, defaults.anthropic.fast);
+        assert_eq!(config.llm.profiles.anthropic.cheap, "custom-cheap");
+    }
+
+    #[test]
+    fn profiles_drive_all_backend_variants() {
+        let config: Config = toml::from_str(
+            r#"
+[llm]
+provider = "openai"
+[llm.tokens]
+openai = "key"
+[llm.profiles.openai]
+heavy = "custom-heavy"
+fast = "custom-fast"
+cheap = "custom-cheap"
+"#,
+        )
+        .unwrap();
+        let backend = crate::services::llm::LlmBackend::from_config(&config).unwrap();
+        assert_eq!(backend.model_name(), "custom-heavy");
+        assert_eq!(backend.fast_variant_with(None).model_name(), "custom-fast");
+        assert_eq!(backend.cheap_variant().model_name(), "custom-cheap");
+        assert_eq!(backend.heavy_variant().model_name(), "custom-heavy");
+        assert_eq!(
+            backend.fast_variant_with(Some("override")).model_name(),
+            "override"
+        );
+        assert_eq!(
+            config.llm.profiles.anthropic.heavy,
+            ProviderProfiles::default().anthropic.heavy
+        );
+    }
+
+    #[test]
+    fn token_aliases_do_not_create_duplicate_keys_on_save() {
+        let original = "[llm]\nprovider='api'\n[llm.tokens]\nopenai='o'\nanthropic='a'\nbrave='b'\nopenrouter='r'\nelevenlabs='e'\ngemini='g'";
+        let config: Config = toml::from_str(original).unwrap();
+        let serialized = serialize_config_preserving_keys(&config, original).unwrap();
+        let restored: Config = toml::from_str(&serialized).unwrap();
+        assert_eq!(restored.llm.tokens, config.llm.tokens);
+    }
+
+    #[test]
+    fn unknown_provider_is_not_silently_replaced() {
+        assert!(toml::from_str::<Config>("[llm]\nprovider='openrouter'").is_err());
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::InstanceConfig;

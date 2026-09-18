@@ -1,4 +1,9 @@
-use axum::{Json, Router, extract::State, http::StatusCode, routing::{delete, get, post, put}};
+use axum::{
+    Json, Router,
+    extract::State,
+    http::StatusCode,
+    routing::{delete, get, post, put},
+};
 // Note: `put` still used by update_model_mode
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -46,15 +51,18 @@ async fn get_status(State(state): State<AppState>) -> Json<serde_json::Value> {
     .collect();
 
     let provider = match config.llm.provider {
-        config::LlmProvider::Api => "api",
+        config::LlmProvider::Anthropic => "anthropic",
         config::LlmProvider::Openai => "openai",
+        config::LlmProvider::Codex => "codex",
     };
 
     Json(json!({
         "llm_configured": config.llm.is_configured(),
         "provider": provider,
-        "model": config.llm.model_name(),
-        "fast_model": config.llm.fast_model_name(),
+        "setup_required": config.llm.setup_required(),
+        "capabilities": crate::services::llm::provider_capabilities(config.llm.provider),
+        "model": (config.llm.provider != config::LlmProvider::Codex).then(|| config.llm.model_name()),
+        "fast_model": (config.llm.provider != config::LlmProvider::Codex).then(|| config.llm.fast_model_name()),
         "model_mode": mode,
         "configured_keys": keys,
         "host": config.host,
@@ -90,7 +98,9 @@ async fn update_model_mode(
         save_config(&cfg)?;
     }
 
-    Ok(Json(json!({ "status": "ok", "model_mode": request.mode.to_lowercase() })))
+    Ok(Json(
+        json!({ "status": "ok", "model_mode": request.mode.to_lowercase() }),
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -137,7 +147,10 @@ async fn update_llm_key(
             // 429 (rate limited) is fine — means key is valid
             // 200 is fine — means key works
             if res.status().is_server_error() {
-                return Err((StatusCode::BAD_GATEWAY, "Anthropic API error — try again".into()));
+                return Err((
+                    StatusCode::BAD_GATEWAY,
+                    "Anthropic API error — try again".into(),
+                ));
             }
         }
     }
@@ -278,7 +291,10 @@ async fn add_mcp_server(
     {
         let mut config = state.config.write().await;
         if config.mcp_servers.iter().any(|s| s.name == name) {
-            return Err((StatusCode::CONFLICT, format!("MCP server '{name}' already exists")));
+            return Err((
+                StatusCode::CONFLICT,
+                format!("MCP server '{name}' already exists"),
+            ));
         }
         config.mcp_servers.push(McpServerConfig {
             name: name.clone(),
@@ -311,7 +327,10 @@ async fn remove_mcp_server(
         let before = config.mcp_servers.len();
         config.mcp_servers.retain(|s| s.name != name);
         if config.mcp_servers.len() == before {
-            return Err((StatusCode::NOT_FOUND, format!("MCP server '{name}' not found")));
+            return Err((
+                StatusCode::NOT_FOUND,
+                format!("MCP server '{name}' not found"),
+            ));
         }
         save_config(&config)?;
     }
@@ -414,11 +433,27 @@ async fn update_server(
 /// Write the current config back to disk.
 fn save_config(config: &config::Config) -> Result<(), (StatusCode, String)> {
     let config_path = config::config_path();
-    let raw = toml::to_string_pretty(config).map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to serialize config: {e}"))
+    let original = match std::fs::read_to_string(&config_path) {
+        Ok(raw) => raw,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(e) => {
+            return Err((
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to read config: {e}"),
+            ));
+        }
+    };
+    let raw = config::serialize_config_preserving_keys(config, &original).map_err(|e| {
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to serialize config: {e}"),
+        )
     })?;
     std::fs::write(&config_path, &raw).map_err(|e| {
-        (StatusCode::INTERNAL_SERVER_ERROR, format!("failed to write config: {e}"))
+        (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to write config: {e}"),
+        )
     })?;
     Ok(())
 }
@@ -437,9 +472,14 @@ async fn update_provider(
     Json(req): Json<UpdateProviderRequest>,
 ) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
     let provider = match req.provider.as_str() {
-        "api" | "anthropic" => config::LlmProvider::Api,
+        "api" | "anthropic" => config::LlmProvider::Anthropic,
         "openai" => config::LlmProvider::Openai,
-        other => return Err((StatusCode::BAD_REQUEST, format!("unknown provider: {other}"))),
+        other => {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("unknown provider: {other}"),
+            ));
+        }
     };
 
     {
@@ -455,7 +495,5 @@ async fn update_provider(
         log::info!("LLM rebuilt (provider={:?})", provider);
     }
 
-    Ok(Json(json!({ "status": "ok", "provider": req.provider })))
+    Ok(Json(json!({ "status": "ok", "provider": provider })))
 }
-
-

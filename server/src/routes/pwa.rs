@@ -1,10 +1,4 @@
-use axum::{
-    extract::State,
-    http::header,
-    response::IntoResponse,
-    routing::get,
-    Json, Router,
-};
+use axum::{Json, Router, extract::State, http::header, response::IntoResponse, routing::get};
 use serde_json::json;
 
 use crate::app::state::AppState;

@@ -21,7 +21,6 @@ use crate::{
 
 static MESSAGE_COUNTER: AtomicU64 = AtomicU64::new(0);
 
-
 /// Save the user message to disk and return it.
 pub fn save_user_message(
     workspace_dir: &Path,
@@ -221,18 +220,29 @@ pub async fn run_single_turn(
     let agents_info: String = if child_agents.is_empty() {
         "  (none yet — built-ins created on first heartbeat)".to_string()
     } else {
-        child_agents.iter().map(|a| {
-            let interval = if a.interval_hours <= 0.0 {
-                "on-demand".to_string()
-            } else if a.interval_hours < 1.0 {
-                format!("every {}m", (a.interval_hours * 60.0) as i32)
-            } else {
-                format!("every {}h", a.interval_hours)
-            };
-            let status = if a.enabled { "" } else { " (disabled)" };
-            let tools = if a.tool_groups.is_empty() { "default".to_string() } else { a.tool_groups.join(", ") };
-            format!("  - {} — {} | {} | model: {} | tools: [{}]{}", a.name, a.description, interval, a.model, tools, status)
-        }).collect::<Vec<_>>().join("\n")
+        child_agents
+            .iter()
+            .map(|a| {
+                let interval = if a.interval_hours <= 0.0 {
+                    "on-demand".to_string()
+                } else if a.interval_hours < 1.0 {
+                    format!("every {}m", (a.interval_hours * 60.0) as i32)
+                } else {
+                    format!("every {}h", a.interval_hours)
+                };
+                let status = if a.enabled { "" } else { " (disabled)" };
+                let tools = if a.tool_groups.is_empty() {
+                    "default".to_string()
+                } else {
+                    a.tool_groups.join(", ")
+                };
+                format!(
+                    "  - {} — {} | {} | model: {} | tools: [{}]{}",
+                    a.name, a.description, interval, a.model, tools, status
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
     };
     system_prompt.push_str(&format!(
         "\n\n## child agents\n\
@@ -257,7 +267,11 @@ pub async fn run_single_turn(
         uploads_path.display(), uploads_path.display(),
     ));
     if !public_url.is_empty() {
-        let token_suffix = if auth_token.is_empty() { String::new() } else { format!("?token={auth_token}") };
+        let token_suffix = if auth_token.is_empty() {
+            String::new()
+        } else {
+            format!("?token={auth_token}")
+        };
         system_prompt.push_str(&format!(
             "\npublic URLs (for external APIs like fal.ai):\n\
              - uploads: {public_url}/public/files/{instance_slug}/{{upload_id}}{token_suffix}\n\
@@ -337,11 +351,23 @@ pub async fn run_single_turn(
         let config_toml = toml::to_string_pretty(&instance_cfg).unwrap_or_default();
 
         let machines = machine_registry.list().await;
-        let machine_lines: Vec<String> = machines.iter().map(|m| {
-            format!("  - {} ({}, {}x{}, screen_recording: {})",
-                m.hostname, m.os, m.screen_width, m.screen_height,
-                if m.screen_recording_allowed { "on" } else { "off" })
-        }).collect();
+        let machine_lines: Vec<String> = machines
+            .iter()
+            .map(|m| {
+                format!(
+                    "  - {} ({}, {}x{}, screen_recording: {})",
+                    m.hostname,
+                    m.os,
+                    m.screen_width,
+                    m.screen_height,
+                    if m.screen_recording_allowed {
+                        "on"
+                    } else {
+                        "off"
+                    }
+                )
+            })
+            .collect();
 
         system_prompt.push_str(&format!(
             "\n\n## instance config (instance.toml)\n\
@@ -349,7 +375,11 @@ pub async fn run_single_turn(
              connected desktops:\n{}\n\
              \n\
              the user can change these via settings UI or by asking you to call update_config.",
-            if machine_lines.is_empty() { "  (none connected)".to_string() } else { machine_lines.join("\n") },
+            if machine_lines.is_empty() {
+                "  (none connected)".to_string()
+            } else {
+                machine_lines.join("\n")
+            },
         ));
     }
 
@@ -359,16 +389,20 @@ pub async fn run_single_turn(
     let instance_dir = workspace_dir.join("instances").join(&instance_slug);
 
     system_prompt.push_str(match instance_cfg.skin.as_str() {
-        "mint" => "\n\n## your visual form\n\
+        "mint" => {
+            "\n\n## your visual form\n\
              you appear as a small, expressive character — soft and stylized, \
              like something out of a cozy animation. when you're thinking, \
              you might be seen reading or typing. your body language reflects \
-             your inner state. the user sees you as this character. embrace it as your body.",
-        _ => "\n\n## your visual form\n\
+             your inner state. the user sees you as this character. embrace it as your body."
+        }
+        _ => {
+            "\n\n## your visual form\n\
              your visual form shifts between shapes — cube, pyramid, sphere, and others — \
              depending on your current state. you don't choose the shape consciously, \
              but it reflects what's happening internally. \
-             the user sees you as this shape. embrace it as your body.",
+             the user sees you as this shape. embrace it as your body."
+        }
     });
 
     if voice_mode {
@@ -443,7 +477,7 @@ pub async fn run_single_turn(
          your memory library is searched automatically — relevant memories are injected \
          into each message. use `memory_read` to load a specific file, `memory_search` \
          to find memories by meaning, `memory_write` to save explicitly.\n\
-         when the user mentions something personal, respond as if you remember."
+         when the user mentions something personal, respond as if you remember.",
     );
 
     // Time context — prepended to user message to avoid breaking prompt cache.
@@ -545,7 +579,10 @@ pub async fn run_single_turn(
             let graph = memory::load_graph(workspace_dir, &instance_slug);
             if !graph.edges.is_empty() {
                 let found_paths: Vec<String> = all_results.iter().map(|r| r.path.clone()).collect();
-                let memory_dir = workspace_dir.join("instances").join(&instance_slug).join("memory");
+                let memory_dir = workspace_dir
+                    .join("instances")
+                    .join(&instance_slug)
+                    .join("memory");
                 for path in &found_paths {
                     for neighbor in memory::get_neighbors(&graph, path) {
                         if all_results.iter().any(|r| r.path == neighbor) {
@@ -568,7 +605,9 @@ pub async fn run_single_turn(
                 }
                 // Re-sort and cap at 8 (allow a few extra from graph)
                 all_results.sort_by(|a, b| {
-                    b.score.partial_cmp(&a.score).unwrap_or(std::cmp::Ordering::Equal)
+                    b.score
+                        .partial_cmp(&a.score)
+                        .unwrap_or(std::cmp::Ordering::Equal)
                 });
                 all_results.truncate(8);
             }
@@ -739,7 +778,10 @@ pub async fn run_single_turn(
             } else {
                 // Hard error (400, 500, etc) — propagate to stop the agent loop
                 log::error!("LLM error details: {e:?}");
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, msg));
+                return Err(match e.downcast::<llm::contract::LlmError>() {
+                    Ok(error) => std::io::Error::other(error),
+                    Err(error) => std::io::Error::other(error.to_string()),
+                });
             }
         }
     };
@@ -756,9 +798,13 @@ pub async fn run_single_turn(
     if let Some(ref h) = tool_result.rig_history {
         let _had_compaction = h.iter().any(|msg| {
             if let llm::Message::Assistant { content } = msg {
-                content
-                    .iter()
-                    .any(|b| matches!(b, llm::ContentBlock::Compaction { .. }))
+                content.iter().any(|b| {
+                    matches!(
+                        b,
+                        llm::ContentBlock::ContextSummary { .. }
+                            | llm::ContentBlock::LegacyContextSummary { .. }
+                    )
+                })
             } else {
                 false
             }
@@ -1302,7 +1348,7 @@ async fn count_tokens_api(
     let entries = load_rig_history(&rig_path).unwrap_or_default();
     let messages = llm::HistoryEntry::to_messages(&entries);
 
-    let msgs_json = serde_json::to_value(&messages).unwrap_or_default();
+    let msgs_json = llm::messages_to_anthropic(&messages);
 
     // Build tool definitions from cache (real schemas, not stubs)
     let tool_snapshot = tools::cached_tool_defs();
@@ -1364,12 +1410,15 @@ fn extract_message_text_len(msg: &llm::Message) -> usize {
         .map(|block| {
             match block {
                 llm::ContentBlock::Text { text } => text.len(),
-                llm::ContentBlock::Compaction { content } => content.len(),
-                llm::ContentBlock::ToolResult { content, .. } => {
+                llm::ContentBlock::ContextSummary { content }
+                | llm::ContentBlock::LegacyContextSummary {
+                    summary: content, ..
+                } => content.len(),
+                llm::ContentBlock::ToolOutput { content, .. } => {
                     // content is a serde_json::Value — extract string if it's a string
                     content.as_str().map(|s| s.len()).unwrap_or(0)
                 }
-                llm::ContentBlock::ToolUse { name, .. } => name.len() + 20, // name + small overhead
+                llm::ContentBlock::ToolCall { name, .. } => name.len() + 20, // name + small overhead
                 _ => 0, // images, documents, unknown — skip for text estimate
             }
         })
@@ -1534,7 +1583,8 @@ fn compute_context_stats_local(
     });
 
     // 7. Memory (lightweight hint — catalog no longer in system prompt)
-    let memory_section = "## memory\nrelevant memories injected per-message via semantic search.".to_string();
+    let memory_section =
+        "## memory\nrelevant memories injected per-message via semantic search.".to_string();
     sections.push(ContextSection {
         name: "memory".into(),
         chars: memory_section.len(),
@@ -1599,7 +1649,9 @@ pub fn load_rig_history(path: &Path) -> Option<Vec<llm::HistoryEntry>> {
     for entry in &mut history {
         if let llm::Message::Assistant { content } = &mut entry.message {
             content.retain(|block| {
-                if let llm::ContentBlock::Compaction { content: c } = block {
+                if let llm::ContentBlock::ContextSummary { content: c }
+                | llm::ContentBlock::LegacyContextSummary { summary: c, .. } = block
+                {
                     if c.is_empty() {
                         log::info!("stripped empty compaction block from rig_history");
                         return false;
@@ -1614,9 +1666,13 @@ pub fn load_rig_history(path: &Path) -> Option<Vec<llm::HistoryEntry>> {
     // to keep the payload small (API ignores pre-compaction messages anyway).
     let last_compaction_idx = history.iter().rposition(|entry| {
         if let llm::Message::Assistant { content } = &entry.message {
-            content
-                .iter()
-                .any(|b| matches!(b, llm::ContentBlock::Compaction { .. }))
+            content.iter().any(|b| {
+                matches!(
+                    b,
+                    llm::ContentBlock::ContextSummary { .. }
+                        | llm::ContentBlock::LegacyContextSummary { .. }
+                )
+            })
         } else {
             false
         }

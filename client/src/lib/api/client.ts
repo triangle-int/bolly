@@ -180,7 +180,8 @@ export function updateLlmConfig(req: {
 export function fetchConfigStatus(): Promise<{
 	llm_configured: boolean;
 	provider?: string;
-	model?: string;
+	setup_required?: string | null;
+	model?: string | null;
 	model_mode?: string;
 	configured_keys?: string[];
 	is_managed?: boolean;
@@ -188,7 +189,7 @@ export function fetchConfigStatus(): Promise<{
 	return json("/api/config/status");
 }
 
-export function updateProvider(provider: 'api' | 'openai'): Promise<{ status: string; provider: string }> {
+export function updateProvider(provider: 'anthropic' | 'openai'): Promise<{ status: string; provider: string }> {
 	return json("/api/config/provider", {
 		method: "PUT",
 		headers: { "Content-Type": "application/json" },

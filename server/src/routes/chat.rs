@@ -21,13 +21,25 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/chat", post(post_chat))
         .route("/api/chat/{instance_slug}/chats", get(list_chats))
-        .route("/api/chat/{instance_slug}/messages", get(get_messages_default))
-        .route("/api/chat/{instance_slug}/{chat_id}/messages", get(get_messages))
+        .route(
+            "/api/chat/{instance_slug}/messages",
+            get(get_messages_default),
+        )
+        .route(
+            "/api/chat/{instance_slug}/{chat_id}/messages",
+            get(get_messages),
+        )
         .route("/api/chat/{instance_slug}/{chat_id}/stop", post(stop_agent))
-        .route("/api/chat/{instance_slug}/{chat_id}/context", delete(clear_context))
+        .route(
+            "/api/chat/{instance_slug}/{chat_id}/context",
+            delete(clear_context),
+        )
         // Legacy routes (use default chat_id)
         .route("/api/chat/{instance_slug}/stop", post(stop_agent_default))
-        .route("/api/chat/{instance_slug}/context", delete(clear_context_default))
+        .route(
+            "/api/chat/{instance_slug}/context",
+            delete(clear_context_default),
+        )
 }
 
 fn task_key(slug: &str, chat_id: &str) -> String {
@@ -37,19 +49,21 @@ fn task_key(slug: &str, chat_id: &str) -> String {
 async fn post_chat(
     State(state): State<AppState>,
     Json(request): Json<ChatRequest>,
-) -> Result<Json<ChatResponse>, (StatusCode, String)> {
+) -> Result<Json<ChatResponse>, super::ProviderRequestError> {
+    super::require_provider(&state).await?;
     let instance_slug = request.instance_slug.clone();
     let chat_id = request.chat_id.clone();
     let content = request.content.trim().to_string();
     let voice_mode = request.voice_mode;
 
     if instance_slug.is_empty() || content.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "slug and content required".into()));
+        return Err((StatusCode::BAD_REQUEST, "slug and content required".into()).into());
     }
 
     // Save user message immediately
-    let user_message = chat::save_user_message(&state.workspace_dir, &instance_slug, &chat_id, &content)
-        .map_err(map_chat_error)?;
+    let user_message =
+        chat::save_user_message(&state.workspace_dir, &instance_slug, &chat_id, &content)
+            .map_err(map_chat_error)?;
 
     // Broadcast user message
     let _ = state.events.send(ServerEvent::ChatMessageCreated {
@@ -103,7 +117,13 @@ async fn post_chat(
 
 /// Agent loop: keeps calling the LLM until it responds without tool use or is cancelled.
 /// New user messages are automatically picked up because each turn re-reads from disk.
-pub async fn run_agent_loop(state: AppState, instance_slug: String, chat_id: String, cancel: CancellationToken, voice_mode: bool) {
+pub async fn run_agent_loop(
+    state: AppState,
+    instance_slug: String,
+    chat_id: String,
+    cancel: CancellationToken,
+    voice_mode: bool,
+) {
     let _ = state.events.send(ServerEvent::AgentRunning {
         instance_slug: instance_slug.clone(),
         chat_id: chat_id.clone(),
@@ -140,12 +160,22 @@ pub async fn run_agent_loop(state: AppState, instance_slug: String, chat_id: Str
                     instance_slug: ref slug,
                     chat_id: ref cid,
                     ref message,
-                } = event {
-                    if slug != &fwd_slug || cid != &fwd_chat { continue; }
-                    if message.role != ChatRole::Assistant { continue; }
-                    if message.content.trim().is_empty() { continue; }
+                } = event
+                {
+                    if slug != &fwd_slug || cid != &fwd_chat {
+                        continue;
+                    }
+                    if message.role != ChatRole::Assistant {
+                        continue;
+                    }
+                    if message.content.trim().is_empty() {
+                        continue;
+                    }
                     if message.kind == crate::domain::chat::MessageKind::ToolCall
-                        || message.kind == crate::domain::chat::MessageKind::ToolOutput { continue; }
+                        || message.kind == crate::domain::chat::MessageKind::ToolOutput
+                    {
+                        continue;
+                    }
                     let _ = tts_tx.send(message.clone());
                 }
             }
@@ -163,16 +193,28 @@ pub async fn run_agent_loop(state: AppState, instance_slug: String, chat_id: Str
                 let cfg = tts_state.config.read().await;
                 cfg.llm.tokens.elevenlabs.clone()
             };
-            if api_key.is_empty() { return; }
+            if api_key.is_empty() {
+                return;
+            }
 
             while let Some(message) = tts_rx.recv().await {
-                let voice_id = crate::routes::tts::resolve_voice_id(&tts_state.workspace_dir, &tts_slug);
+                let voice_id =
+                    crate::routes::tts::resolve_voice_id(&tts_state.workspace_dir, &tts_slug);
                 let idir = tts_state.workspace_dir.join("instances").join(&tts_slug);
                 let mood = crate::services::tools::companion::load_mood_state(&idir).companion_mood;
-                match crate::routes::tts::synthesize_bytes(&tts_state.http_client, &api_key, &voice_id, &message.content, &mood).await {
+                match crate::routes::tts::synthesize_bytes(
+                    &tts_state.http_client,
+                    &api_key,
+                    &voice_id,
+                    &message.content,
+                    &mood,
+                )
+                .await
+                {
                     Ok(audio_bytes) => {
                         use base64::Engine;
-                        let audio_base64 = base64::engine::general_purpose::STANDARD.encode(&audio_bytes);
+                        let audio_base64 =
+                            base64::engine::general_purpose::STANDARD.encode(&audio_bytes);
                         let _ = tts_state.events.send(ServerEvent::ChatAudioReady {
                             instance_slug: tts_slug.clone(),
                             chat_id: tts_chat.clone(),
@@ -208,9 +250,8 @@ pub async fn run_agent_loop(state: AppState, instance_slug: String, chat_id: Str
                 if let Some(llm_ref) = llm_guard.as_ref() {
                     let llm = llm_ref.clone();
                     drop(llm_guard);
-                    let last_msg = chat::last_user_content(
-                        &state.workspace_dir, &instance_slug, &chat_id,
-                    );
+                    let last_msg =
+                        chat::last_user_content(&state.workspace_dir, &instance_slug, &chat_id);
                     if let Some(msg) = last_msg {
                         Some(llm.classify_needs_heavy(&msg).await)
                     } else {
@@ -239,9 +280,13 @@ pub async fn run_agent_loop(state: AppState, instance_slug: String, chat_id: Str
         let config_path = config::config_path();
         let (plan, heavy_multiplier, fast_model_name, google_ai_key, public_url) = {
             let cfg = state.config.read().await;
-            (cfg.plan.clone(),
-             cfg.llm.heavy_multiplier, cfg.llm.fast_model_name().to_string(),
-             cfg.llm.tokens.google_ai.clone(), cfg.public_url.clone())
+            (
+                cfg.plan.clone(),
+                cfg.llm.heavy_multiplier,
+                cfg.llm.fast_model_name().to_string(),
+                cfg.llm.tokens.google_ai.clone(),
+                cfg.public_url.clone(),
+            )
         };
 
         let llm_guard = state.llm.read().await;
@@ -259,7 +304,10 @@ pub async fn run_agent_loop(state: AppState, instance_slug: String, chat_id: Str
 
         // Use the model decided before the loop — consistent across all iterations.
         let used_heavy = classified_heavy.unwrap_or(true);
-        log::info!("[agent] {instance_slug}/{chat_id} — used_heavy={used_heavy}, base_model={}", llm_ref.model);
+        log::info!(
+            "[agent] {instance_slug}/{chat_id} — used_heavy={used_heavy}, base_model={}",
+            llm_ref.model
+        );
         let effective_llm = if used_heavy {
             llm_ref.clone()
         } else {
@@ -321,12 +369,17 @@ pub async fn run_agent_loop(state: AppState, instance_slug: String, chat_id: Str
                     } else {
                         turn.estimated_tokens
                     };
-                    log::info!("[usage] {instance_slug} used {recorded} tokens (raw={}, heavy={used_heavy})", turn.estimated_tokens);
+                    log::info!(
+                        "[usage] {instance_slug} used {recorded} tokens (raw={}, heavy={used_heavy})",
+                        turn.estimated_tokens
+                    );
                 }
 
                 // Check if a new user message arrived while agent was processing
                 if has_pending_user_message(&state, &instance_slug, &chat_id).await {
-                    log::info!("[agent] {instance_slug}/{chat_id} — new user message arrived, continuing");
+                    log::info!(
+                        "[agent] {instance_slug}/{chat_id} — new user message arrived, continuing"
+                    );
                     continue;
                 }
                 break;
@@ -335,11 +388,20 @@ pub async fn run_agent_loop(state: AppState, instance_slug: String, chat_id: Str
                 let msg = e.to_string();
                 log::warn!("[agent] {instance_slug}/{chat_id} — error: {msg}");
 
-                let error_label = if msg.contains("rate limit") || msg.contains("429") {
+                let error_label = if matches!(
+                    e.get_ref()
+                        .and_then(|e| e.downcast_ref::<crate::services::llm::contract::LlmError>()),
+                    Some(crate::services::llm::contract::LlmError::SetupRequired(_))
+                ) {
+                    msg.as_str()
+                } else if msg.contains("rate limit") || msg.contains("429") {
                     "rate limited — try again in a moment"
                 } else if msg.contains("timed out") {
                     "request timed out"
-                } else if msg.contains("token_not_found") || msg.contains("authentication") || msg.contains("401") {
+                } else if msg.contains("token_not_found")
+                    || msg.contains("authentication")
+                    || msg.contains("401")
+                {
                     "not authenticated — reconnect your account in Settings → Provider"
                 } else if msg.contains("no LLM") || msg.contains("not configured") {
                     "no API key configured — add one in Settings"
@@ -347,7 +409,9 @@ pub async fn run_agent_loop(state: AppState, instance_slug: String, chat_id: Str
                     "something went wrong"
                 };
                 let error_msg = chat::save_system_message(
-                    &state.workspace_dir, &instance_slug, &chat_id,
+                    &state.workspace_dir,
+                    &instance_slug,
+                    &chat_id,
                     &format!("[system] {error_label}"),
                 );
                 if let Ok(m) = error_msg {
@@ -375,7 +439,17 @@ pub async fn run_agent_loop(state: AppState, instance_slug: String, chat_id: Str
                     .messages
                     .iter()
                     .take(6)
-                    .map(|m| format!("{}: {}", if m.role == ChatRole::User { "user" } else { "assistant" }, m.content.chars().take(200).collect::<String>()))
+                    .map(|m| {
+                        format!(
+                            "{}: {}",
+                            if m.role == ChatRole::User {
+                                "user"
+                            } else {
+                                "assistant"
+                            },
+                            m.content.chars().take(200).collect::<String>()
+                        )
+                    })
                     .collect::<Vec<_>>()
                     .join("\n");
 
@@ -414,10 +488,7 @@ pub async fn run_agent_loop(state: AppState, instance_slug: String, chat_id: Str
     }
     // Wait for synthesizer to finish processing queued messages (up to 30s)
     if let Some(synth) = tts_synth_handle {
-        let _ = tokio::time::timeout(
-            std::time::Duration::from_secs(30),
-            synth,
-        ).await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(30), synth).await;
     }
 }
 
@@ -440,9 +511,10 @@ fn send_snapshot(state: &AppState, instance_slug: &str, chat_id: &str, agent_run
 /// while the agent was processing and we should do another turn).
 async fn has_pending_user_message(state: &AppState, instance_slug: &str, chat_id: &str) -> bool {
     match chat::load_messages(&state.workspace_dir, instance_slug, chat_id) {
-        Ok(response) => {
-            response.messages.last().is_some_and(|m| m.role == ChatRole::User)
-        }
+        Ok(response) => response
+            .messages
+            .last()
+            .is_some_and(|m| m.role == ChatRole::User),
         Err(_) => false,
     }
 }
@@ -451,17 +523,17 @@ async fn list_chats(
     State(state): State<AppState>,
     Path(instance_slug): Path<String>,
 ) -> Result<Json<Vec<ChatSummary>>, (StatusCode, String)> {
-    let chats = chat::list_chats(&state.workspace_dir, &instance_slug)
-        .map_err(map_chat_error)?;
+    let chats = chat::list_chats(&state.workspace_dir, &instance_slug).map_err(map_chat_error)?;
     Ok(Json(chats))
 }
 
 async fn get_messages_default(
     State(state): State<AppState>,
     Path(instance_slug): Path<String>,
-) -> Result<Json<ChatResponse>, (StatusCode, String)> {
-    let mut response =
-        chat::load_messages(&state.workspace_dir, &instance_slug, "default").map_err(map_chat_error)?;
+) -> Result<Json<ChatResponse>, super::ProviderRequestError> {
+    super::require_provider(&state).await?;
+    let mut response = chat::load_messages(&state.workspace_dir, &instance_slug, "default")
+        .map_err(map_chat_error)?;
     response.agent_running = is_agent_running(&state, &instance_slug, "default").await;
     Ok(Json(response))
 }
@@ -469,9 +541,10 @@ async fn get_messages_default(
 async fn get_messages(
     State(state): State<AppState>,
     Path((instance_slug, chat_id)): Path<(String, String)>,
-) -> Result<Json<ChatResponse>, (StatusCode, String)> {
-    let mut response =
-        chat::load_messages(&state.workspace_dir, &instance_slug, &chat_id).map_err(map_chat_error)?;
+) -> Result<Json<ChatResponse>, super::ProviderRequestError> {
+    super::require_provider(&state).await?;
+    let mut response = chat::load_messages(&state.workspace_dir, &instance_slug, &chat_id)
+        .map_err(map_chat_error)?;
     response.agent_running = is_agent_running(&state, &instance_slug, &chat_id).await;
     Ok(Json(response))
 }

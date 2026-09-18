@@ -45,10 +45,7 @@ async fn create_skill(
     Ok(Json(skill))
 }
 
-async fn delete_skill(
-    State(state): State<AppState>,
-    Path(skill_id): Path<String>,
-) -> StatusCode {
+async fn delete_skill(State(state): State<AppState>, Path(skill_id): Path<String>) -> StatusCode {
     match skills::delete_skill(&state.workspace_dir, &skill_id) {
         Ok(true) => StatusCode::NO_CONTENT,
         Ok(false) => StatusCode::NOT_FOUND,

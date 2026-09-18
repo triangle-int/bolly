@@ -9,15 +9,14 @@ use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use chrono::Utc;
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{RwLock, broadcast};
 
+use crate::domain::child_agent::ChildAgentConfig;
 use crate::domain::events::ServerEvent;
 use crate::domain::thought::Thought;
-use crate::services::{chat, llm::LlmBackend, rhythm, thoughts};
-use crate::services::tools::load_mood_state;
 use crate::services::machine_registry::MachineRegistry;
-use crate::domain::child_agent::ChildAgentConfig;
-
+use crate::services::tools::load_mood_state;
+use crate::services::{chat, llm::LlmBackend, rhythm, thoughts};
 
 pub fn start(
     workspace_dir: &Path,
@@ -95,7 +94,9 @@ async fn run_agent_loop(
 
     // Initial delay: wait until the agent is due
     let marker_path = workspace_dir
-        .join("instances").join(slug).join("agents")
+        .join("instances")
+        .join(slug)
+        .join("agents")
         .join(format!(".last_run_{}", agent.name));
     let last_run: i64 = fs::read_to_string(&marker_path)
         .ok()
@@ -107,7 +108,8 @@ async fn run_agent_loop(
         let wait = interval_secs - elapsed;
         log::info!(
             "[heartbeat] {slug}/{}: next run in {}m",
-            agent.name, wait / 60
+            agent.name,
+            wait / 60
         );
         tokio::time::sleep(Duration::from_secs(wait)).await;
     }
@@ -124,13 +126,20 @@ async fn run_agent_loop(
 
         // Re-read agent config each tick to pick up enabled/disabled changes
         let current_config = {
-            let path = workspace_dir.join("instances").join(slug)
-                .join("agents").join(format!("{}.toml", agent.name));
-            std::fs::read_to_string(&path).ok()
+            let path = workspace_dir
+                .join("instances")
+                .join(slug)
+                .join("agents")
+                .join(format!("{}.toml", agent.name));
+            std::fs::read_to_string(&path)
+                .ok()
                 .and_then(|raw| toml::from_str::<ChildAgentConfig>(&raw).ok())
         };
 
-        let is_enabled = current_config.as_ref().map(|c| c.enabled).unwrap_or(agent.enabled);
+        let is_enabled = current_config
+            .as_ref()
+            .map(|c| c.enabled)
+            .unwrap_or(agent.enabled);
 
         if !is_enabled {
             // Agent disabled — skip this tick but keep the loop alive
@@ -141,9 +150,17 @@ async fn run_agent_loop(
         let llm_guard = llm.read().await;
         if let Some(backend) = llm_guard.as_ref() {
             run_agent_tick(
-                workspace_dir, slug, &instance_dir, backend, &events,
-                &vector_store, google_ai_key, agent, &machine_registry,
-            ).await;
+                workspace_dir,
+                slug,
+                &instance_dir,
+                backend,
+                &events,
+                &vector_store,
+                google_ai_key,
+                agent,
+                &machine_registry,
+            )
+            .await;
         }
         drop(llm_guard);
 
@@ -178,22 +195,44 @@ async fn run_agent_tick(
 
     // Run the agent
     match crate::services::child_agents::run_single_agent(
-        workspace_dir, slug, instance_dir, llm, events, vector_store, google_ai_key,
-        agent, None, "heartbeat", Some(machine_registry),
-    ).await {
+        workspace_dir,
+        slug,
+        instance_dir,
+        llm,
+        events,
+        vector_store,
+        google_ai_key,
+        agent,
+        None,
+        "heartbeat",
+        Some(machine_registry),
+    )
+    .await
+    {
         Ok(r) => {
             // Mark as run
             let marker = workspace_dir
-                .join("instances").join(slug).join("agents")
+                .join("instances")
+                .join(slug)
+                .join("agents")
                 .join(format!(".last_run_{}", agent.name));
             let _ = fs::write(&marker, Utc::now().timestamp().to_string());
 
             let _ = chat::save_system_message(
-                workspace_dir, slug, "default",
-                &format!("[system] child agent '{}' ran ({} tokens)", agent.name, r.tokens),
+                workspace_dir,
+                slug,
+                "default",
+                &format!(
+                    "[system] child agent '{}' ran ({} tokens)",
+                    agent.name, r.tokens
+                ),
             );
 
-            log::info!("[heartbeat] {slug}/{}: done ({} tokens)", agent.name, r.tokens);
+            log::info!(
+                "[heartbeat] {slug}/{}: done ({} tokens)",
+                agent.name,
+                r.tokens
+            );
 
             // Save thought with the agent's actual inner monologue
             let final_mood = load_mood_state(instance_dir).companion_mood;
@@ -215,7 +254,6 @@ async fn run_agent_tick(
         }
     }
 }
-
 
 // Screen observation types moved to services/tools/screen.rs
 

@@ -1,9 +1,9 @@
 use axum::{
+    Json, Router,
     extract::Query,
     http::header,
     response::{Html, IntoResponse},
     routing::get,
-    Json, Router,
 };
 use serde::Deserialize;
 

@@ -1,0 +1,5 @@
+[
+  {"role":"assistant","content":[{"type":"tool_use","id":"screenshot","name":"capture","input":{}}]},
+  {"role":"user","content":[{"type":"tool_result","tool_use_id":"screenshot","content":[{"type":"text","text":"Screen"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"abc"}},{"type":"document","source":{"type":"url","url":"https://example.test/file.pdf"}},{"type":"future_block","payload":{"keep":true}}]}]},
+  {"role":"user","content":[{"type":"tool_result","tool_use_id":"legacy","content":{"legacy":"opaque"}}]}
+]

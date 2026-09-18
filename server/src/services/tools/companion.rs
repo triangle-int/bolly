@@ -1,6 +1,9 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
-use crate::services::tool::{ToolDefinition, Tool};
+use crate::services::tool::{Tool, ToolDefinition};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -66,7 +69,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 /// Temporary voice overrides — cleared on server restart or context clear.
-static VOICE_OVERRIDES: std::sync::OnceLock<Mutex<HashMap<String, String>>> = std::sync::OnceLock::new();
+static VOICE_OVERRIDES: std::sync::OnceLock<Mutex<HashMap<String, String>>> =
+    std::sync::OnceLock::new();
 
 fn voice_overrides() -> &'static Mutex<HashMap<String, String>> {
     VOICE_OVERRIDES.get_or_init(|| Mutex::new(HashMap::new()))
@@ -168,7 +172,8 @@ impl Tool for EditSoulTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "edit_soul".into(),
-            description: "Rewrite your soul.md (personality/voice definition). Full markdown content.".into(),
+            description:
+                "Rewrite your soul.md (personality/voice definition). Full markdown content.".into(),
             parameters: openai_schema::<EditSoulArgs>(),
         }
     }
@@ -184,4 +189,3 @@ impl Tool for EditSoulTool {
         )
     }
 }
-

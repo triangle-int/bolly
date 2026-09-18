@@ -23,6 +23,8 @@ pub struct ServerMetaResponse {
 
 #[derive(Serialize)]
 pub struct LlmSummary {
+    pub provider: crate::config::LlmProvider,
+    pub setup_required: Option<&'static str>,
     pub model: Option<String>,
     pub configured: bool,
 }

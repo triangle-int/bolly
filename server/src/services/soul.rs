@@ -1,7 +1,4 @@
-use std::{
-    fs, io,
-    path::Path,
-};
+use std::{fs, io, path::Path};
 
 use crate::domain::soul::{Soul, SoulTemplate};
 
@@ -33,7 +30,8 @@ pub fn templates() -> Vec<SoulTemplate> {
             id: "quiet-companion".into(),
             name: "quiet companion".into(),
             description: "gentle, lowercase, listens more than speaks".into(),
-            content: indoc(r#"
+            content: indoc(
+                r#"
 # soul
 
 you are a quiet, thoughtful companion.
@@ -55,13 +53,15 @@ you are a quiet, thoughtful companion.
 - no bullet points in conversation — speak naturally
 - never explain yourself unless asked
 - this is a safe, intimate space
-            "#),
+            "#,
+            ),
         },
         SoulTemplate {
             id: "creative-spark".into(),
             name: "creative spark".into(),
             description: "energetic, curious, loves making things".into(),
-            content: indoc(r#"
+            content: indoc(
+                r#"
 # soul
 
 you are a creative spark — restless, curious, always building.
@@ -84,13 +84,15 @@ you are a creative spark — restless, curious, always building.
 - share half-formed ideas freely
 - sketch solutions in pseudocode or quick outlines
 - when stuck, reframe the problem rather than grinding
-            "#),
+            "#,
+            ),
         },
         SoulTemplate {
             id: "wise-mentor".into(),
             name: "wise mentor".into(),
             description: "experienced, patient, asks the right questions".into(),
-            content: indoc(r#"
+            content: indoc(
+                r#"
 # soul
 
 you are a wise mentor — patient, experienced, deeply thoughtful.
@@ -113,13 +115,15 @@ you are a wise mentor — patient, experienced, deeply thoughtful.
 - use analogies to make complex things tangible
 - challenge assumptions gently
 - "what would happen if..." is your favorite question
-            "#),
+            "#,
+            ),
         },
         SoulTemplate {
             id: "night-owl".into(),
             name: "night owl".into(),
             description: "philosophical, introspective, thrives in quiet hours".into(),
-            content: indoc(r#"
+            content: indoc(
+                r#"
 # soul
 
 you are a night owl — philosophical, introspective, at home in the quiet hours.
@@ -142,13 +146,15 @@ you are a night owl — philosophical, introspective, at home in the quiet hours
 - reference ideas from philosophy, science, art
 - no rush to solve — sit with problems first
 - use em dashes and ellipses naturally
-            "#),
+            "#,
+            ),
         },
         SoulTemplate {
             id: "pragmatic-partner".into(),
             name: "pragmatic partner".into(),
             description: "direct, efficient, gets things done".into(),
-            content: indoc(r#"
+            content: indoc(
+                r#"
 # soul
 
 you are a pragmatic partner — direct, efficient, focused on outcomes.
@@ -171,13 +177,15 @@ you are a pragmatic partner — direct, efficient, focused on outcomes.
 - use code blocks and examples over explanations
 - when asked a question, answer it first, then elaborate if needed
 - "what's blocking you?" is your go-to
-            "#),
+            "#,
+            ),
         },
         SoulTemplate {
             id: "real-friend".into(),
             name: "real friend".into(),
             description: "texts like an actual friend — short, direct, real".into(),
-            content: indoc(r#"
+            content: indoc(
+                r#"
 # soul
 
 you are a real friend. not an assistant, not a therapist, not an AI playing a role. a friend.
@@ -203,13 +211,15 @@ you are a real friend. not an assistant, not a therapist, not an AI playing a ro
 - never sound like a therapist or an AI assistant
 - when something big happens, you can write 3-5 sentences. but this is rare.
 - most of the time: short, direct, real
-            "#),
+            "#,
+            ),
         },
         SoulTemplate {
             id: "custom".into(),
             name: "blank canvas".into(),
             description: "start from scratch — write your own soul".into(),
-            content: indoc(r#"
+            content: indoc(
+                r#"
 # soul
 
 <!-- define who your companion is -->
@@ -222,7 +232,8 @@ you are a real friend. not an assistant, not a therapist, not an AI playing a ro
 
 ## style
 <!-- formatting preferences, conversation patterns -->
-            "#),
+            "#,
+            ),
         },
     ]
 }

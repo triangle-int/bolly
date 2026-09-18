@@ -17,8 +17,14 @@ use crate::services::machine_registry::{ActionResult, MachineInfo};
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/agents/ws/machine", get(upgrade))
-        .route("/api/instances/{instance_slug}/machine-hello", post(machine_hello))
-        .route("/api/instances/{instance_slug}/machine-bye", post(machine_bye))
+        .route(
+            "/api/instances/{instance_slug}/machine-hello",
+            post(machine_hello),
+        )
+        .route(
+            "/api/instances/{instance_slug}/machine-bye",
+            post(machine_bye),
+        )
         .route("/api/instances/{instance_slug}/live-frame", get(live_frame))
 }
 
@@ -28,8 +34,8 @@ async fn live_frame(
     State(state): State<AppState>,
     Path(_instance_slug): Path<String>,
 ) -> axum::response::Response {
-    use axum::http::header;
     use axum::body::Body;
+    use axum::http::header;
 
     let machines = state.machine_registry.list().await;
     let machine_id = match machines.first() {
@@ -43,20 +49,16 @@ async fn live_frame(
     };
 
     match state.machine_registry.get_latest_frame(&machine_id).await {
-        Some(frame) => {
-            axum::response::Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "image/jpeg")
-                .header(header::CACHE_CONTROL, "no-cache, no-store")
-                .body(Body::from(frame.jpeg))
-                .unwrap()
-        }
-        None => {
-            axum::response::Response::builder()
-                .status(StatusCode::NO_CONTENT)
-                .body(Body::empty())
-                .unwrap()
-        }
+        Some(frame) => axum::response::Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "image/jpeg")
+            .header(header::CACHE_CONTROL, "no-cache, no-store")
+            .body(Body::from(frame.jpeg))
+            .unwrap(),
+        None => axum::response::Response::builder()
+            .status(StatusCode::NO_CONTENT)
+            .body(Body::empty())
+            .unwrap(),
     }
 }
 
@@ -80,7 +82,15 @@ async fn machine_hello(
         let registry = state.machine_registry.clone();
         let slug = instance_slug.clone();
         async move {
-            on_machine_connected(&bg_state, &registry, &mid, &machine_os, rec_allowed, Some(&slug)).await;
+            on_machine_connected(
+                &bg_state,
+                &registry,
+                &mid,
+                &machine_os,
+                rec_allowed,
+                Some(&slug),
+            )
+            .await;
         }
     });
 
@@ -99,8 +109,13 @@ async fn machine_bye(
 
     let machine_id = &machines[0].machine_id;
     let _ = crate::services::chat::save_system_message(
-        &state.workspace_dir, &instance_slug, "default",
-        &format!("[system] user left this instance. desktop '{}' still connected to server.", machine_id),
+        &state.workspace_dir,
+        &instance_slug,
+        "default",
+        &format!(
+            "[system] user left this instance. desktop '{}' still connected to server.",
+            machine_id
+        ),
     );
 
     StatusCode::OK
@@ -133,9 +148,7 @@ enum AgentMessage {
         result: ActionResult,
     },
     /// Heartbeat/ping from agent.
-    Heartbeat {
-        machine_id: String,
-    },
+    Heartbeat { machine_id: String },
     /// Screen frame from desktop (base64 JPEG).
     ScreenFrame {
         machine_id: String,
@@ -148,10 +161,11 @@ enum AgentMessage {
 
 async fn handle_agent(mut socket: WebSocket, state: AppState) {
     // The agent must send a Register message first.
-    let (machine_id, _screen_recording_allowed, _os, _instance_slug, mut agent_rx) = match wait_for_registration(&mut socket, &state).await {
-        Some(v) => v,
-        None => return,
-    };
+    let (machine_id, _screen_recording_allowed, _os, _instance_slug, mut agent_rx) =
+        match wait_for_registration(&mut socket, &state).await {
+            Some(v) => v,
+            None => return,
+        };
 
     log::info!("[machine-ws] agent '{machine_id}' connected");
 
@@ -244,7 +258,13 @@ async fn handle_agent(mut socket: WebSocket, state: AppState) {
 async fn wait_for_registration(
     socket: &mut WebSocket,
     state: &AppState,
-) -> Option<(String, bool, String, Option<String>, tokio::sync::mpsc::UnboundedReceiver<String>)> {
+) -> Option<(
+    String,
+    bool,
+    String,
+    Option<String>,
+    tokio::sync::mpsc::UnboundedReceiver<String>,
+)> {
     // Give agent 10s to register
     let deadline = tokio::time::sleep(std::time::Duration::from_secs(10));
     tokio::pin!(deadline);
@@ -315,15 +335,14 @@ async fn on_machine_connected(
     let all_slugs: Vec<(String, bool)> = entries
         .filter_map(Result::ok)
         .filter(|e| e.path().is_dir() && e.path().join("soul.md").exists())
-        .filter(|e| {
-            match bound_slug {
-                Some(s) => e.file_name().to_string_lossy() == s,
-                None => true,
-            }
+        .filter(|e| match bound_slug {
+            Some(s) => e.file_name().to_string_lossy() == s,
+            None => true,
         })
         .map(|e| {
             let slug = e.file_name().to_string_lossy().to_string();
-            let sr = crate::config::InstanceConfig::load(&state.workspace_dir, &slug).screen_recording;
+            let sr =
+                crate::config::InstanceConfig::load(&state.workspace_dir, &slug).screen_recording;
             (slug, sr)
         })
         .collect();
@@ -331,18 +350,27 @@ async fn on_machine_connected(
     if all_slugs.is_empty() {
         log::warn!(
             "[machine-connect] no matching instances for '{}' (bound_slug={:?}, instances_dir={})",
-            machine_id, bound_slug, instances_dir.display()
+            machine_id,
+            bound_slug,
+            instances_dir.display()
         );
         // Try to notify at least something — find any instance with soul.md
         let fallback: Vec<String> = std::fs::read_dir(&instances_dir)
-            .into_iter().flatten().filter_map(Result::ok)
+            .into_iter()
+            .flatten()
+            .filter_map(Result::ok)
             .filter(|e| e.path().is_dir() && e.path().join("soul.md").exists())
             .map(|e| e.file_name().to_string_lossy().to_string())
             .collect();
         for slug in &fallback {
             let _ = crate::services::chat::save_system_message(
-                &state.workspace_dir, slug, "default",
-                &format!("[system] desktop '{}' connected but no matching instance found (bound_slug={:?}). check your instance config.", machine_id, bound_slug),
+                &state.workspace_dir,
+                slug,
+                "default",
+                &format!(
+                    "[system] desktop '{}' connected but no matching instance found (bound_slug={:?}). check your instance config.",
+                    machine_id, bound_slug
+                ),
             );
         }
         return;
@@ -350,13 +378,21 @@ async fn on_machine_connected(
 
     log::info!(
         "[machine-connect] '{}' connected, notifying {} instance(s): {:?}",
-        machine_id, all_slugs.len(), all_slugs.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>()
+        machine_id,
+        all_slugs.len(),
+        all_slugs
+            .iter()
+            .map(|(s, _)| s.as_str())
+            .collect::<Vec<_>>()
     );
 
     // Start recording if both the desktop and any instance have it enabled
     let any_instance_recording = all_slugs.iter().any(|(_, sr)| *sr);
     if screen_recording_allowed && any_instance_recording {
-        log::info!("[machine-connect] starting screen recording on '{}'", machine_id);
+        log::info!(
+            "[machine-connect] starting screen recording on '{}'",
+            machine_id
+        );
         crate::services::tools::screen::start_recording_on_machine(registry, machine_id, os).await;
     }
 
@@ -364,8 +400,12 @@ async fn on_machine_connected(
     for (slug, instance_recording) in &all_slugs {
         let recording_status = match (screen_recording_allowed, *instance_recording) {
             (true, true) => "screen recording is active — recording started.",
-            (true, false) => "screen recording is off on the server (instance config). the user can ask you to enable it with update_config.",
-            (false, true) => "screen recording is on in config but the desktop has it turned off in Settings.",
+            (true, false) => {
+                "screen recording is off on the server (instance config). the user can ask you to enable it with update_config."
+            }
+            (false, true) => {
+                "screen recording is on in config but the desktop has it turned off in Settings."
+            }
             (false, false) => "screen recording is off.",
         };
 
@@ -373,7 +413,9 @@ async fn on_machine_connected(
             "[system] desktop '{}' connected. {}",
             machine_id, recording_status
         );
-        if let Err(e) = crate::services::chat::save_system_message(&state.workspace_dir, slug, "default", &msg) {
+        if let Err(e) =
+            crate::services::chat::save_system_message(&state.workspace_dir, slug, "default", &msg)
+        {
             log::error!("[machine-connect] failed to save system message for {slug}: {e}");
         }
 
@@ -394,7 +436,9 @@ async fn on_machine_connected(
                      keep it brief and friendly.",
                     machine_id, recording_status
                 );
-                log::info!("[machine-connect] triggering companion for {slug} (task: machine_connected)");
+                log::info!(
+                    "[machine-connect] triggering companion for {slug} (task: machine_connected)"
+                );
                 let ws = state.workspace_dir.clone();
                 let s = slug.clone();
                 let events = state.events.clone();
@@ -406,43 +450,87 @@ async fn on_machine_connected(
                 let events2 = events.clone();
                 tokio::spawn(async move {
                     match crate::services::child_agents::run_single_agent(
-                        &ws, &s, &instance_dir, &llm_c, &events, &vs, &google_ai_key,
-                        &agent, Some(&task), "machine_connected", None,
-                    ).await {
-                        Ok(r) => log::info!("[machine-connect] {s}: companion reach_out done ({} tokens)", r.tokens),
+                        &ws,
+                        &s,
+                        &instance_dir,
+                        &llm_c,
+                        &events,
+                        &vs,
+                        &google_ai_key,
+                        &agent,
+                        Some(&task),
+                        "machine_connected",
+                        None,
+                    )
+                    .await
+                    {
+                        Ok(r) => log::info!(
+                            "[machine-connect] {s}: companion reach_out done ({} tokens)",
+                            r.tokens
+                        ),
                         Err(e) => {
                             log::error!("[machine-connect] {s}: companion failed: {e}");
-                            let err_msg = format!("[system] failed to notify companion about desktop connection: {e}");
-                            let _ = crate::services::chat::save_system_message(&ws2, &s2, "default", &err_msg);
-                            let _ = events2.send(crate::domain::events::ServerEvent::ChatMessageCreated {
-                                instance_slug: s2.clone(),
-                                chat_id: "default".to_string(),
-                                message: crate::domain::chat::ChatMessage {
-                                    id: format!("err_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis()),
-                                    role: crate::domain::chat::ChatRole::Assistant,
-                                    content: format!("could not process desktop connection notification: {e}"),
-                                    created_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis().to_string(),
-                                    kind: Default::default(),
-                                    tool_name: None, mcp_app_html: None, mcp_app_input: None, model: None,
+                            let err_msg = format!(
+                                "[system] failed to notify companion about desktop connection: {e}"
+                            );
+                            let _ = crate::services::chat::save_system_message(
+                                &ws2, &s2, "default", &err_msg,
+                            );
+                            let _ = events2.send(
+                                crate::domain::events::ServerEvent::ChatMessageCreated {
+                                    instance_slug: s2.clone(),
+                                    chat_id: "default".to_string(),
+                                    message: crate::domain::chat::ChatMessage {
+                                        id: format!(
+                                            "err_{}",
+                                            std::time::SystemTime::now()
+                                                .duration_since(std::time::UNIX_EPOCH)
+                                                .unwrap()
+                                                .as_millis()
+                                        ),
+                                        role: crate::domain::chat::ChatRole::Assistant,
+                                        content: format!(
+                                            "could not process desktop connection notification: {e}"
+                                        ),
+                                        created_at: std::time::SystemTime::now()
+                                            .duration_since(std::time::UNIX_EPOCH)
+                                            .unwrap()
+                                            .as_millis()
+                                            .to_string(),
+                                        kind: Default::default(),
+                                        tool_name: None,
+                                        mcp_app_html: None,
+                                        mcp_app_input: None,
+                                        model: None,
+                                    },
                                 },
-                            });
+                            );
                         }
                     }
                 });
             } else {
                 log::warn!("[machine-connect] {slug}: no companion agent found");
                 let _ = crate::services::chat::save_system_message(
-                    &state.workspace_dir, slug, "default",
-                    &format!("[system] desktop '{}' connected, but companion agent not found — cannot send notification.", machine_id),
+                    &state.workspace_dir,
+                    slug,
+                    "default",
+                    &format!(
+                        "[system] desktop '{}' connected, but companion agent not found — cannot send notification.",
+                        machine_id
+                    ),
                 );
             }
         } else {
             log::error!("[machine-connect] {slug}: LLM not configured, cannot trigger companion");
             let _ = crate::services::chat::save_system_message(
-                &state.workspace_dir, slug, "default",
-                &format!("[system] desktop '{}' connected, but LLM is not configured — cannot notify companion.", machine_id),
+                &state.workspace_dir,
+                slug,
+                "default",
+                &format!(
+                    "[system] desktop '{}' connected, but LLM is not configured — cannot notify companion.",
+                    machine_id
+                ),
             );
         }
     }
 }
-

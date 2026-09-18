@@ -10,20 +10,19 @@ use crate::domain::upload::UploadMeta;
 const MAX_FILE_SIZE: u64 = 500 * 1024 * 1024; // 500 MB
 
 const BLOCKED_EXTENSIONS: &[&str] = &[
-    "exe", "dll", "so", "dylib", "bin", "msi", "dmg", "iso",
-    "bat", "cmd", "com", "scr", "vbs", "wsh",
+    "exe", "dll", "so", "dylib", "bin", "msi", "dmg", "iso", "bat", "cmd", "com", "scr", "vbs",
+    "wsh",
 ];
 
 pub fn validate_upload(name: &str, size: u64) -> Result<String, String> {
     if size > MAX_FILE_SIZE {
-        return Err(format!("file too large ({} bytes, max {})", size, MAX_FILE_SIZE));
+        return Err(format!(
+            "file too large ({} bytes, max {})",
+            size, MAX_FILE_SIZE
+        ));
     }
 
-    let ext = name
-        .rsplit('.')
-        .next()
-        .unwrap_or("")
-        .to_lowercase();
+    let ext = name.rsplit('.').next().unwrap_or("").to_lowercase();
 
     if ext.is_empty() {
         return Err("file must have an extension".into());
@@ -53,14 +52,11 @@ fn mime_from_ext(ext: &str) -> &'static str {
         "yaml" | "yml" => "text/yaml",
         "toml" => "text/plain",
         "txt" | "log" | "ini" | "cfg" | "conf" | "env" => "text/plain",
-        "py" | "rs" | "js" | "ts" | "jsx" | "tsx" | "go" | "rb" | "java"
-        | "c" | "cpp" | "h" | "hpp" | "cs" | "swift" | "kt" | "scala"
-        | "sh" | "bash" | "zsh" | "fish" | "ps1"
-        | "sql" | "graphql" | "proto"
-        | "svelte" | "vue" | "astro"
-        | "dockerfile" | "makefile" | "cmake"
-        | "r" | "lua" | "php" | "pl" | "ex" | "exs" | "zig" | "nim"
-        | "dart" | "elm" | "clj" | "hs" | "ml" | "fs" | "erl" => "text/plain",
+        "py" | "rs" | "js" | "ts" | "jsx" | "tsx" | "go" | "rb" | "java" | "c" | "cpp" | "h"
+        | "hpp" | "cs" | "swift" | "kt" | "scala" | "sh" | "bash" | "zsh" | "fish" | "ps1"
+        | "sql" | "graphql" | "proto" | "svelte" | "vue" | "astro" | "dockerfile" | "makefile"
+        | "cmake" | "r" | "lua" | "php" | "pl" | "ex" | "exs" | "zig" | "nim" | "dart" | "elm"
+        | "clj" | "hs" | "ml" | "fs" | "erl" => "text/plain",
         "mp4" | "m4v" => "video/mp4",
         "webm" => "video/webm",
         "mov" => "video/quicktime",
@@ -117,7 +113,10 @@ pub fn save_upload(
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
     fs::write(uploads_dir.join(format!("{id}.json")), json)?;
 
-    log::info!("[uploads] saved {id} ({original_name}, {} bytes) for {instance_slug}", bytes.len());
+    log::info!(
+        "[uploads] saved {id} ({original_name}, {} bytes) for {instance_slug}",
+        bytes.len()
+    );
     Ok(meta)
 }
 
@@ -151,7 +150,11 @@ pub fn list_uploads(workspace_dir: &Path, instance_slug: &str) -> io::Result<Vec
     Ok(uploads)
 }
 
-pub fn get_upload(workspace_dir: &Path, instance_slug: &str, upload_id: &str) -> io::Result<Option<UploadMeta>> {
+pub fn get_upload(
+    workspace_dir: &Path,
+    instance_slug: &str,
+    upload_id: &str,
+) -> io::Result<Option<UploadMeta>> {
     let path = workspace_dir
         .join("instances")
         .join(instance_slug)
@@ -168,7 +171,11 @@ pub fn get_upload(workspace_dir: &Path, instance_slug: &str, upload_id: &str) ->
     Ok(Some(meta))
 }
 
-pub fn get_upload_file_path(workspace_dir: &Path, instance_slug: &str, upload_id: &str) -> Option<std::path::PathBuf> {
+pub fn get_upload_file_path(
+    workspace_dir: &Path,
+    instance_slug: &str,
+    upload_id: &str,
+) -> Option<std::path::PathBuf> {
     let meta = get_upload(workspace_dir, instance_slug, upload_id).ok()??;
     let path = workspace_dir
         .join("instances")
@@ -178,7 +185,11 @@ pub fn get_upload_file_path(workspace_dir: &Path, instance_slug: &str, upload_id
     path.exists().then_some(path)
 }
 
-pub fn delete_upload(workspace_dir: &Path, instance_slug: &str, upload_id: &str) -> io::Result<bool> {
+pub fn delete_upload(
+    workspace_dir: &Path,
+    instance_slug: &str,
+    upload_id: &str,
+) -> io::Result<bool> {
     let uploads_dir = workspace_dir
         .join("instances")
         .join(instance_slug)
@@ -228,12 +239,22 @@ pub fn extract_zip(
         .rev()
         .collect::<Vec<_>>()
         .join(".");
-    let stem = if stem.is_empty() { upload_id.to_string() } else { stem };
+    let stem = if stem.is_empty() {
+        upload_id.to_string()
+    } else {
+        stem
+    };
 
     // Sanitize stem
     let stem: String = stem
         .chars()
-        .map(|c| if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect();
 
     let projects_dir = workspace_dir
@@ -246,7 +267,8 @@ pub fn extract_zip(
     let mut extracted_files = Vec::new();
 
     for i in 0..archive.len() {
-        let mut entry = archive.by_index(i)
+        let mut entry = archive
+            .by_index(i)
             .map_err(|e| io::Error::new(ErrorKind::InvalidData, format!("zip entry error: {e}")))?;
 
         let entry_path = match entry.enclosed_name() {

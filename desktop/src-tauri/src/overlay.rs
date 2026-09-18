@@ -74,20 +74,16 @@ fn show_macos(app: &AppHandle, slug: Option<&str>) {
                 .can_join_all_spaces()
                 .full_screen_auxiliary()
                 .stationary()
-                .ignores_cycle()
+                .ignores_cycle(),
         )
         .ignores_mouse_events(true)
-        .style_mask(
-            StyleMask::empty()
-                .borderless()
-                .nonactivating_panel()
-        )
+        .style_mask(StyleMask::empty().borderless().nonactivating_panel())
         .with_window(|w| {
             w.decorations(false)
-             .always_on_top(true)
-             .skip_taskbar(true)
-             .transparent(true)
-             .maximized(true)
+                .always_on_top(true)
+                .skip_taskbar(true)
+                .transparent(true)
+                .maximized(true)
         })
         .no_activate(true)
         .build()
@@ -108,7 +104,10 @@ fn show_fallback(app: &AppHandle, slug: Option<&str>) {
 
     let parsed: url::Url = match overlay_url_str(slug).parse() {
         Ok(u) => u,
-        Err(e) => { eprintln!("[overlay] bad URL: {e}"); return; }
+        Err(e) => {
+            eprintln!("[overlay] bad URL: {e}");
+            return;
+        }
     };
 
     match tauri::webview::WebviewWindowBuilder::new(
@@ -173,12 +172,20 @@ pub fn set_visible(app: &AppHandle, visible: bool) {
         #[cfg(target_os = "macos")]
         {
             if let Ok(panel) = handle.get_webview_panel("overlay") {
-                if visible { panel.show(); } else { panel.hide(); }
+                if visible {
+                    panel.show();
+                } else {
+                    panel.hide();
+                }
                 return;
             }
         }
         if let Some(win) = handle.get_webview_window("overlay") {
-            if visible { let _ = win.show(); } else { let _ = win.hide(); }
+            if visible {
+                let _ = win.show();
+            } else {
+                let _ = win.hide();
+            }
         }
     });
 }

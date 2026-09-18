@@ -4,8 +4,8 @@ use std::path::Path;
 use std::sync::Arc;
 
 use arrow_array::{
-    types::Float32Type, Array, FixedSizeListArray, Float32Array, Int32Array, Int64Array,
-    RecordBatch, StringArray,
+    Array, FixedSizeListArray, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray,
+    types::Float32Type,
 };
 use arrow_schema::{DataType, Field, Schema};
 use futures::TryStreamExt;
@@ -16,8 +16,7 @@ use super::embedding;
 
 /// UUID v5 namespace for deterministic point IDs.
 const NS: Uuid = Uuid::from_bytes([
-    0x6b, 0x6f, 0x6c, 0x6c, 0x79, 0x2d, 0x76, 0x65,
-    0x63, 0x74, 0x6f, 0x72, 0x2d, 0x6e, 0x73, 0x21,
+    0x6b, 0x6f, 0x6c, 0x6c, 0x79, 0x2d, 0x76, 0x65, 0x63, 0x74, 0x6f, 0x72, 0x2d, 0x6e, 0x73, 0x21,
 ]);
 
 pub struct VectorStore {
@@ -46,10 +45,7 @@ fn table_schema() -> Arc<Schema> {
         Field::new("upload_id", DataType::Utf8, true),
         Field::new(
             "vector",
-            DataType::FixedSizeList(
-                Arc::new(Field::new("item", DataType::Float32, true)),
-                dim,
-            ),
+            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), dim),
             false,
         ),
     ]))
@@ -60,7 +56,11 @@ fn table_name(slug: &str) -> String {
 }
 
 fn point_id(source_type: &str, path: &str, chunk_index: u32) -> String {
-    Uuid::new_v5(&NS, format!("{source_type}:{path}:{chunk_index}").as_bytes()).to_string()
+    Uuid::new_v5(
+        &NS,
+        format!("{source_type}:{path}:{chunk_index}").as_bytes(),
+    )
+    .to_string()
 }
 
 /// Read a string column value from a RecordBatch.
@@ -150,9 +150,7 @@ fn make_batch(
             Arc::new(StringArray::from_iter_values(&previews)),
             Arc::new(Int64Array::from(timestamps)),
             Arc::new(StringArray::from(uid_refs)),
-            Arc::new(FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(
-                vecs, dim,
-            )),
+            Arc::new(FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(vecs, dim)),
         ],
     )
     .map_err(|e| format!("arrow batch: {e}"))
@@ -230,10 +228,7 @@ impl VectorStore {
 
         // Delete existing chunks for this path
         let escaped = path.replace('\'', "''");
-        table
-            .delete(&format!("path = '{escaped}'"))
-            .await
-            .ok();
+        table.delete(&format!("path = '{escaped}'")).await.ok();
 
         if chunks.is_empty() {
             return Ok(());
@@ -284,10 +279,7 @@ impl VectorStore {
         let table = self.open_table(&table_name(instance_slug)).await?;
 
         let escaped = upload_id.replace('\'', "''");
-        table
-            .delete(&format!("path = '{escaped}'"))
-            .await
-            .ok(); // might not exist yet
+        table.delete(&format!("path = '{escaped}'")).await.ok(); // might not exist yet
 
         let batch = make_batch(
             vec![point_id(source_type, upload_id, 0)],
@@ -463,7 +455,10 @@ impl VectorStore {
                         count += 1;
                     }
                     Err(e) => {
-                        log::warn!("[vector] backfill media embed error for {}: {e}", entry.path)
+                        log::warn!(
+                            "[vector] backfill media embed error for {}: {e}",
+                            entry.path
+                        )
                     }
                 }
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;

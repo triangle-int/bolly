@@ -356,7 +356,8 @@
 	];
 
 	// Provider + Model mode + API keys state
-	let provider = $state("api");
+	let provider = $state("anthropic");
+	let setupRequired = $state<string | null>(null);
 	let providerSaving = $state(false);
 	let modelMode = $state("auto");
 	let modelModeSaving = $state(false);
@@ -370,15 +371,17 @@
 		fetchConfigStatus().then(s => {
 			if (s.model_mode) modelMode = s.model_mode;
 			if (s.configured_keys) configuredKeys = s.configured_keys;
-			if (s.provider) provider = s.provider;
+			if (s.provider) provider = s.provider === "api" ? "anthropic" : s.provider;
+			setupRequired = s.setup_required ?? null;
 		}).catch(() => {});
 	});
 
-	async function setProvider(p: 'api' | 'openai') {
+	async function setProvider(p: 'anthropic' | 'openai') {
 		providerSaving = true;
 		try {
 			await updateProvider(p);
 			provider = p;
+			setupRequired = (await fetchConfigStatus()).setup_required ?? null;
 		} catch {
 		} finally {
 			providerSaving = false;
@@ -392,6 +395,7 @@
 			await updateLlmConfig({ [field]: value.trim() });
 			// Refresh status
 			const s = await fetchConfigStatus();
+			setupRequired = s.setup_required ?? null;
 			if (s.configured_keys) configuredKeys = s.configured_keys;
 		} catch (e) {
 			keyError = e instanceof Error ? e.message : "failed";
@@ -885,11 +889,12 @@
 				<p class="section-desc">Choose which AI powers your companion.</p>
 			</div>
 		</div>
+		{#if setupRequired}<p class="section-desc">{setupRequired}</p>{/if}
 		<div class="model-mode-options" class:disabled={providerSaving}>
 			<button
 				class="mode-option"
-				class:mode-active={provider === "api"}
-				onclick={() => setProvider("api")}
+				class:mode-active={provider === "anthropic"}
+				onclick={() => setProvider("anthropic")}
 				disabled={providerSaving}
 			>
 				<span class="mode-name">Anthropic</span>

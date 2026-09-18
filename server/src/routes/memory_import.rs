@@ -1,7 +1,7 @@
 use axum::{
+    Json, Router,
     extract::{DefaultBodyLimit, Multipart, Path, State},
     routing::post,
-    Json, Router,
 };
 use serde::Serialize;
 
@@ -10,7 +10,10 @@ use crate::services::memory_import;
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/instances/{instance_slug}/memory/import", post(start_import))
+        .route(
+            "/api/instances/{instance_slug}/memory/import",
+            post(start_import),
+        )
         .layer(DefaultBodyLimit::max(500 * 1024 * 1024)) // 500 MB
 }
 
@@ -34,33 +37,43 @@ async fn start_import(
         config.llm.api_key().map(|s| s.to_string())
     };
     let api_key = api_key.ok_or_else(|| {
-        (axum::http::StatusCode::INTERNAL_SERVER_ERROR, "LLM not configured".to_string())
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            "LLM not configured".to_string(),
+        )
     })?;
 
     let google_ai_key = std::env::var("GOOGLE_AI_KEY").unwrap_or_default();
 
     // Create temp dir for uploaded files
-    let import_dir = state.workspace_dir
+    let import_dir = state
+        .workspace_dir
         .join("instances")
         .join(&instance_slug)
         .join(".import_temp");
     let _ = std::fs::remove_dir_all(&import_dir); // Clean previous
     std::fs::create_dir_all(&import_dir).map_err(|e| {
-        (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("failed to create import dir: {e}"))
+        (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            format!("failed to create import dir: {e}"),
+        )
     })?;
 
     // Save uploaded files
     let mut file_count = 0;
     while let Ok(Some(field)) = multipart.next_field().await {
-        let name = field.file_name()
-            .unwrap_or("data.bin")
-            .to_string();
+        let name = field.file_name().unwrap_or("data.bin").to_string();
 
         let data = field.bytes().await.map_err(|e| {
-            (axum::http::StatusCode::BAD_REQUEST, format!("failed to read field: {e}"))
+            (
+                axum::http::StatusCode::BAD_REQUEST,
+                format!("failed to read field: {e}"),
+            )
         })?;
 
-        if data.is_empty() { continue; }
+        if data.is_empty() {
+            continue;
+        }
 
         let file_path = import_dir.join(&name);
         // If name contains path separators, create parent dirs
@@ -68,14 +81,20 @@ async fn start_import(
             let _ = std::fs::create_dir_all(parent);
         }
         std::fs::write(&file_path, &data).map_err(|e| {
-            (axum::http::StatusCode::INTERNAL_SERVER_ERROR, format!("failed to write file: {e}"))
+            (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                format!("failed to write file: {e}"),
+            )
         })?;
         file_count += 1;
     }
 
     if file_count == 0 {
         let _ = std::fs::remove_dir_all(&import_dir);
-        return Err((axum::http::StatusCode::BAD_REQUEST, "no files uploaded".to_string()));
+        return Err((
+            axum::http::StatusCode::BAD_REQUEST,
+            "no files uploaded".to_string(),
+        ));
     }
 
     // Spawn the background import pipeline
@@ -92,6 +111,8 @@ async fn start_import(
 
     Ok(Json(ImportStarted {
         ok: true,
-        message: format!("import started with {file_count} file(s) — progress updates via WebSocket"),
+        message: format!(
+            "import started with {file_count} file(s) — progress updates via WebSocket"
+        ),
     }))
 }

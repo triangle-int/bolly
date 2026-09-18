@@ -1,9 +1,20 @@
-use axum::{Json, Router, body::Body, extract::{Path, State, Multipart}, http::StatusCode, routing::{delete, get, post, put}};
 use axum::response::IntoResponse;
+use axum::{
+    body::Body,
+    extract::{Multipart, Path, State},
+    http::StatusCode,
+    routing::{delete, get, post, put},
+    Json, Router,
+};
 use serde::{Deserialize, Serialize};
 use std::fs;
 
-use crate::{app::state::AppState, domain::instance::InstanceSummary, domain::memory::MemoryEntry, services::{chat, memory, tools, workspace}};
+use crate::{
+    app::state::AppState,
+    domain::instance::InstanceSummary,
+    domain::memory::MemoryEntry,
+    services::{chat, memory, tools, workspace},
+};
 
 /// Public memory file route (no auth middleware) — uses ?token= query param.
 /// Used by LLM providers (Anthropic) to fetch memory images via URL.
@@ -19,39 +30,96 @@ pub fn router() -> Router<AppState> {
         .route("/api/instances", get(list_instances))
         .route("/api/instances/{instance_slug}", delete(delete_instance))
         .route("/api/instances/{instance_slug}/mood", get(get_mood))
-        .route("/api/instances/{instance_slug}/companion-name", get(get_companion_name))
-        .route("/api/instances/{instance_slug}/companion-name", put(set_companion_name))
+        .route(
+            "/api/instances/{instance_slug}/companion-name",
+            get(get_companion_name),
+        )
+        .route(
+            "/api/instances/{instance_slug}/companion-name",
+            put(set_companion_name),
+        )
         .route("/api/instances/{instance_slug}/timezone", get(get_timezone))
         .route("/api/instances/{instance_slug}/timezone", put(set_timezone))
         .route("/api/instances/{instance_slug}/secret", post(submit_secret))
-        .route("/api/instances/{instance_slug}/secret/{secret_id}", delete(cancel_secret))
-        .route("/api/instances/{instance_slug}/context-stats", get(get_context_stats))
-        .route("/api/instances/{instance_slug}/{chat_id}/context-stats", get(get_context_stats_chat))
+        .route(
+            "/api/instances/{instance_slug}/secret/{secret_id}",
+            delete(cancel_secret),
+        )
+        .route(
+            "/api/instances/{instance_slug}/context-stats",
+            get(get_context_stats),
+        )
+        .route(
+            "/api/instances/{instance_slug}/{chat_id}/context-stats",
+            get(get_context_stats_chat),
+        )
         .route("/api/instances/{instance_slug}/stats", get(get_stats))
         .route("/api/instances/{instance_slug}/memory", get(list_memory))
-        .route("/api/instances/{instance_slug}/memory/search", get(search_memory))
-        .route("/api/instances/{instance_slug}/memory/reindex", post(reindex_memory))
-        .route("/api/instances/{instance_slug}/memory/vectors", get(list_vectors))
-        .route("/api/instances/{instance_slug}/memory/graph", get(get_memory_graph))
-        .route("/api/instances/{instance_slug}/memory/{*path}", get(read_memory_file).delete(delete_memory_file))
-        .route("/api/instances/{instance_slug}/email", get(get_email_config))
-        .route("/api/instances/{instance_slug}/email", put(set_email_config))
-        .route("/api/instances/{instance_slug}/email", delete(delete_email_config))
+        .route(
+            "/api/instances/{instance_slug}/memory/search",
+            get(search_memory),
+        )
+        .route(
+            "/api/instances/{instance_slug}/memory/reindex",
+            post(reindex_memory),
+        )
+        .route(
+            "/api/instances/{instance_slug}/memory/vectors",
+            get(list_vectors),
+        )
+        .route(
+            "/api/instances/{instance_slug}/memory/graph",
+            get(get_memory_graph),
+        )
+        .route(
+            "/api/instances/{instance_slug}/memory/{*path}",
+            get(read_memory_file).delete(delete_memory_file),
+        )
+        .route(
+            "/api/instances/{instance_slug}/email",
+            get(get_email_config),
+        )
+        .route(
+            "/api/instances/{instance_slug}/email",
+            put(set_email_config),
+        )
+        .route(
+            "/api/instances/{instance_slug}/email",
+            delete(delete_email_config),
+        )
         .route("/api/instances/{instance_slug}/voice", get(get_voice_id))
         .route("/api/instances/{instance_slug}/voice", put(set_voice_id))
-        .route("/api/instances/{instance_slug}/voice-mode", get(get_voice_enabled))
-        .route("/api/instances/{instance_slug}/voice-mode", put(set_voice_enabled))
+        .route(
+            "/api/instances/{instance_slug}/voice-mode",
+            get(get_voice_enabled),
+        )
+        .route(
+            "/api/instances/{instance_slug}/voice-mode",
+            put(set_voice_enabled),
+        )
         .route("/api/instances/{instance_slug}/skin", get(get_skin))
         .route("/api/instances/{instance_slug}/skin", put(set_skin))
-        .route("/api/instances/{instance_slug}/scheduled", get(list_scheduled))
-        .route("/api/instances/{instance_slug}/scheduled/{message_id}", delete(cancel_scheduled))
-        .route("/api/instances/{instance_slug}/export", get(export_instance))
-        .route("/api/instances/{instance_slug}/import", post(import_instance))
+        .route(
+            "/api/instances/{instance_slug}/scheduled",
+            get(list_scheduled),
+        )
+        .route(
+            "/api/instances/{instance_slug}/scheduled/{message_id}",
+            delete(cancel_scheduled),
+        )
+        .route(
+            "/api/instances/{instance_slug}/export",
+            get(export_instance),
+        )
+        .route(
+            "/api/instances/{instance_slug}/import",
+            post(import_instance),
+        )
 }
 
 async fn list_instances(State(state): State<AppState>) -> Json<Vec<InstanceSummary>> {
-    let instances = workspace::read_instances(&state.workspace_dir.join("instances"))
-        .unwrap_or_default();
+    let instances =
+        workspace::read_instances(&state.workspace_dir.join("instances")).unwrap_or_default();
     Json(instances)
 }
 
@@ -60,7 +128,11 @@ async fn delete_instance(
     Path(instance_slug): Path<String>,
 ) -> StatusCode {
     // Validate slug to prevent path traversal
-    if instance_slug.contains('/') || instance_slug.contains('\\') || instance_slug == ".." || instance_slug == "." {
+    if instance_slug.contains('/')
+        || instance_slug.contains('\\')
+        || instance_slug == ".."
+        || instance_slug == "."
+    {
         return StatusCode::BAD_REQUEST;
     }
 
@@ -145,7 +217,11 @@ fn read_identity_name(instance_dir: &std::path::Path) -> Option<String> {
     let raw = fs::read_to_string(instance_dir.join("project_state.json")).ok()?;
     let state: serde_json::Value = serde_json::from_str(&raw).ok()?;
     let name = state.get("identity")?.get("name")?.as_str()?;
-    if name.is_empty() { None } else { Some(name.to_string()) }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -206,7 +282,10 @@ pub fn format_instance_now(instance_dir: &std::path::Path) -> String {
     let now = chrono::Utc::now();
     if let Some(tz_str) = read_timezone(instance_dir) {
         if let Ok(tz) = tz_str.parse::<chrono_tz::Tz>() {
-            return now.with_timezone(&tz).format("%A, %B %-d, %Y %H:%M %Z").to_string();
+            return now
+                .with_timezone(&tz)
+                .format("%A, %B %-d, %Y %H:%M %Z")
+                .to_string();
         }
     }
     now.format("%A, %B %-d, %Y %H:%M UTC").to_string()
@@ -216,7 +295,11 @@ pub fn read_timezone(instance_dir: &std::path::Path) -> Option<String> {
     let raw = fs::read_to_string(instance_dir.join("project_state.json")).ok()?;
     let state: serde_json::Value = serde_json::from_str(&raw).ok()?;
     let tz = state.get("timezone")?.as_str()?;
-    if tz.is_empty() { None } else { Some(tz.to_string()) }
+    if tz.is_empty() {
+        None
+    } else {
+        Some(tz.to_string())
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -361,7 +444,11 @@ async fn get_context_stats(
     let slug = instance_slug.clone();
     let stats = tokio::spawn(async move {
         chat::compute_context_stats_async(wd, slug, "default".to_string()).await
-    }).await.unwrap_or_else(|_| chat::compute_context_stats(&state.workspace_dir, &instance_slug, "default"));
+    })
+    .await
+    .unwrap_or_else(|_| {
+        chat::compute_context_stats(&state.workspace_dir, &instance_slug, "default")
+    });
     Json(stats)
 }
 
@@ -372,9 +459,11 @@ async fn get_context_stats_chat(
     let wd = state.workspace_dir.clone();
     let slug = instance_slug.clone();
     let cid = chat_id.clone();
-    let stats = tokio::spawn(async move {
-        chat::compute_context_stats_async(wd, slug, cid).await
-    }).await.unwrap_or_else(|_| chat::compute_context_stats(&state.workspace_dir, &instance_slug, &chat_id));
+    let stats = tokio::spawn(async move { chat::compute_context_stats_async(wd, slug, cid).await })
+        .await
+        .unwrap_or_else(|_| {
+            chat::compute_context_stats(&state.workspace_dir, &instance_slug, &chat_id)
+        });
     Json(stats)
 }
 
@@ -427,17 +516,21 @@ async fn get_stats(
         daily_activity[day.weekday as usize % 7] += day.messages;
     }
 
-    let daily_history: Vec<(String, u32)> = days.iter()
-        .map(|d| (d.date.clone(), d.messages))
-        .collect();
+    let daily_history: Vec<(String, u32)> =
+        days.iter().map(|d| (d.date.clone(), d.messages)).collect();
 
-    let avg_message_length = if total_messages > 0 { total_chars as f64 / total_messages as f64 } else { 0.0 };
+    let avg_message_length = if total_messages > 0 {
+        total_chars as f64 / total_messages as f64
+    } else {
+        0.0
+    };
 
     // Load avg_response_interval from rhythm.json (still computed by heartbeat)
-    let rhythm: crate::domain::rhythm::InteractionRhythm = fs::read_to_string(instance_dir.join("rhythm.json"))
-        .ok()
-        .and_then(|r| serde_json::from_str(&r).ok())
-        .unwrap_or_default();
+    let rhythm: crate::domain::rhythm::InteractionRhythm =
+        fs::read_to_string(instance_dir.join("rhythm.json"))
+            .ok()
+            .and_then(|r| serde_json::from_str(&r).ok())
+            .unwrap_or_default();
     let avg_response_interval_secs = rhythm.avg_response_interval_secs;
 
     // Scan thoughts for mood distribution
@@ -445,7 +538,9 @@ async fn get_stats(
     let thoughts_dir = instance_dir.join("thoughts");
     if let Ok(entries) = fs::read_dir(&thoughts_dir) {
         for entry in entries.filter_map(Result::ok) {
-            if entry.path().extension().and_then(|e| e.to_str()) != Some("json") { continue; }
+            if entry.path().extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
             if let Ok(raw) = fs::read_to_string(entry.path()) {
                 if let Ok(thought) = serde_json::from_str::<serde_json::Value>(&raw) {
                     if let Some(m) = thought["mood"].as_str() {
@@ -464,12 +559,19 @@ async fn get_stats(
         .unwrap_or(chrono_tz::UTC);
     let local_now = chrono::Utc::now().with_timezone(&tz);
     let today = local_now.format("%Y-%m-%d").to_string();
-    let yesterday = (local_now - chrono::Duration::days(1)).format("%Y-%m-%d").to_string();
-    let dates: std::collections::HashSet<String> = daily_history.iter().map(|(d, _)| d.clone()).collect();
+    let yesterday = (local_now - chrono::Duration::days(1))
+        .format("%Y-%m-%d")
+        .to_string();
+    let dates: std::collections::HashSet<String> =
+        daily_history.iter().map(|(d, _)| d.clone()).collect();
     let mut streak_days = 0u32;
-    let mut check_date = if dates.contains(&today) { local_now.date_naive() }
-        else if dates.contains(&yesterday) { (local_now - chrono::Duration::days(1)).date_naive() }
-        else { local_now.date_naive() };
+    let mut check_date = if dates.contains(&today) {
+        local_now.date_naive()
+    } else if dates.contains(&yesterday) {
+        (local_now - chrono::Duration::days(1)).date_naive()
+    } else {
+        local_now.date_naive()
+    };
     loop {
         if dates.contains(&check_date.format("%Y-%m-%d").to_string()) {
             streak_days += 1;
@@ -481,7 +583,8 @@ async fn get_stats(
 
     // First message: earliest date from daily stats
     let first_message_at = days.first().and_then(|d| {
-        chrono::NaiveDate::parse_from_str(&d.date, "%Y-%m-%d").ok()
+        chrono::NaiveDate::parse_from_str(&d.date, "%Y-%m-%d")
+            .ok()
             .map(|nd| {
                 let ts = nd.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
                 (ts * 1000).to_string()
@@ -519,7 +622,9 @@ struct SearchQuery {
     limit: usize,
 }
 
-fn default_search_limit() -> usize { 10 }
+fn default_search_limit() -> usize {
+    10
+}
 
 async fn search_memory(
     State(state): State<AppState>,
@@ -542,7 +647,8 @@ async fn search_memory(
         .await
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
 
-    let memory_dir = state.workspace_dir
+    let memory_dir = state
+        .workspace_dir
         .join("instances")
         .join(&instance_slug)
         .join("memory");
@@ -577,13 +683,23 @@ async fn search_memory(
                         if public_url.is_empty() {
                             format!("/api/instances/{instance_slug}/memory/{upload_id}")
                         } else {
-                            crate::services::tools::public_memory_url(&public_url, &instance_slug, upload_id, &auth_token)
+                            crate::services::tools::public_memory_url(
+                                &public_url,
+                                &instance_slug,
+                                upload_id,
+                                &auth_token,
+                            )
                         }
                     } else {
                         if public_url.is_empty() {
                             format!("/api/instances/{instance_slug}/uploads/{upload_id}/file")
                         } else {
-                            crate::services::tools::public_file_url(&public_url, &instance_slug, upload_id, &auth_token)
+                            crate::services::tools::public_file_url(
+                                &public_url,
+                                &instance_slug,
+                                upload_id,
+                                &auth_token,
+                            )
                         }
                     };
                     obj["media_url"] = serde_json::Value::String(url);
@@ -609,12 +725,14 @@ async fn list_vectors(
 
     let json: Vec<serde_json::Value> = results
         .into_iter()
-        .map(|r| serde_json::json!({
-            "path": r.path,
-            "source_type": r.source_type,
-            "content_preview": r.content_preview,
-            "upload_id": r.upload_id,
-        }))
+        .map(|r| {
+            serde_json::json!({
+                "path": r.path,
+                "source_type": r.source_type,
+                "content_preview": r.content_preview,
+                "upload_id": r.upload_id,
+            })
+        })
         .collect();
 
     Ok(Json(serde_json::Value::Array(json)))
@@ -693,13 +811,16 @@ async fn serve_memory_file_inner(
     if file_path.contains("..") || file_path.starts_with('/') {
         return Err(StatusCode::BAD_REQUEST);
     }
-    let full_path = state.workspace_dir
+    let full_path = state
+        .workspace_dir
         .join("instances")
         .join(instance_slug)
         .join("memory")
         .join(file_path);
 
-    let bytes = tokio::fs::read(&full_path).await.map_err(|_| StatusCode::NOT_FOUND)?;
+    let bytes = tokio::fs::read(&full_path)
+        .await
+        .map_err(|_| StatusCode::NOT_FOUND)?;
 
     let content_type = match full_path.extension().and_then(|e| e.to_str()) {
         Some("jpg" | "jpeg") => "image/jpeg",
@@ -715,13 +836,21 @@ async fn serve_memory_file_inner(
         _ => "application/octet-stream",
     };
 
-    let is_media = content_type.starts_with("image/") || content_type.starts_with("video/") || content_type.starts_with("audio/");
-    let filename = full_path.file_name().and_then(|n| n.to_str()).unwrap_or("file");
+    let is_media = content_type.starts_with("image/")
+        || content_type.starts_with("video/")
+        || content_type.starts_with("audio/");
+    let filename = full_path
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("file");
     let disposition = if is_media { "inline" } else { "attachment" };
 
     axum::response::Response::builder()
         .header(axum::http::header::CONTENT_TYPE, content_type)
-        .header(axum::http::header::CONTENT_DISPOSITION, format!("{disposition}; filename=\"{filename}\""))
+        .header(
+            axum::http::header::CONTENT_DISPOSITION,
+            format!("{disposition}; filename=\"{filename}\""),
+        )
         .header(axum::http::header::CACHE_CONTROL, "public, max-age=86400")
         .body(axum::body::Body::from(bytes))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
@@ -734,7 +863,8 @@ async fn delete_memory_file(
     if file_path.contains("..") || file_path.starts_with('/') {
         return StatusCode::BAD_REQUEST;
     }
-    let full_path = state.workspace_dir
+    let full_path = state
+        .workspace_dir
         .join("instances")
         .join(&instance_slug)
         .join("memory")
@@ -747,7 +877,8 @@ async fn delete_memory_file(
     }
     // Clean up empty parent dirs
     if let Some(parent) = full_path.parent() {
-        let memory_dir = state.workspace_dir
+        let memory_dir = state
+            .workspace_dir
             .join("instances")
             .join(&instance_slug)
             .join("memory");
@@ -774,18 +905,21 @@ async fn get_email_config(
     Path(instance_slug): Path<String>,
 ) -> Json<serde_json::Value> {
     let accounts = crate::config::EmailAccounts::load(&state.workspace_dir, &instance_slug);
-    let items: Vec<serde_json::Value> = accounts.iter().map(|cfg| {
-        serde_json::json!({
-            "smtp_host": cfg.smtp_host,
-            "smtp_port": cfg.smtp_port,
-            "smtp_user": cfg.smtp_user,
-            "smtp_from": cfg.smtp_from,
-            "imap_host": cfg.imap_host,
-            "imap_port": cfg.imap_port,
-            "imap_user": cfg.imap_user,
-            // Never expose passwords
+    let items: Vec<serde_json::Value> = accounts
+        .iter()
+        .map(|cfg| {
+            serde_json::json!({
+                "smtp_host": cfg.smtp_host,
+                "smtp_port": cfg.smtp_port,
+                "smtp_user": cfg.smtp_user,
+                "smtp_from": cfg.smtp_from,
+                "imap_host": cfg.imap_host,
+                "imap_port": cfg.imap_port,
+                "imap_user": cfg.imap_user,
+                // Never expose passwords
+            })
         })
-    }).collect();
+        .collect();
     Json(serde_json::json!({ "accounts": items }))
 }
 
@@ -795,17 +929,20 @@ async fn set_email_config(
     Json(body): Json<serde_json::Value>,
 ) -> StatusCode {
     // Accept either { accounts: [...] } or a single account object (legacy)
-    let accounts: Vec<crate::config::EmailConfig> = if let Some(arr) = body.get("accounts").and_then(|v| v.as_array()) {
-        match serde_json::from_value::<Vec<crate::config::EmailConfig>>(serde_json::Value::Array(arr.clone())) {
-            Ok(a) => a,
-            Err(_) => return StatusCode::BAD_REQUEST,
-        }
-    } else {
-        match serde_json::from_value::<crate::config::EmailConfig>(body) {
-            Ok(single) => vec![single],
-            Err(_) => return StatusCode::BAD_REQUEST,
-        }
-    };
+    let accounts: Vec<crate::config::EmailConfig> =
+        if let Some(arr) = body.get("accounts").and_then(|v| v.as_array()) {
+            match serde_json::from_value::<Vec<crate::config::EmailConfig>>(
+                serde_json::Value::Array(arr.clone()),
+            ) {
+                Ok(a) => a,
+                Err(_) => return StatusCode::BAD_REQUEST,
+            }
+        } else {
+            match serde_json::from_value::<crate::config::EmailConfig>(body) {
+                Ok(single) => vec![single],
+                Err(_) => return StatusCode::BAD_REQUEST,
+            }
+        };
 
     // Reject accounts with empty passwords — they won't work and are likely
     // Google OAuth accounts mistakenly added as SMTP/IMAP
@@ -825,7 +962,8 @@ async fn delete_email_config(
     State(state): State<AppState>,
     Path(instance_slug): Path<String>,
 ) -> StatusCode {
-    let path = state.workspace_dir
+    let path = state
+        .workspace_dir
         .join("instances")
         .join(&instance_slug)
         .join("email.toml");
@@ -847,7 +985,8 @@ async fn list_scheduled(
     State(state): State<AppState>,
     Path(instance_slug): Path<String>,
 ) -> Json<Vec<serde_json::Value>> {
-    let dir = state.workspace_dir
+    let dir = state
+        .workspace_dir
         .join("instances")
         .join(&instance_slug)
         .join("scheduled");
@@ -855,7 +994,9 @@ async fn list_scheduled(
     if let Ok(entries) = std::fs::read_dir(&dir) {
         for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") { continue; }
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
             if let Ok(raw) = std::fs::read_to_string(&path) {
                 if let Ok(task) = serde_json::from_str::<tools::ScheduledTask>(&raw) {
                     items.push(serde_json::json!({
@@ -876,7 +1017,8 @@ async fn cancel_scheduled(
     State(state): State<AppState>,
     Path((instance_slug, message_id)): Path<(String, String)>,
 ) -> StatusCode {
-    let file = state.workspace_dir
+    let file = state
+        .workspace_dir
         .join("instances")
         .join(&instance_slug)
         .join("scheduled")
@@ -1011,15 +1153,20 @@ async fn import_instance(
 
     match child.wait().await {
         Ok(status) if status.success() => {
-            log::info!("[import] imported {} bytes into {instance_slug}", data.len());
+            log::info!(
+                "[import] imported {} bytes into {instance_slug}",
+                data.len()
+            );
             // Rebuild memory catalog after import
             memory::rebuild_catalog_snapshot(&state.workspace_dir, &instance_slug);
             memory::invalidate_frozen_catalog(&instance_slug);
             Json(serde_json::json!({ "ok": true })).into_response()
         }
-        Ok(_) => {
-            (StatusCode::BAD_REQUEST, "invalid archive — make sure it's a .tar or .tar.gz file").into_response()
-        }
+        Ok(_) => (
+            StatusCode::BAD_REQUEST,
+            "invalid archive — make sure it's a .tar or .tar.gz file",
+        )
+            .into_response(),
         Err(e) => {
             log::error!("[import] tar failed: {e}");
             (StatusCode::INTERNAL_SERVER_ERROR, "import failed").into_response()

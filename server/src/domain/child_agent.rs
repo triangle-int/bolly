@@ -32,5 +32,9 @@ pub struct ChildAgentConfig {
     pub tool_groups: Vec<String>,
 }
 
-fn default_model() -> String { "default".to_string() }
-fn default_true() -> bool { true }
+fn default_model() -> String {
+    "default".to_string()
+}
+fn default_true() -> bool {
+    true
+}

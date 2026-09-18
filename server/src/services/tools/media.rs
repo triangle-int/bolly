@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use crate::services::tool::{ToolDefinition, Tool};
+use crate::services::tool::{Tool, ToolDefinition};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
@@ -40,12 +40,17 @@ impl MediaContext {
 
     fn save_and_get_url(&self, name: &str, bytes: &[u8]) -> Result<String, ToolExecError> {
         let meta = crate::services::uploads::save_upload(
-            &self.workspace_dir, &self.instance_slug, name, bytes,
-        ).map_err(|e| ToolExecError(format!("failed to save upload: {e}")))?;
+            &self.workspace_dir,
+            &self.instance_slug,
+            name,
+            bytes,
+        )
+        .map_err(|e| ToolExecError(format!("failed to save upload: {e}")))?;
 
         if self.public_url.is_empty() {
             // No public URL — return local file path for direct Gemini upload
-            let path = self.workspace_dir
+            let path = self
+                .workspace_dir
                 .join("instances")
                 .join(&self.instance_slug)
                 .join("uploads")
@@ -53,7 +58,12 @@ impl MediaContext {
             return Ok(path.display().to_string());
         }
 
-        Ok(super::public_file_url(&self.public_url, &self.instance_slug, &meta.id, &self.auth_token))
+        Ok(super::public_file_url(
+            &self.public_url,
+            &self.instance_slug,
+            &meta.id,
+            &self.auth_token,
+        ))
     }
 
     /// Process input → public URL or local file path for Gemini upload.
@@ -65,21 +75,30 @@ impl MediaContext {
             let processed = maybe_compress(input).await?;
             let bytes = std::fs::read(&processed)
                 .map_err(|e| ToolExecError(format!("failed to read file: {e}")))?;
-            if processed != input { let _ = std::fs::remove_file(&processed); }
-            let name = local_path.file_name().and_then(|n| n.to_str())
+            if processed != input {
+                let _ = std::fs::remove_file(&processed);
+            }
+            let name = local_path
+                .file_name()
+                .and_then(|n| n.to_str())
                 .unwrap_or("video.mp4");
             self.save_and_get_url(name, &bytes)
         } else if is_youtube_url(input) {
             log::info!("[media] downloading from YouTube...");
             let downloaded = download_youtube(input).await?;
             let processed = maybe_compress(&downloaded).await?;
-            if processed != downloaded { let _ = std::fs::remove_file(&downloaded); }
+            if processed != downloaded {
+                let _ = std::fs::remove_file(&downloaded);
+            }
 
             let bytes = std::fs::read(&processed)
                 .map_err(|e| ToolExecError(format!("failed to read file: {e}")))?;
             let _ = std::fs::remove_file(&processed);
             let url = self.save_and_get_url("youtube_video.mp4", &bytes)?;
-            log::info!("[media] YouTube video → upload ({:.1} MB)", bytes.len() as f64 / 1024.0 / 1024.0);
+            log::info!(
+                "[media] YouTube video → upload ({:.1} MB)",
+                bytes.len() as f64 / 1024.0 / 1024.0
+            );
             Ok(url)
         } else {
             Ok(input.to_string())
@@ -91,12 +110,27 @@ impl MediaContext {
 // watch_video tool
 // ---------------------------------------------------------------------------
 
-pub struct WatchVideoTool { ctx: MediaContext }
+pub struct WatchVideoTool {
+    ctx: MediaContext,
+}
 
 impl WatchVideoTool {
-    pub fn new(google_ai_key: &str, workspace_dir: &Path, instance_slug: &str,
-               public_url: &str, auth_token: &str) -> Self {
-        Self { ctx: MediaContext::new(google_ai_key, workspace_dir, instance_slug, public_url, auth_token) }
+    pub fn new(
+        google_ai_key: &str,
+        workspace_dir: &Path,
+        instance_slug: &str,
+        public_url: &str,
+        auth_token: &str,
+    ) -> Self {
+        Self {
+            ctx: MediaContext::new(
+                google_ai_key,
+                workspace_dir,
+                instance_slug,
+                public_url,
+                auth_token,
+            ),
+        }
     }
 }
 
@@ -124,7 +158,9 @@ impl Tool for WatchVideoTool {
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let input = args.url.trim();
-        if input.is_empty() { return Err(ToolExecError("url/path cannot be empty".into())); }
+        if input.is_empty() {
+            return Err(ToolExecError("url/path cannot be empty".into()));
+        }
         let prompt = args.prompt.as_deref()
             .unwrap_or("Watch this video carefully and provide a detailed summary. Include key points, any text/code shown, and notable visual elements.");
         let media_ref = self.ctx.resolve_media_ref(input).await?;
@@ -146,7 +182,10 @@ async fn maybe_compress(path: &str) -> Result<String, ToolExecError> {
     if size <= MAX_MEDIA_SIZE {
         return Ok(path.to_string());
     }
-    log::info!("[media] compressing {:.1} MB", size as f64 / 1024.0 / 1024.0);
+    log::info!(
+        "[media] compressing {:.1} MB",
+        size as f64 / 1024.0 / 1024.0
+    );
     compress_media(Path::new(path)).await
 }
 
@@ -156,9 +195,12 @@ async fn download_youtube(url: &str) -> Result<String, ToolExecError> {
 
     let result = tokio::process::Command::new("yt-dlp")
         .args([
-            "-f", "best[ext=mp4][filesize<100M]/best[ext=mp4]/best",
-            "--no-playlist", "--no-warnings",
-            "-o", &output_path,
+            "-f",
+            "best[ext=mp4][filesize<100M]/best[ext=mp4]/best",
+            "--no-playlist",
+            "--no-warnings",
+            "-o",
+            &output_path,
             url,
         ])
         .output()
@@ -167,7 +209,10 @@ async fn download_youtube(url: &str) -> Result<String, ToolExecError> {
 
     if !result.status.success() {
         let stderr = String::from_utf8_lossy(&result.stderr);
-        return Err(ToolExecError(format!("yt-dlp failed: {}", stderr.chars().take(300).collect::<String>())));
+        return Err(ToolExecError(format!(
+            "yt-dlp failed: {}",
+            stderr.chars().take(300).collect::<String>()
+        )));
     }
     if !Path::new(&output_path).exists() {
         return Err(ToolExecError("yt-dlp produced no output file".into()));
@@ -176,25 +221,40 @@ async fn download_youtube(url: &str) -> Result<String, ToolExecError> {
 }
 
 async fn ensure_ytdlp() -> Result<(), ToolExecError> {
-    let check = tokio::process::Command::new("yt-dlp").arg("--version").output().await;
-    if check.is_ok() && check.as_ref().unwrap().status.success() { return Ok(()); }
+    let check = tokio::process::Command::new("yt-dlp")
+        .arg("--version")
+        .output()
+        .await;
+    if check.is_ok() && check.as_ref().unwrap().status.success() {
+        return Ok(());
+    }
 
     log::info!("[media] installing yt-dlp...");
-    let pipx = tokio::process::Command::new("pipx").args(["install", "yt-dlp"]).output().await;
-    if pipx.as_ref().map(|o| o.status.success()).unwrap_or(false) { return Ok(()); }
+    let pipx = tokio::process::Command::new("pipx")
+        .args(["install", "yt-dlp"])
+        .output()
+        .await;
+    if pipx.as_ref().map(|o| o.status.success()).unwrap_or(false) {
+        return Ok(());
+    }
 
     let install = tokio::process::Command::new("sh")
         .args(["-c", "curl -sL https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp && chmod +x /usr/local/bin/yt-dlp"])
         .output().await
         .map_err(|e| ToolExecError(format!("failed to install yt-dlp: {e}")))?;
     if !install.status.success() {
-        return Err(ToolExecError("yt-dlp not found and failed to install".into()));
+        return Err(ToolExecError(
+            "yt-dlp not found and failed to install".into(),
+        ));
     }
     Ok(())
 }
 
 async fn compress_media(path: &Path) -> Result<String, ToolExecError> {
-    let check = tokio::process::Command::new("ffmpeg").arg("-version").output().await;
+    let check = tokio::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+        .await;
     if check.is_err() || !check.as_ref().unwrap().status.success() {
         return Err(ToolExecError("ffmpeg is not installed".into()));
     }
@@ -203,22 +263,47 @@ async fn compress_media(path: &Path) -> Result<String, ToolExecError> {
     let input = path.display().to_string();
 
     let args = [
-        "-i", &input, "-vf", "scale=-2:480",
-        "-c:v", "libx264", "-crf", "28", "-preset", "fast",
-        "-c:a", "aac", "-b:a", "64k", "-movflags", "+faststart",
-        "-y", &output_path,
+        "-i",
+        &input,
+        "-vf",
+        "scale=-2:480",
+        "-c:v",
+        "libx264",
+        "-crf",
+        "28",
+        "-preset",
+        "fast",
+        "-c:a",
+        "aac",
+        "-b:a",
+        "64k",
+        "-movflags",
+        "+faststart",
+        "-y",
+        &output_path,
     ];
 
-    let result = tokio::process::Command::new("ffmpeg").args(&args).output().await
+    let result = tokio::process::Command::new("ffmpeg")
+        .args(&args)
+        .output()
+        .await
         .map_err(|e| ToolExecError(format!("ffmpeg failed: {e}")))?;
 
     if !result.status.success() {
         let stderr = String::from_utf8_lossy(&result.stderr);
-        return Err(ToolExecError(format!("ffmpeg failed: {}", stderr.chars().take(300).collect::<String>())));
+        return Err(ToolExecError(format!(
+            "ffmpeg failed: {}",
+            stderr.chars().take(300).collect::<String>()
+        )));
     }
 
-    let size = std::fs::metadata(&output_path).map(|m| m.len()).unwrap_or(0);
-    log::info!("[media] compressed to {:.1} MB", size as f64 / 1024.0 / 1024.0);
+    let size = std::fs::metadata(&output_path)
+        .map(|m| m.len())
+        .unwrap_or(0);
+    log::info!(
+        "[media] compressed to {:.1} MB",
+        size as f64 / 1024.0 / 1024.0
+    );
     Ok(output_path)
 }
 
@@ -239,9 +324,13 @@ async fn analyze_with_gemini(
     // media_ref is a local path or public URL — read the bytes.
     let bytes = if media_ref.starts_with("http") {
         // Download from URL
-        let dl = client.get(media_ref).send().await
+        let dl = client
+            .get(media_ref)
+            .send()
+            .await
             .map_err(|e| ToolExecError(format!("failed to download video: {e}")))?;
-        dl.bytes().await
+        dl.bytes()
+            .await
             .map_err(|e| ToolExecError(format!("failed to read video bytes: {e}")))?
             .to_vec()
     } else {
@@ -251,12 +340,15 @@ async fn analyze_with_gemini(
 
     let file_uri = upload_to_gemini_files(&client, api_key, &bytes, "video/mp4").await?;
 
-    parts.insert(0, serde_json::json!({
-        "file_data": {
-            "mime_type": "video/mp4",
-            "file_uri": file_uri,
-        }
-    }));
+    parts.insert(
+        0,
+        serde_json::json!({
+            "file_data": {
+                "mime_type": "video/mp4",
+                "file_uri": file_uri,
+            }
+        }),
+    );
 
     let body = serde_json::json!({
         "contents": [{ "parts": parts }],
@@ -272,7 +364,8 @@ async fn analyze_with_gemini(
         .post(&url)
         .header("Content-Type", "application/json")
         .json(&body)
-        .send().await
+        .send()
+        .await
         .map_err(|e| ToolExecError(format!("Google AI request failed: {e}")))?;
 
     if !response.status().is_success() {
@@ -281,7 +374,9 @@ async fn analyze_with_gemini(
         return Err(ToolExecError(format!("Google AI HTTP {status}: {err}")));
     }
 
-    let result: serde_json::Value = response.json().await
+    let result: serde_json::Value = response
+        .json()
+        .await
         .map_err(|e| ToolExecError(format!("failed to parse response: {e}")))?;
 
     Ok(result["candidates"][0]["content"]["parts"][0]["text"]
@@ -298,7 +393,10 @@ async fn upload_to_gemini_files(
     mime_type: &str,
 ) -> Result<String, ToolExecError> {
     let size = bytes.len();
-    log::info!("[media] uploading {:.1} MB to Gemini Files API", size as f64 / 1024.0 / 1024.0);
+    log::info!(
+        "[media] uploading {:.1} MB to Gemini Files API",
+        size as f64 / 1024.0 / 1024.0
+    );
 
     // Step 1: initiate resumable upload
     let init_url = format!(
@@ -314,7 +412,8 @@ async fn upload_to_gemini_files(
         .header("X-Goog-Upload-Header-Content-Type", mime_type)
         .header("Content-Type", "application/json")
         .json(&serde_json::json!({"file": {"display_name": "media_upload"}}))
-        .send().await
+        .send()
+        .await
         .map_err(|e| ToolExecError(format!("Gemini Files init failed: {e}")))?;
 
     if !init_res.status().is_success() {
@@ -336,7 +435,8 @@ async fn upload_to_gemini_files(
         .header("X-Goog-Upload-Offset", "0")
         .header("X-Goog-Upload-Command", "upload, finalize")
         .body(bytes.to_vec())
-        .send().await
+        .send()
+        .await
         .map_err(|e| ToolExecError(format!("Gemini Files upload failed: {e}")))?;
 
     if !upload_res.status().is_success() {
@@ -344,7 +444,9 @@ async fn upload_to_gemini_files(
         return Err(ToolExecError(format!("Gemini Files upload error: {err}")));
     }
 
-    let result: serde_json::Value = upload_res.json().await
+    let result: serde_json::Value = upload_res
+        .json()
+        .await
         .map_err(|e| ToolExecError(format!("failed to parse upload response: {e}")))?;
 
     let file_uri = result["file"]["uri"]
@@ -365,7 +467,10 @@ async fn upload_to_gemini_files(
         file_name, api_key
     );
     for attempt in 0..30 {
-        let poll_res = client.get(&poll_url).send().await
+        let poll_res = client
+            .get(&poll_url)
+            .send()
+            .await
             .map_err(|e| ToolExecError(format!("Gemini file poll failed: {e}")))?;
         if poll_res.status().is_success() {
             let info: serde_json::Value = poll_res.json().await.unwrap_or_default();
@@ -386,5 +491,7 @@ async fn upload_to_gemini_files(
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
     }
 
-    Err(ToolExecError("Gemini file did not become ACTIVE within 60s".into()))
+    Err(ToolExecError(
+        "Gemini file did not become ACTIVE within 60s".into(),
+    ))
 }
