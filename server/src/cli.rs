@@ -63,7 +63,10 @@ fn plist_path() -> String {
 
 #[cfg(target_os = "macos")]
 fn uid() -> String {
-    let output = Command::new("id").arg("-u").output().expect("failed to run `id`");
+    let output = Command::new("id")
+        .arg("-u")
+        .output()
+        .expect("failed to run `id`");
     String::from_utf8_lossy(&output.stdout).trim().to_string()
 }
 
@@ -89,7 +92,10 @@ fn svc_start() -> i32 {
                 println!("Bolly service is already running.");
                 0
             } else {
-                eprintln!("launchctl bootstrap failed (exit {}).", s.code().unwrap_or(-1));
+                eprintln!(
+                    "launchctl bootstrap failed (exit {}).",
+                    s.code().unwrap_or(-1)
+                );
                 1
             }
         }
@@ -116,7 +122,10 @@ fn svc_stop() -> i32 {
                 println!("Bolly service is not running.");
                 0
             } else {
-                eprintln!("launchctl bootout failed (exit {}).", s.code().unwrap_or(-1));
+                eprintln!(
+                    "launchctl bootout failed (exit {}).",
+                    s.code().unwrap_or(-1)
+                );
                 1
             }
         }
@@ -130,9 +139,7 @@ fn svc_stop() -> i32 {
 #[cfg(target_os = "macos")]
 fn svc_status() -> i32 {
     let target = format!("gui/{}/{PLIST_LABEL}", uid());
-    let output = Command::new("launchctl")
-        .args(["print", &target])
-        .output();
+    let output = Command::new("launchctl").args(["print", &target]).output();
     match output {
         Ok(out) => {
             let text = String::from_utf8_lossy(&out.stdout);
@@ -230,20 +237,14 @@ fn svc_logs() -> i32 {
 #[cfg(target_os = "linux")]
 fn run_systemctl(args: &[&str], verb: &str) -> i32 {
     // Try user-level first, fall back to sudo system-level
-    let user = Command::new("systemctl")
-        .arg("--user")
-        .args(args)
-        .status();
+    let user = Command::new("systemctl").arg("--user").args(args).status();
     if let Ok(s) = user {
         if s.success() {
             println!("Bolly service {verb}.");
             return 0;
         }
     }
-    let system = Command::new("sudo")
-        .arg("systemctl")
-        .args(args)
-        .status();
+    let system = Command::new("sudo").arg("systemctl").args(args).status();
     match system {
         Ok(s) if s.success() => {
             println!("Bolly service {verb}.");

@@ -1,4 +1,9 @@
-use axum::{Json, Router, extract::{Path, State}, http::StatusCode, routing::{get, post}};
+use axum::{
+    Json, Router,
+    extract::{Path, State},
+    http::StatusCode,
+    routing::{get, post},
+};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashSet, fs, path::Path as StdPath};
 

@@ -74,21 +74,20 @@ async fn check_and_trigger(state: &AppState) {
 
             // Inject the task as a user message so the agent sees it
             let label = format!("[scheduled task] {}", scheduled.task);
-            let user_msg = chat::save_user_message(
-                &state.workspace_dir,
-                &instance_slug,
-                "default",
-                &label,
-            );
+            let user_msg =
+                chat::save_user_message(&state.workspace_dir, &instance_slug, "default", &label);
 
             match user_msg {
                 Ok(msg) => {
                     // Broadcast so the client sees it
-                    let _ = state.events.send(crate::domain::events::ServerEvent::ChatMessageCreated {
-                        instance_slug: instance_slug.clone(),
-                        chat_id: "default".to_string(),
-                        message: msg,
-                    });
+                    let _ =
+                        state
+                            .events
+                            .send(crate::domain::events::ServerEvent::ChatMessageCreated {
+                                instance_slug: instance_slug.clone(),
+                                chat_id: "default".to_string(),
+                                message: msg,
+                            });
                 }
                 Err(e) => {
                     log::warn!("[scheduler] failed to save task message for {instance_slug}: {e}");
@@ -115,12 +114,24 @@ async fn check_and_trigger(state: &AppState) {
                 let bg_state = state.clone();
                 let bg_slug = instance_slug.clone();
                 tokio::spawn(async move {
-                    crate::routes::chat::run_agent_loop(bg_state, bg_slug, "default".to_string(), cancel, false).await;
+                    crate::routes::chat::run_agent_loop(
+                        bg_state,
+                        bg_slug,
+                        "default".to_string(),
+                        cancel,
+                        false,
+                    )
+                    .await;
                 });
 
-                log::info!("[scheduler] triggered agent for {instance_slug}: {}", scheduled.task);
+                log::info!(
+                    "[scheduler] triggered agent for {instance_slug}: {}",
+                    scheduled.task
+                );
             } else {
-                log::info!("[scheduler] agent already running for {instance_slug}, task injected as message");
+                log::info!(
+                    "[scheduler] agent already running for {instance_slug}, task injected as message"
+                );
             }
         }
     }

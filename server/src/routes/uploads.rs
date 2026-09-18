@@ -7,11 +7,7 @@ use axum::{
     routing::get,
 };
 
-use crate::{
-    app::state::AppState,
-    domain::upload::UploadMeta,
-    services::uploads,
-};
+use crate::{app::state::AppState, domain::upload::UploadMeta, services::uploads};
 
 pub fn router() -> Router<AppState> {
     Router::new()
@@ -54,10 +50,7 @@ async fn upload_file(
             continue;
         }
 
-        let file_name = field
-            .file_name()
-            .unwrap_or("unnamed")
-            .to_string();
+        let file_name = field.file_name().unwrap_or("unnamed").to_string();
 
         let bytes = field
             .bytes()
@@ -66,12 +59,12 @@ async fn upload_file(
 
         let meta = uploads::save_upload(&state.workspace_dir, &instance_slug, &file_name, &bytes)
             .map_err(|e| {
-                let status = match e.kind() {
-                    std::io::ErrorKind::InvalidInput => StatusCode::BAD_REQUEST,
-                    _ => StatusCode::INTERNAL_SERVER_ERROR,
-                };
-                (status, e.to_string())
-            })?;
+            let status = match e.kind() {
+                std::io::ErrorKind::InvalidInput => StatusCode::BAD_REQUEST,
+                _ => StatusCode::INTERNAL_SERVER_ERROR,
+            };
+            (status, e.to_string())
+        })?;
 
         return Ok(Json(meta));
     }
@@ -153,9 +146,8 @@ async fn serve_file_inner(
     Response::builder()
         .header(
             header::CONTENT_TYPE,
-            HeaderValue::from_str(&meta.mime_type).unwrap_or_else(|_| {
-                HeaderValue::from_static("application/octet-stream")
-            }),
+            HeaderValue::from_str(&meta.mime_type)
+                .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
         )
         .header(
             header::CONTENT_DISPOSITION,

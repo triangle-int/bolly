@@ -1,7 +1,7 @@
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::{Mutex, oneshot};
-use serde::{Deserialize, Serialize};
 
 /// Info about a connected Tauri agent machine.
 #[derive(Clone, Debug, Serialize)]
@@ -111,11 +111,16 @@ impl MachineRegistry {
     /// Push a screen frame into the ring buffer.
     pub async fn push_frame(&self, machine_id: &str, frame: ScreenFrame) {
         // Update latest
-        self.latest_frame.lock().await.insert(machine_id.to_string(), frame.clone());
+        self.latest_frame
+            .lock()
+            .await
+            .insert(machine_id.to_string(), frame.clone());
 
         // Push to ring buffer
         let mut buffers = self.frames.lock().await;
-        let buf = buffers.entry(machine_id.to_string()).or_insert_with(Vec::new);
+        let buf = buffers
+            .entry(machine_id.to_string())
+            .or_insert_with(Vec::new);
         buf.push(frame);
         // Trim to max size
         if buf.len() > MAX_FRAMES {
@@ -137,12 +142,22 @@ impl MachineRegistry {
 
     /// Get the count of buffered frames.
     pub async fn frame_count(&self, machine_id: &str) -> usize {
-        self.frames.lock().await.get(machine_id).map(|v| v.len()).unwrap_or(0)
+        self.frames
+            .lock()
+            .await
+            .get(machine_id)
+            .map(|v| v.len())
+            .unwrap_or(0)
     }
 
     /// List all connected machines.
     pub async fn list(&self) -> Vec<MachineInfo> {
-        self.agents.lock().await.values().map(|(info, _)| info.clone()).collect()
+        self.agents
+            .lock()
+            .await
+            .values()
+            .map(|(info, _)| info.clone())
+            .collect()
     }
 
     /// Send a toolcall to a specific machine and wait for the result.
@@ -156,14 +171,18 @@ impl MachineRegistry {
         // Find the agent's sender
         let sender = {
             let agents = self.agents.lock().await;
-            agents.get(machine_id)
+            agents
+                .get(machine_id)
                 .map(|(_, s)| s.clone())
                 .ok_or_else(|| format!("machine '{machine_id}' not connected"))?
         };
 
         // Create oneshot for the response
         let (tx, rx) = oneshot::channel();
-        self.pending.lock().await.insert(request_id.clone(), PendingAction { responder: tx });
+        self.pending
+            .lock()
+            .await
+            .insert(request_id.clone(), PendingAction { responder: tx });
 
         // Send the toolcall to the agent
         let msg = serde_json::to_string(&call).map_err(|e| e.to_string())?;
@@ -173,22 +192,24 @@ impl MachineRegistry {
             return Err(format!("machine '{machine_id}' disconnected (send failed)"));
         }
 
-        log::info!("[machines] sent toolcall {} to '{machine_id}', waiting...", &request_id[..8]);
+        log::info!(
+            "[machines] sent toolcall {} to '{machine_id}', waiting...",
+            &request_id[..8]
+        );
 
         // Wait for response with timeout
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(120),
-            rx,
-        )
-        .await
-        .map_err(|_| {
-            // Clean up pending on timeout
-            let pending = self.pending.clone();
-            let rid = request_id.clone();
-            tokio::spawn(async move { pending.lock().await.remove(&rid); });
-            format!("computer use action timed out (120s) on '{machine_id}'")
-        })?
-        .map_err(|_| "agent disconnected before responding".to_string())?;
+        let result = tokio::time::timeout(std::time::Duration::from_secs(120), rx)
+            .await
+            .map_err(|_| {
+                // Clean up pending on timeout
+                let pending = self.pending.clone();
+                let rid = request_id.clone();
+                tokio::spawn(async move {
+                    pending.lock().await.remove(&rid);
+                });
+                format!("computer use action timed out (120s) on '{machine_id}'")
+            })?
+            .map_err(|_| "agent disconnected before responding".to_string())?;
 
         log::info!("[machines] result received for {}", &request_id[..8]);
 

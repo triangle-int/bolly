@@ -115,8 +115,8 @@ pub fn create_drop_with_image(
     };
 
     let path = drops_dir.join(format!("{id}.json"));
-    let body =
-        serde_json::to_string_pretty(&drop).map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
+    let body = serde_json::to_string_pretty(&drop)
+        .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
     fs::write(&path, body)?;
 
     log::info!("[drops] created {id} ({kind}) for {instance_slug}: {title}");
@@ -159,7 +159,11 @@ pub fn list_drops(workspace_dir: &Path, instance_slug: &str) -> io::Result<Vec<D
 }
 
 /// Get a single drop by ID.
-pub fn get_drop(workspace_dir: &Path, instance_slug: &str, drop_id: &str) -> io::Result<Option<Drop>> {
+pub fn get_drop(
+    workspace_dir: &Path,
+    instance_slug: &str,
+    drop_id: &str,
+) -> io::Result<Option<Drop>> {
     let path = workspace_dir
         .join("instances")
         .join(instance_slug)

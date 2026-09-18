@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 use crate::domain::{chat::ChatMessage, drop::Drop, instance::InstanceSummary, thought::Thought};
-use crate::services::memory_import::{ImportStage};
+use crate::services::memory_import::ImportStage;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]

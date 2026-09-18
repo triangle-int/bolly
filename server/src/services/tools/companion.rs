@@ -1,11 +1,14 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
-use crate::services::tool::{ToolDefinition, Tool};
+use crate::services::tool::{Tool, ToolDefinition};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio::sync::broadcast;
 
-use super::{openai_schema, ToolExecError};
+use super::{ToolExecError, openai_schema};
 use crate::domain::events::ServerEvent;
 use crate::domain::mood::MoodState;
 
@@ -71,7 +74,11 @@ pub struct PlayMusicTool {
 }
 
 impl PlayMusicTool {
-    pub fn new(workspace_dir: &Path, instance_slug: &str, events: broadcast::Sender<ServerEvent>) -> Self {
+    pub fn new(
+        workspace_dir: &Path,
+        instance_slug: &str,
+        events: broadcast::Sender<ServerEvent>,
+    ) -> Self {
         Self {
             workspace_dir: workspace_dir.to_path_buf(),
             instance_slug: instance_slug.to_string(),
@@ -114,7 +121,11 @@ impl Tool for PlayMusicTool {
         let action = args.action.to_lowercase();
         match action.as_str() {
             "play" | "pause" | "set_volume" => {}
-            _ => return Err(ToolExecError(format!("unknown action '{action}', use play/pause/set_volume"))),
+            _ => {
+                return Err(ToolExecError(format!(
+                    "unknown action '{action}', use play/pause/set_volume"
+                )));
+            }
         }
         if action == "play" && args.track.is_none() {
             return Err(ToolExecError("track is required for play action".into()));
@@ -158,7 +169,7 @@ impl PlayMusicTool {
     /// Download audio from a URL (YouTube or direct) and save to instance uploads.
     /// Returns a local `/api/instances/{slug}/uploads/{id}/file` URL.
     async fn download_and_upload(&self, url: &str) -> Result<String, ToolExecError> {
-        use super::media::{is_youtube_url, download_youtube, MediaType};
+        use super::media::{MediaType, download_youtube, is_youtube_url};
 
         let local_path = if is_youtube_url(url) {
             log::info!("[play_music] downloading YouTube audio: {url}");
@@ -170,15 +181,25 @@ impl PlayMusicTool {
                 .timeout(std::time::Duration::from_secs(60))
                 .build()
                 .map_err(|e| ToolExecError(format!("HTTP client error: {e}")))?;
-            let response = client.get(url).send().await
+            let response = client
+                .get(url)
+                .send()
+                .await
                 .map_err(|e| ToolExecError(format!("download failed: {e}")))?;
             if !response.status().is_success() {
-                return Err(ToolExecError(format!("download failed: HTTP {}", response.status())));
+                return Err(ToolExecError(format!(
+                    "download failed: HTTP {}",
+                    response.status()
+                )));
             }
-            let bytes = response.bytes().await
+            let bytes = response
+                .bytes()
+                .await
                 .map_err(|e| ToolExecError(format!("failed to read audio: {e}")))?;
 
-            let ext = url.rsplit('.').next()
+            let ext = url
+                .rsplit('.')
+                .next()
                 .filter(|e| ["mp3", "m4a", "ogg", "wav", "flac", "aac", "opus"].contains(e))
                 .unwrap_or("mp3");
             let tmp = format!("/tmp/play_music_{}.{ext}", std::process::id());
@@ -199,14 +220,21 @@ impl PlayMusicTool {
         let filename = format!("music.{ext}");
 
         let meta = crate::services::uploads::save_upload(
-            &self.workspace_dir, &self.instance_slug, &filename, &bytes,
-        ).map_err(|e| ToolExecError(format!("failed to save upload: {e}")))?;
+            &self.workspace_dir,
+            &self.instance_slug,
+            &filename,
+            &bytes,
+        )
+        .map_err(|e| ToolExecError(format!("failed to save upload: {e}")))?;
 
         let local_url = format!(
             "/api/instances/{}/uploads/{}/file",
             self.instance_slug, meta.id
         );
-        log::info!("[play_music] audio saved → {local_url} ({:.1} MB)", bytes.len() as f64 / 1024.0 / 1024.0);
+        log::info!(
+            "[play_music] audio saved → {local_url} ({:.1} MB)",
+            bytes.len() as f64 / 1024.0 / 1024.0
+        );
         Ok(local_url)
     }
 }
@@ -219,7 +247,8 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 /// Temporary voice overrides — cleared on server restart or context clear.
-static VOICE_OVERRIDES: std::sync::OnceLock<Mutex<HashMap<String, String>>> = std::sync::OnceLock::new();
+static VOICE_OVERRIDES: std::sync::OnceLock<Mutex<HashMap<String, String>>> =
+    std::sync::OnceLock::new();
 
 fn voice_overrides() -> &'static Mutex<HashMap<String, String>> {
     VOICE_OVERRIDES.get_or_init(|| Mutex::new(HashMap::new()))
@@ -321,7 +350,8 @@ impl Tool for EditSoulTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "edit_soul".into(),
-            description: "Rewrite your soul.md (personality/voice definition). Full markdown content.".into(),
+            description:
+                "Rewrite your soul.md (personality/voice definition). Full markdown content.".into(),
             parameters: openai_schema::<EditSoulArgs>(),
         }
     }
@@ -337,4 +367,3 @@ impl Tool for EditSoulTool {
         )
     }
 }
-

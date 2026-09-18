@@ -3,8 +3,7 @@
 use base64::Engine;
 use serde::{Deserialize, Serialize};
 
-const EMBED_URL: &str =
-    "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2-preview:embedContent";
+const EMBED_URL: &str = "https://generativelanguage.googleapis.com/v1beta/models/gemini-embedding-2-preview:embedContent";
 
 /// Default output dimensionality (MRL-truncated from 3072 for efficiency).
 const OUTPUT_DIM: u32 = 768;
@@ -45,12 +44,8 @@ struct Content {
 #[derive(Serialize)]
 #[serde(untagged)]
 enum Part {
-    Text {
-        text: String,
-    },
-    InlineData {
-        inline_data: InlineData,
-    },
+    Text { text: String },
+    InlineData { inline_data: InlineData },
 }
 
 #[derive(Serialize)]
@@ -93,7 +88,9 @@ pub async fn embed_text(
 ) -> Result<Vec<f32>, String> {
     let req = EmbedRequest {
         content: Content {
-            parts: vec![Part::Text { text: text.to_string() }],
+            parts: vec![Part::Text {
+                text: text.to_string(),
+            }],
         },
         task_type: task_type.as_str().to_string(),
         output_dimensionality: OUTPUT_DIM,
@@ -102,11 +99,7 @@ pub async fn embed_text(
 }
 
 /// Embed any media (video, audio, PDF) as raw bytes.
-pub async fn embed_media(
-    api_key: &str,
-    bytes: &[u8],
-    mime_type: &str,
-) -> Result<Vec<f32>, String> {
+pub async fn embed_media(api_key: &str, bytes: &[u8], mime_type: &str) -> Result<Vec<f32>, String> {
     let b64 = base64::engine::general_purpose::STANDARD.encode(bytes);
     let req = EmbedRequest {
         content: Content {
@@ -134,7 +127,9 @@ pub async fn embed_text_and_image(
     let req = EmbedRequest {
         content: Content {
             parts: vec![
-                Part::Text { text: text.to_string() },
+                Part::Text {
+                    text: text.to_string(),
+                },
                 Part::InlineData {
                     inline_data: InlineData {
                         mime_type: mime_type.to_string(),
@@ -176,7 +171,10 @@ async fn send(api_key: &str, req: &EmbedRequest) -> Result<Vec<f32>, String> {
 
         // Retry on 5xx errors
         if status.is_server_error() && attempt < 2 {
-            log::warn!("embedding API {status}, retrying in {delay}ms (attempt {}/3)", attempt + 1);
+            log::warn!(
+                "embedding API {status}, retrying in {delay}ms (attempt {}/3)",
+                attempt + 1
+            );
             tokio::time::sleep(std::time::Duration::from_millis(delay)).await;
             delay *= 2;
             continue;

@@ -1,9 +1,9 @@
 use std::{collections::HashMap, fmt, future::Future, pin::Pin, sync::Arc};
 
 use rmcp::{
+    ServiceExt,
     model::{ClientInfo, Implementation, ReadResourceRequestParams},
     service::ServerSink,
-    ServiceExt,
 };
 
 use crate::config::McpServerConfig;
@@ -35,8 +35,13 @@ fn client_info() -> ClientInfo {
 }
 
 /// Connect via streamable HTTP transport.
-async fn connect_http(config: &McpServerConfig) -> anyhow::Result<(ServerSink, tokio::task::JoinHandle<()>)> {
-    let url = config.url.as_deref().ok_or_else(|| anyhow::anyhow!("no url"))?;
+async fn connect_http(
+    config: &McpServerConfig,
+) -> anyhow::Result<(ServerSink, tokio::task::JoinHandle<()>)> {
+    let url = config
+        .url
+        .as_deref()
+        .ok_or_else(|| anyhow::anyhow!("no url"))?;
     let mut transport_config =
         rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(url);
     for (key, value) in &config.headers {
@@ -47,8 +52,7 @@ async fn connect_http(config: &McpServerConfig) -> anyhow::Result<(ServerSink, t
             transport_config.custom_headers.insert(name, val);
         }
     }
-    let transport =
-        rmcp::transport::StreamableHttpClientTransport::from_config(transport_config);
+    let transport = rmcp::transport::StreamableHttpClientTransport::from_config(transport_config);
     let running = client_info().serve(transport).await?;
     let sink = running.peer().clone();
     let handle = tokio::spawn(async move {
@@ -58,7 +62,9 @@ async fn connect_http(config: &McpServerConfig) -> anyhow::Result<(ServerSink, t
 }
 
 /// Connect via stdio (child process) transport.
-async fn connect_stdio(config: &McpServerConfig) -> anyhow::Result<(ServerSink, tokio::task::JoinHandle<()>)> {
+async fn connect_stdio(
+    config: &McpServerConfig,
+) -> anyhow::Result<(ServerSink, tokio::task::JoinHandle<()>)> {
     let cmd = config
         .command
         .as_deref()
@@ -81,7 +87,9 @@ async fn connect_stdio(config: &McpServerConfig) -> anyhow::Result<(ServerSink, 
 }
 
 /// Connect using the appropriate transport based on config.
-async fn connect(config: &McpServerConfig) -> anyhow::Result<(ServerSink, tokio::task::JoinHandle<()>)> {
+async fn connect(
+    config: &McpServerConfig,
+) -> anyhow::Result<(ServerSink, tokio::task::JoinHandle<()>)> {
     if config.command.is_some() {
         connect_stdio(config).await
     } else {
@@ -132,16 +140,14 @@ fn format_result(result: rmcp::model::CallToolResult) -> Result<String, ToolErro
                 rmcp::model::RawContent::Text(raw) => {
                     Some(serde_json::json!({"type": "text", "text": raw.text}))
                 }
-                rmcp::model::RawContent::Image(raw) => {
-                    Some(serde_json::json!({
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": raw.mime_type,
-                            "data": raw.data,
-                        }
-                    }))
-                }
+                rmcp::model::RawContent::Image(raw) => Some(serde_json::json!({
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": raw.mime_type,
+                        "data": raw.data,
+                    }
+                })),
                 _ => None,
             })
             .collect();
@@ -162,9 +168,7 @@ fn format_result(result: rmcp::model::CallToolResult) -> Result<String, ToolErro
                         ..
                     } => format!(
                         "{mime_type}{uri}:{blob}",
-                        mime_type = mime_type
-                            .map(|m| format!("data:{m};"))
-                            .unwrap_or_default(),
+                        mime_type = mime_type.map(|m| format!("data:{m};")).unwrap_or_default(),
                     ),
                 },
                 other => format!("{other:?}"),
@@ -176,7 +180,13 @@ fn format_result(result: rmcp::model::CallToolResult) -> Result<String, ToolErro
 /// Sanitize a string for use in tool names: replace non-alphanumeric chars with underscore.
 fn sanitize_tool_name_part(s: &str) -> String {
     s.chars()
-        .map(|c| if c.is_alphanumeric() || c == '_' { c } else { '_' })
+        .map(|c| {
+            if c.is_alphanumeric() || c == '_' {
+                c
+            } else {
+                '_'
+            }
+        })
         .collect()
 }
 
@@ -224,9 +234,10 @@ impl ToolDyn for McpTool {
             let mut params = rmcp::model::CallToolRequestParams::new(name);
             params.arguments = arguments;
 
-            let result = sink.call_tool(params).await.map_err(|e| {
-                ToolError::ToolCallError(Box::new(McpToolError(format!("{e}"))))
-            })?;
+            let result = sink
+                .call_tool(params)
+                .await
+                .map_err(|e| ToolError::ToolCallError(Box::new(McpToolError(format!("{e}")))))?;
             format_result(result)
         })
     }

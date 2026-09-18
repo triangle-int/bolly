@@ -4,7 +4,7 @@ use serde::Deserialize;
 
 use crate::services::machine_registry::{AgentToolCall, MachineRegistry};
 use crate::services::tool::{Tool, ToolDefinition};
-use crate::services::tools::{openai_schema, ToolExecError};
+use crate::services::tools::{ToolExecError, openai_schema};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // list_machines — returns connected Tauri agents
@@ -32,10 +32,11 @@ impl Tool for ListMachinesTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "list_machines".into(),
-            description: "List all connected desktop machines that you can control via computer use. \
+            description:
+                "List all connected desktop machines that you can control via computer use. \
                 Returns machine IDs, OS, hostname, and screen dimensions. \
                 Use a machine_id from this list when calling computer_use."
-                .into(),
+                    .into(),
             parameters: openai_schema::<ListMachinesArgs>(),
         }
     }
@@ -43,7 +44,9 @@ impl Tool for ListMachinesTool {
     async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
         let machines = self.registry.list().await;
         if machines.is_empty() {
-            return Ok("No machines connected. The user needs to open the Bolly desktop app first.".into());
+            return Ok(
+                "No machines connected. The user needs to open the Bolly desktop app first.".into(),
+            );
         }
         let info: Vec<serde_json::Value> = machines
             .iter()
@@ -145,11 +148,21 @@ impl Tool for ComputerUseTool {
         let request_id = uuid::Uuid::new_v4().to_string();
 
         let mut params = serde_json::json!({});
-        if let Some(c) = &args.coordinate { params["coordinate"] = serde_json::json!(c); }
-        if let Some(t) = &args.text { params["text"] = serde_json::json!(t); }
-        if let Some(k) = &args.key { params["key"] = serde_json::json!(k); }
-        if let Some(d) = &args.scroll_direction { params["scroll_direction"] = serde_json::json!(d); }
-        if let Some(a) = &args.scroll_amount { params["scroll_amount"] = serde_json::json!(a); }
+        if let Some(c) = &args.coordinate {
+            params["coordinate"] = serde_json::json!(c);
+        }
+        if let Some(t) = &args.text {
+            params["text"] = serde_json::json!(t);
+        }
+        if let Some(k) = &args.key {
+            params["key"] = serde_json::json!(k);
+        }
+        if let Some(d) = &args.scroll_direction {
+            params["scroll_direction"] = serde_json::json!(d);
+        }
+        if let Some(a) = &args.scroll_amount {
+            params["scroll_amount"] = serde_json::json!(a);
+        }
 
         let call = AgentToolCall {
             request_id: request_id.clone(),
@@ -192,7 +205,12 @@ impl Tool for ComputerUseTool {
 
                 if let Some(meta) = saved {
                     // URL-based image — no base64 in context, no truncation, no context bloat
-                    let full_url = super::public_file_url(&self.public_url, &self.instance_slug, &meta.id, &self.auth_token);
+                    let full_url = super::public_file_url(
+                        &self.public_url,
+                        &self.instance_slug,
+                        &meta.id,
+                        &self.auth_token,
+                    );
                     let chat_url = format!(
                         "/api/instances/{}/uploads/{}/file",
                         self.instance_slug, meta.id
@@ -224,7 +242,10 @@ impl Tool for ComputerUseTool {
                     Ok(format!("Action '{}' executed successfully.", args.action))
                 } else {
                     let err = result.error.unwrap_or_else(|| "unknown error".to_string());
-                    Err(ToolExecError(format!("Action '{}' failed: {}", args.action, err)))
+                    Err(ToolExecError(format!(
+                        "Action '{}' failed: {}",
+                        args.action, err
+                    )))
                 }
             }
             // bash/file results return output as text
@@ -292,7 +313,10 @@ impl Tool for RemoteBashTool {
 
         log::info!("[remote_bash] '{}' on '{}'", args.command, args.machine_id);
 
-        let result = self.registry.execute(&args.machine_id, call).await
+        let result = self
+            .registry
+            .execute(&args.machine_id, call)
+            .await
             .map_err(|e| ToolExecError(e))?;
 
         if result.success.unwrap_or(false) {
@@ -359,15 +383,25 @@ impl Tool for RemoteFilesTool {
             }),
         };
 
-        log::info!("[remote_files] {} '{}' on '{}'", args.operation, args.path, args.machine_id);
+        log::info!(
+            "[remote_files] {} '{}' on '{}'",
+            args.operation,
+            args.path,
+            args.machine_id
+        );
 
-        let result = self.registry.execute(&args.machine_id, call).await
+        let result = self
+            .registry
+            .execute(&args.machine_id, call)
+            .await
             .map_err(|e| ToolExecError(e))?;
 
         if result.success.unwrap_or(false) {
             Ok(result.error.unwrap_or_default()) // output in error field
         } else {
-            let err = result.error.unwrap_or_else(|| "file operation failed".into());
+            let err = result
+                .error
+                .unwrap_or_else(|| "file operation failed".into());
             Err(ToolExecError(err))
         }
     }

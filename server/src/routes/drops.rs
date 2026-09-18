@@ -5,11 +5,7 @@ use axum::{
     routing::get,
 };
 
-use crate::{
-    app::state::AppState,
-    domain::drop::Drop,
-    services::drops,
-};
+use crate::{app::state::AppState, domain::drop::Drop, services::drops};
 
 pub fn router() -> Router<AppState> {
     Router::new()

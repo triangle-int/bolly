@@ -1,14 +1,17 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
-use chrono::Utc;
-use crate::services::tool::{ToolDefinition, Tool};
 use crate::config::EmailConfig;
+use crate::services::tool::{Tool, ToolDefinition};
+use chrono::Utc;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use tokio::sync::broadcast;
 
-use super::{openai_schema, ToolExecError};
 use super::companion::{load_mood_state, save_mood_state};
+use super::{ToolExecError, openai_schema};
 use crate::domain::events::ServerEvent;
 use crate::services::google::GoogleClient;
 
@@ -95,15 +98,27 @@ impl Tool for ScheduleAgentTool {
         let time_desc = if total >= 86400 {
             let d = total / 86400;
             let h = (total % 86400) / 3600;
-            if h > 0 { format!("{d}d {h}h") } else { format!("{d}d") }
+            if h > 0 {
+                format!("{d}d {h}h")
+            } else {
+                format!("{d}d")
+            }
         } else if total >= 3600 {
             let h = total / 3600;
             let m = (total % 3600) / 60;
-            if m > 0 { format!("{h}h {m}m") } else { format!("{h}h") }
+            if m > 0 {
+                format!("{h}h {m}m")
+            } else {
+                format!("{h}h")
+            }
         } else if total >= 60 {
             let m = total / 60;
             let s = total % 60;
-            if s > 0 { format!("{m}m {s}s") } else { format!("{m}m") }
+            if s > 0 {
+                format!("{m}m {s}s")
+            } else {
+                format!("{m}m")
+            }
         } else {
             format!("{total}s")
         };
@@ -123,7 +138,11 @@ pub struct ReachOutTool {
 }
 
 impl ReachOutTool {
-    pub fn new(workspace_dir: &Path, instance_slug: &str, events: broadcast::Sender<ServerEvent>) -> Self {
+    pub fn new(
+        workspace_dir: &Path,
+        instance_slug: &str,
+        events: broadcast::Sender<ServerEvent>,
+    ) -> Self {
         Self {
             workspace_dir: workspace_dir.to_path_buf(),
             instance_slug: instance_slug.to_string(),
@@ -168,7 +187,10 @@ impl Tool for ReachOutTool {
             }
         }
 
-        let instance_dir = self.workspace_dir.join("instances").join(&self.instance_slug);
+        let instance_dir = self
+            .workspace_dir
+            .join("instances")
+            .join(&self.instance_slug);
         let mood = load_mood_state(&instance_dir);
         let now_ts = chrono::Utc::now().timestamp();
 
@@ -187,10 +209,14 @@ impl Tool for ReachOutTool {
             content: message.clone(),
             created_at: now.to_string(),
             kind: Default::default(),
-            tool_name: None, mcp_app_html: None, mcp_app_input: None, model: None,
+            tool_name: None,
+            mcp_app_html: None,
+            mcp_app_input: None,
+            model: None,
         };
 
-        let chat_dir = self.workspace_dir
+        let chat_dir = self
+            .workspace_dir
             .join("instances")
             .join(&self.instance_slug)
             .join("chats")
@@ -201,10 +227,11 @@ impl Tool for ReachOutTool {
         let lock = super::chat_file_lock(&messages_path);
         let _guard = lock.lock().unwrap_or_else(|e| e.into_inner());
 
-        let mut messages: Vec<crate::domain::chat::ChatMessage> = std::fs::read_to_string(&messages_path)
-            .ok()
-            .and_then(|raw| serde_json::from_str(&raw).ok())
-            .unwrap_or_default();
+        let mut messages: Vec<crate::domain::chat::ChatMessage> =
+            std::fs::read_to_string(&messages_path)
+                .ok()
+                .and_then(|raw| serde_json::from_str(&raw).ok())
+                .unwrap_or_default();
 
         messages.push(chat_message.clone());
 
@@ -227,7 +254,11 @@ impl Tool for ReachOutTool {
             message: chat_message,
         });
 
-        log::info!("[reach_out] {} sent message: {}", self.instance_slug, &message[..message.len().min(60)]);
+        log::info!(
+            "[reach_out] {} sent message: {}",
+            self.instance_slug,
+            &message[..message.len().min(60)]
+        );
         Ok("message delivered".to_string())
     }
 }
@@ -281,7 +312,8 @@ impl Tool for SendEmailTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "send_email".into(),
-            description: "Send an email. Use 'account' to pick which email account to send from.".into(),
+            description: "Send an email. Use 'account' to pick which email account to send from."
+                .into(),
             parameters: openai_schema::<SendEmailArgs>(),
         }
     }
@@ -289,14 +321,21 @@ impl Tool for SendEmailTool {
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         // Try to match account to an SMTP config first
         if let Some(ref acct) = args.account {
-            if let Some(cfg) = self.imap_accounts.iter().find(|c| c.smtp_from == *acct || c.smtp_user == *acct) {
+            if let Some(cfg) = self
+                .imap_accounts
+                .iter()
+                .find(|c| c.smtp_from == *acct || c.smtp_user == *acct)
+            {
                 return send_via_smtp(cfg, &args).await;
             }
         }
 
         // Try Gmail
         if let Some(ref google) = self.google {
-            if let Ok((token, email)) = google.access_token(&self.instance_slug, args.account.as_deref()).await {
+            if let Ok((token, email)) = google
+                .access_token(&self.instance_slug, args.account.as_deref())
+                .await
+            {
                 return send_via_gmail(&token, &email, &args).await;
             }
         }
@@ -306,11 +345,17 @@ impl Tool for SendEmailTool {
             return send_via_smtp(cfg, &args).await;
         }
 
-        Err(ToolExecError("no email account available — connect Google or configure SMTP in settings".into()))
+        Err(ToolExecError(
+            "no email account available — connect Google or configure SMTP in settings".into(),
+        ))
     }
 }
 
-async fn send_via_gmail(token: &str, email: &str, args: &SendEmailArgs) -> Result<String, ToolExecError> {
+async fn send_via_gmail(
+    token: &str,
+    email: &str,
+    args: &SendEmailArgs,
+) -> Result<String, ToolExecError> {
     let mut rfc2822 = format!(
         "From: {email}\r\nTo: {}\r\nSubject: {}\r\n",
         args.to, args.subject
@@ -341,7 +386,10 @@ async fn send_via_gmail(token: &str, email: &str, args: &SendEmailArgs) -> Resul
         return Err(ToolExecError(format!("Gmail send failed: {body}")));
     }
 
-    Ok(format!("email sent to {} (from {email}, via gmail)", args.to))
+    Ok(format!(
+        "email sent to {} (from {email}, via gmail)",
+        args.to
+    ))
 }
 
 async fn send_via_smtp(cfg: &EmailConfig, args: &SendEmailArgs) -> Result<String, ToolExecError> {
@@ -351,9 +399,13 @@ async fn send_via_smtp(cfg: &EmailConfig, args: &SendEmailArgs) -> Result<String
         transport::smtp::authentication::Credentials,
     };
 
-    let from: Mailbox = cfg.smtp_from.parse()
+    let from: Mailbox = cfg
+        .smtp_from
+        .parse()
         .map_err(|e| ToolExecError(format!("invalid smtp_from address: {e}")))?;
-    let to: Mailbox = args.to.parse()
+    let to: Mailbox = args
+        .to
+        .parse()
         .map_err(|e| ToolExecError(format!("invalid recipient address: {e}")))?;
 
     let mut builder: MessageBuilder = lettre::Message::builder()
@@ -365,7 +417,8 @@ async fn send_via_smtp(cfg: &EmailConfig, args: &SendEmailArgs) -> Result<String
         for addr in cc.split(',') {
             let addr = addr.trim();
             if !addr.is_empty() {
-                let mbox: Mailbox = addr.parse()
+                let mbox: Mailbox = addr
+                    .parse()
                     .map_err(|e| ToolExecError(format!("invalid CC address '{addr}': {e}")))?;
                 builder = builder.cc(mbox);
             }
@@ -375,7 +428,8 @@ async fn send_via_smtp(cfg: &EmailConfig, args: &SendEmailArgs) -> Result<String
         for addr in bcc.split(',') {
             let addr = addr.trim();
             if !addr.is_empty() {
-                let mbox: Mailbox = addr.parse()
+                let mbox: Mailbox = addr
+                    .parse()
                     .map_err(|e| ToolExecError(format!("invalid BCC address '{addr}': {e}")))?;
                 builder = builder.bcc(mbox);
             }
@@ -395,10 +449,15 @@ async fn send_via_smtp(cfg: &EmailConfig, args: &SendEmailArgs) -> Result<String
         .credentials(creds)
         .build();
 
-    transport.send(message).await
+    transport
+        .send(message)
+        .await
         .map_err(|e| ToolExecError(format!("SMTP send failed: {e}")))?;
 
-    Ok(format!("email sent to {} (from {}, via smtp)", args.to, cfg.smtp_from))
+    Ok(format!(
+        "email sent to {} (from {}, via smtp)",
+        args.to, cfg.smtp_from
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -451,7 +510,8 @@ impl Tool for ReadEmailTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "read_email".into(),
-            description: "Read recent emails. Use 'account' to pick which email account to read from.".into(),
+            description:
+                "Read recent emails. Use 'account' to pick which email account to read from.".into(),
             parameters: openai_schema::<ReadEmailArgs>(),
         }
     }
@@ -459,14 +519,21 @@ impl Tool for ReadEmailTool {
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         // Try to match account to an IMAP config first
         if let Some(ref acct) = args.account {
-            if let Some(cfg) = self.imap_accounts.iter().find(|c| c.imap_user == *acct || c.smtp_from == *acct) {
+            if let Some(cfg) = self
+                .imap_accounts
+                .iter()
+                .find(|c| c.imap_user == *acct || c.smtp_from == *acct)
+            {
                 return read_via_imap(cfg, &args).await;
             }
         }
 
         // Try Gmail
         if let Some(ref google) = self.google {
-            if let Ok((token, _email)) = google.access_token(&self.instance_slug, args.account.as_deref()).await {
+            if let Ok((token, _email)) = google
+                .access_token(&self.instance_slug, args.account.as_deref())
+                .await
+            {
                 return read_via_gmail(&token, &args).await;
             }
         }
@@ -476,7 +543,9 @@ impl Tool for ReadEmailTool {
             return read_via_imap(cfg, &args).await;
         }
 
-        Err(ToolExecError("no email account available — connect Google or configure IMAP in settings".into()))
+        Err(ToolExecError(
+            "no email account available — connect Google or configure IMAP in settings".into(),
+        ))
     }
 }
 
@@ -507,7 +576,9 @@ async fn read_via_gmail(token: &str, args: &ReadEmailArgs) -> Result<String, Too
         return Err(ToolExecError(format!("Gmail list failed: {body}")));
     }
 
-    let list_data: serde_json::Value = list_res.json().await
+    let list_data: serde_json::Value = list_res
+        .json()
+        .await
         .map_err(|e| ToolExecError(format!("Gmail parse failed: {e}")))?;
 
     let messages = match list_data["messages"].as_array() {

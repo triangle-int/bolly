@@ -1,8 +1,8 @@
-use crate::services::tool::{ToolDefinition, Tool};
+use crate::services::tool::{Tool, ToolDefinition};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{openai_schema, ToolExecError};
+use super::{ToolExecError, openai_schema};
 use crate::services::google::GoogleClient;
 
 // ---------------------------------------------------------------------------
@@ -49,13 +49,17 @@ impl Tool for ListDriveFilesTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "list_drive_files".into(),
-            description: "List Google Drive files. Supports search queries and folder filtering.".into(),
+            description: "List Google Drive files. Supports search queries and folder filtering."
+                .into(),
             parameters: openai_schema::<ListDriveFilesArgs>(),
         }
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let (token, _) = self.google.access_token(&self.instance_slug, args.account.as_deref()).await
+        let (token, _) = self
+            .google
+            .access_token(&self.instance_slug, args.account.as_deref())
+            .await
             .map_err(|e| ToolExecError(e))?;
 
         let count = args.count.min(50).max(1);
@@ -88,7 +92,9 @@ impl Tool for ListDriveFilesTool {
             return Err(ToolExecError(format!("Drive API error: {body}")));
         }
 
-        let data: serde_json::Value = res.json().await
+        let data: serde_json::Value = res
+            .json()
+            .await
             .map_err(|e| ToolExecError(format!("Drive parse failed: {e}")))?;
 
         let files = match data["files"].as_array() {
@@ -103,7 +109,9 @@ impl Tool for ListDriveFilesTool {
             let mime = file["mimeType"].as_str().unwrap_or("?");
             let modified = file["modifiedTime"].as_str().unwrap_or("?");
             let size = file["size"].as_str().unwrap_or("");
-            result.push_str(&format!("- {name} (id: {id}, type: {mime}, modified: {modified}"));
+            result.push_str(&format!(
+                "- {name} (id: {id}, type: {mime}, modified: {modified}"
+            ));
             if !size.is_empty() {
                 if let Ok(bytes) = size.parse::<u64>() {
                     let kb = bytes / 1024;
@@ -152,20 +160,27 @@ impl Tool for ReadDriveFileTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "read_drive_file".into(),
-            description: "Read a Google Drive file. Docs→text, Sheets→CSV, others→raw content.".into(),
+            description: "Read a Google Drive file. Docs→text, Sheets→CSV, others→raw content."
+                .into(),
             parameters: openai_schema::<ReadDriveFileArgs>(),
         }
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let (token, _) = self.google.access_token(&self.instance_slug, args.account.as_deref()).await
+        let (token, _) = self
+            .google
+            .access_token(&self.instance_slug, args.account.as_deref())
+            .await
             .map_err(|e| ToolExecError(e))?;
 
         let client = reqwest::Client::new();
 
         // First get file metadata to check mime type
         let meta_res = client
-            .get(&format!("https://www.googleapis.com/drive/v3/files/{}", args.file_id))
+            .get(&format!(
+                "https://www.googleapis.com/drive/v3/files/{}",
+                args.file_id
+            ))
             .header("Authorization", format!("Bearer {token}"))
             .query(&[("fields", "mimeType,name")])
             .send()
@@ -279,13 +294,17 @@ impl Tool for UploadDriveFileTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "upload_drive_file".into(),
-            description: "Upload a text file to Google Drive. Optional MIME type and folder ID.".into(),
+            description: "Upload a text file to Google Drive. Optional MIME type and folder ID."
+                .into(),
             parameters: openai_schema::<UploadDriveFileArgs>(),
         }
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let (token, _) = self.google.access_token(&self.instance_slug, args.account.as_deref()).await
+        let (token, _) = self
+            .google
+            .access_token(&self.instance_slug, args.account.as_deref())
+            .await
             .map_err(|e| ToolExecError(e))?;
 
         let mime = args.mime_type.as_deref().unwrap_or("text/plain");

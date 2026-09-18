@@ -6,9 +6,9 @@ mod screen_recorder;
 
 use std::sync::{Arc, Mutex};
 
-use tauri::{Emitter, Manager};
 use tauri::menu::{AboutMetadataBuilder, MenuBuilder, MenuItemBuilder, SubmenuBuilder};
 use tauri::webview::WebviewWindowBuilder;
+use tauri::{Emitter, Manager};
 use tauri_plugin_deep_link::DeepLinkExt;
 use tauri_plugin_opener::OpenerExt;
 
@@ -77,9 +77,11 @@ fn open_settings_window(app: &tauri::AppHandle) -> Result<(), String> {
 
     let url = settings_url();
     let nav_handle = app.clone();
-    WebviewWindowBuilder::new(app, "settings", tauri::WebviewUrl::External(
-        url.parse().map_err(|e: url::ParseError| e.to_string())?,
-    ))
+    WebviewWindowBuilder::new(
+        app,
+        "settings",
+        tauri::WebviewUrl::External(url.parse().map_err(|e: url::ParseError| e.to_string())?),
+    )
     .title("Bolly Settings")
     .inner_size(420.0, 480.0)
     .resizable(false)
@@ -141,8 +143,8 @@ pub fn run() {
             #[cfg(desktop)]
             {
                 let handle = app.handle().clone();
-                app.handle().plugin(
-                    tauri_plugin_single_instance::init(move |_app, argv, _cwd| {
+                app.handle().plugin(tauri_plugin_single_instance::init(
+                    move |_app, argv, _cwd| {
                         // Focus existing window
                         if let Some(win) = handle.get_webview_window("main") {
                             win.set_focus().ok();
@@ -153,8 +155,8 @@ pub fn run() {
                                 handle.emit("deep-link", arg.clone()).ok();
                             }
                         }
-                    }),
-                )?;
+                    },
+                ))?;
             }
             let about = AboutMetadataBuilder::new()
                 .name(Some("Bolly"))
@@ -194,9 +196,7 @@ pub fn run() {
                 .accelerator("CmdOrCtrl+Shift+D")
                 .build(app)?;
 
-            let view_menu = SubmenuBuilder::new(app, "View")
-                .items(&[&back])
-                .build()?;
+            let view_menu = SubmenuBuilder::new(app, "View").items(&[&back]).build()?;
 
             let menu = MenuBuilder::new(app)
                 .items(&[&app_menu, &edit_menu, &view_menu])
@@ -215,33 +215,29 @@ pub fn run() {
             // Create main window programmatically so we can attach on_navigation
             let nav_handle = app.handle().clone();
             let origin_for_nav = origin.clone();
-            WebviewWindowBuilder::new(
-                app,
-                "main",
-                tauri::WebviewUrl::App("index.html".into()),
-            )
-            .title("Bolly")
-            .inner_size(1024.0, 700.0)
-            .min_inner_size(480.0, 400.0)
-            .center()
-            .resizable(true)
-            .disable_drag_drop_handler()
-            .on_navigation(move |url| {
-                if is_internal_url(url) {
-                    return true;
-                }
-                // Allow navigation to the connected server
-                if let Some(host) = url.host_str() {
-                    if let Some(ref server) = *origin_for_nav.lock().unwrap() {
-                        if host == server {
-                            return true;
+            WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
+                .title("Bolly")
+                .inner_size(1024.0, 700.0)
+                .min_inner_size(480.0, 400.0)
+                .center()
+                .resizable(true)
+                .disable_drag_drop_handler()
+                .on_navigation(move |url| {
+                    if is_internal_url(url) {
+                        return true;
+                    }
+                    // Allow navigation to the connected server
+                    if let Some(host) = url.host_str() {
+                        if let Some(ref server) = *origin_for_nav.lock().unwrap() {
+                            if host == server {
+                                return true;
+                            }
                         }
                     }
-                }
-                let _ = nav_handle.opener().open_url(url.as_str(), None::<&str>);
-                false
-            })
-            .build()?;
+                    let _ = nav_handle.opener().open_url(url.as_str(), None::<&str>);
+                    false
+                })
+                .build()?;
 
             // Handle deep links received while app is running
             let handle2 = app.handle().clone();

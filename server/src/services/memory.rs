@@ -20,7 +20,13 @@ pub struct Frontmatter {
 pub fn parse_frontmatter(content: &str) -> (Frontmatter, &str) {
     let trimmed = content.trim_start();
     if !trimmed.starts_with("---") {
-        return (Frontmatter { created: None, updated: None }, content);
+        return (
+            Frontmatter {
+                created: None,
+                updated: None,
+            },
+            content,
+        );
     }
 
     // Find closing ---
@@ -42,7 +48,13 @@ pub fn parse_frontmatter(content: &str) -> (Frontmatter, &str) {
 
         (Frontmatter { created, updated }, body)
     } else {
-        (Frontmatter { created: None, updated: None }, content)
+        (
+            Frontmatter {
+                created: None,
+                updated: None,
+            },
+            content,
+        )
     }
 }
 
@@ -86,9 +98,9 @@ pub fn get_frozen_catalog(workspace_dir: &Path, instance_slug: &str) -> String {
     let key = instance_slug.to_string();
     let mut guard = FROZEN_CATALOG.lock().unwrap();
     let map = guard.get_or_insert_with(std::collections::HashMap::new);
-    map.entry(key).or_insert_with(|| {
-        load_catalog_snapshot(workspace_dir, instance_slug)
-    }).clone()
+    map.entry(key)
+        .or_insert_with(|| load_catalog_snapshot(workspace_dir, instance_slug))
+        .clone()
 }
 
 /// Invalidate the frozen catalog for an instance.
@@ -135,11 +147,25 @@ fn scan_dir_recursive(base: &Path, current: &Path, entries: &mut Vec<MemoryEntry
         if path.is_dir() {
             scan_dir_recursive(base, &path, entries);
         } else {
-            let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+            let ext = path
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("")
+                .to_lowercase();
             let is_text = ext == "md";
-            let is_media = matches!(ext.as_str(),
-                "jpg" | "jpeg" | "png" | "webp" | "gif" | "svg" |
-                "pdf" | "mp4" | "mov" | "mp3" | "wav"
+            let is_media = matches!(
+                ext.as_str(),
+                "jpg"
+                    | "jpeg"
+                    | "png"
+                    | "webp"
+                    | "gif"
+                    | "svg"
+                    | "pdf"
+                    | "mp4"
+                    | "mov"
+                    | "mp3"
+                    | "wav"
             );
 
             if !is_text && !is_media {
@@ -153,7 +179,9 @@ fn scan_dir_recursive(base: &Path, current: &Path, entries: &mut Vec<MemoryEntry
                 .to_string();
 
             if is_media {
-                let size = std::fs::metadata(&path).map(|m| m.len() as usize).unwrap_or(0);
+                let size = std::fs::metadata(&path)
+                    .map(|m| m.len() as usize)
+                    .unwrap_or(0);
                 let kind = match ext.as_str() {
                     "jpg" | "jpeg" | "png" | "webp" | "gif" | "svg" => "image",
                     "pdf" => "document",
@@ -169,7 +197,9 @@ fn scan_dir_recursive(base: &Path, current: &Path, entries: &mut Vec<MemoryEntry
             } else {
                 let content = std::fs::read_to_string(&path).unwrap_or_default();
                 let (fm, body) = parse_frontmatter(&content);
-                let date_prefix = fm.updated.or(fm.created)
+                let date_prefix = fm
+                    .updated
+                    .or(fm.created)
                     .map(|d| format!("({}) ", format_date_short(&d)))
                     .unwrap_or_default();
                 let summary_text = body
@@ -211,9 +241,8 @@ pub fn rebuild_catalog_snapshot(workspace_dir: &Path, instance_slug: &str) {
     let dir = memory_dir(workspace_dir, instance_slug);
 
     // Separate pinned memories (full content in prompt) from regular (catalog only)
-    let (pinned, regular): (Vec<_>, Vec<_>) = entries
-        .iter()
-        .partition(|e| e.path.starts_with("pinned/"));
+    let (pinned, regular): (Vec<_>, Vec<_>) =
+        entries.iter().partition(|e| e.path.starts_with("pinned/"));
 
     let mut prompt = format!(
         "## memory\nyou have a personal memory library. use `memory_read` to read memories when relevant.\n"
@@ -248,7 +277,8 @@ pub fn rebuild_catalog_snapshot(workspace_dir: &Path, instance_slug: &str) {
     } else {
         log::info!(
             "[memory] catalog snapshot rebuilt: {} pinned, {} catalog",
-            pinned.len(), regular.len()
+            pinned.len(),
+            regular.len()
         );
     }
 }
@@ -340,7 +370,10 @@ pub fn remove_edges_for_path(workspace_dir: &Path, instance_slug: &str, path: &s
     graph.edges.retain(|e| e[0] != path && e[1] != path);
     if graph.edges.len() != before {
         save_graph(workspace_dir, instance_slug, &graph);
-        log::info!("[graph] removed {} edges for deleted path: {path}", before - graph.edges.len());
+        log::info!(
+            "[graph] removed {} edges for deleted path: {path}",
+            before - graph.edges.len()
+        );
     }
 }
 
@@ -433,7 +466,10 @@ pub fn migrate_legacy_memory(workspace_dir: &Path, instance_slug: &str) {
             // Archive original
             let archive = dir.join("_legacy_facts.md");
             let _ = std::fs::rename(&facts_path, &archive);
-            log::info!("migrated {} fact categories for {instance_slug}", category_facts.len());
+            log::info!(
+                "migrated {} fact categories for {instance_slug}",
+                category_facts.len()
+            );
         }
     }
 
@@ -478,7 +514,13 @@ pub fn migrate_legacy_memory(workspace_dir: &Path, instance_slug: &str) {
                 let slug: String = content_part
                     .to_lowercase()
                     .chars()
-                    .map(|c| if c.is_alphanumeric() || c == ' ' { c } else { ' ' })
+                    .map(|c| {
+                        if c.is_alphanumeric() || c == ' ' {
+                            c
+                        } else {
+                            ' '
+                        }
+                    })
                     .collect::<String>()
                     .split_whitespace()
                     .take(5)
@@ -732,7 +774,14 @@ only connect memories that are meaningfully related. don't over-connect."#
                 let stamped = stamp_content(&op.content, existing.as_deref());
                 std::fs::write(&full_path, &stamped)?;
                 log::info!("memory: wrote {clean_path} for {instance_slug}");
-                embed_memory_file(vector_store, google_ai_key, instance_slug, &clean_path, &stamped).await;
+                embed_memory_file(
+                    vector_store,
+                    google_ai_key,
+                    instance_slug,
+                    &clean_path,
+                    &stamped,
+                )
+                .await;
             }
             "append" => {
                 if op.content.trim().is_empty() {
@@ -752,7 +801,14 @@ only connect memories that are meaningfully related. don't over-connect."#
                 let stamped = stamp_content(&new_body, Some(&existing));
                 std::fs::write(&full_path, &stamped)?;
                 log::info!("memory: appended to {clean_path} for {instance_slug}");
-                embed_memory_file(vector_store, google_ai_key, instance_slug, &clean_path, &stamped).await;
+                embed_memory_file(
+                    vector_store,
+                    google_ai_key,
+                    instance_slug,
+                    &clean_path,
+                    &stamped,
+                )
+                .await;
             }
             "delete" => {
                 if full_path.exists() {
@@ -761,7 +817,10 @@ only connect memories that are meaningfully related. don't over-connect."#
                         let _ = cleanup_empty_dirs(parent, &dir);
                     }
                     log::info!("memory: deleted {clean_path} for {instance_slug}");
-                    if let Err(e) = vector_store.delete_by_path(instance_slug, &clean_path).await {
+                    if let Err(e) = vector_store
+                        .delete_by_path(instance_slug, &clean_path)
+                        .await
+                    {
                         log::warn!("memory: vector delete failed for {clean_path}: {e}");
                     }
                     // Clean up graph edges for deleted path
@@ -813,14 +872,33 @@ only connect memories that are meaningfully related. don't over-connect."#
                 log::info!("memory: saved image {clean_path} for {instance_slug}");
 
                 // Embed the image
-                let desc = if op.description.is_empty() { &clean_path } else { &op.description };
+                let desc = if op.description.is_empty() {
+                    &clean_path
+                } else {
+                    &op.description
+                };
                 if let Ok(bytes) = std::fs::read(&full_path) {
                     if bytes.len() < 20 * 1024 * 1024 {
-                        if let Ok(vec) = super::embedding::embed_text_and_image(google_ai_key, desc, &bytes, mime_type).await {
-                            if let Err(e) = vector_store.upsert_media(
-                                instance_slug, &clean_path, "media_image",
-                                mime_type, &clean_path, desc, vec,
-                            ).await {
+                        if let Ok(vec) = super::embedding::embed_text_and_image(
+                            google_ai_key,
+                            desc,
+                            &bytes,
+                            mime_type,
+                        )
+                        .await
+                        {
+                            if let Err(e) = vector_store
+                                .upsert_media(
+                                    instance_slug,
+                                    &clean_path,
+                                    "media_image",
+                                    mime_type,
+                                    &clean_path,
+                                    desc,
+                                    vec,
+                                )
+                                .await
+                            {
                                 log::warn!("memory: image vector upsert failed: {e}");
                             }
                         }
@@ -850,7 +928,9 @@ pub async fn embed_memory_file(
     let mut chunk_vectors = Vec::new();
 
     for chunk in &chunks {
-        match embedding::embed_text(google_ai_key, chunk, embedding::TaskType::RetrievalDocument).await {
+        match embedding::embed_text(google_ai_key, chunk, embedding::TaskType::RetrievalDocument)
+            .await
+        {
             Ok(vec) => chunk_vectors.push((chunk.clone(), vec)),
             Err(e) => {
                 log::warn!("[memory] embed error for {path}: {e}");
@@ -859,7 +939,10 @@ pub async fn embed_memory_file(
         }
     }
 
-    if let Err(e) = vector_store.upsert_text_memory(instance_slug, path, chunk_vectors).await {
+    if let Err(e) = vector_store
+        .upsert_text_memory(instance_slug, path, chunk_vectors)
+        .await
+    {
         log::warn!("[memory] vector upsert failed for {path}: {e}");
     }
 }
@@ -886,7 +969,10 @@ fn sanitize_memory_path(path: &str) -> String {
     let path = path.trim().trim_start_matches('/');
     // Reject any path component that is ".." or starts with "."
     let parts: Vec<&str> = path.split('/').collect();
-    if parts.iter().any(|p| p.is_empty() || *p == ".." || p.starts_with('.')) {
+    if parts
+        .iter()
+        .any(|p| p.is_empty() || *p == ".." || p.starts_with('.'))
+    {
         return String::new();
     }
     // Ensure .md extension
@@ -902,14 +988,23 @@ fn sanitize_memory_path(path: &str) -> String {
 fn sanitize_media_path(path: &str) -> String {
     let path = path.trim().trim_start_matches('/');
     let parts: Vec<&str> = path.split('/').collect();
-    if parts.iter().any(|p| p.is_empty() || *p == ".." || p.starts_with('.')) {
+    if parts
+        .iter()
+        .any(|p| p.is_empty() || *p == ".." || p.starts_with('.'))
+    {
         return String::new();
     }
     let result = parts.join("/");
     let lower = result.to_lowercase();
-    if lower.ends_with(".jpg") || lower.ends_with(".jpeg") || lower.ends_with(".png")
-        || lower.ends_with(".webp") || lower.ends_with(".gif")
-        || lower.ends_with(".mp4") || lower.ends_with(".mp3") || lower.ends_with(".wav") {
+    if lower.ends_with(".jpg")
+        || lower.ends_with(".jpeg")
+        || lower.ends_with(".png")
+        || lower.ends_with(".webp")
+        || lower.ends_with(".gif")
+        || lower.ends_with(".mp4")
+        || lower.ends_with(".mp3")
+        || lower.ends_with(".wav")
+    {
         result
     } else {
         format!("{result}.jpg")
@@ -998,4 +1093,3 @@ fn parse_memory_ops(response: &str) -> Vec<MemoryOp> {
 
     Vec::new()
 }
-

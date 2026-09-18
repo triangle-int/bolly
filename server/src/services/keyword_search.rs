@@ -46,7 +46,11 @@ impl KeywordStore {
         }
 
         let doc_count = docs.len();
-        let engine = SearchEngineBuilder::<u32>::with_corpus(bm25::LanguageMode::Fixed(bm25::Language::English), docs).build();
+        let engine = SearchEngineBuilder::<u32>::with_corpus(
+            bm25::LanguageMode::Fixed(bm25::Language::English),
+            docs,
+        )
+        .build();
 
         let mut indices = self.indices.write().unwrap_or_else(|e| e.into_inner());
         indices.insert(instance_slug.to_string(), IndexData { engine, meta });

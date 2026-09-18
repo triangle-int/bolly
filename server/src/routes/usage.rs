@@ -1,5 +1,5 @@
-use axum::{Json, Router, routing::get};
 use crate::app::state::AppState;
+use axum::{Json, Router, routing::get};
 
 pub fn router() -> Router<AppState> {
     Router::new().route("/api/usage", get(get_usage))

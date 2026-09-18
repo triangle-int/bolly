@@ -1,10 +1,10 @@
 use std::path::{Path, PathBuf};
 
-use crate::services::tool::{ToolDefinition, Tool};
+use crate::services::tool::{Tool, ToolDefinition};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{openai_schema, ToolExecError};
+use super::{ToolExecError, openai_schema};
 
 // ---------------------------------------------------------------------------
 // list_skills
@@ -65,7 +65,11 @@ impl Tool for ListSkillsTool {
 
         let mut out = String::new();
         for s in &filtered {
-            let source = s.source.as_ref().map(|src| format!(" (from {})", src.repo)).unwrap_or_default();
+            let source = s
+                .source
+                .as_ref()
+                .map(|src| format!(" (from {})", src.repo))
+                .unwrap_or_default();
             out.push_str(&format!(
                 "- {} [local]{}: {}\n",
                 s.name, source, s.description
@@ -106,7 +110,8 @@ impl Tool for ActivateSkillTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "activate_skill".into(),
-            description: "Activate a skill before using it. Returns instructions for the skill.".into(),
+            description: "Activate a skill before using it. Returns instructions for the skill."
+                .into(),
             parameters: openai_schema::<ActivateSkillArgs>(),
         }
     }
@@ -114,7 +119,9 @@ impl Tool for ActivateSkillTool {
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
         let skills = crate::services::skills::list_skills(&self.workspace_dir);
         let needle = args.skill_name.to_lowercase();
-        let found = skills.iter().find(|s| s.name.to_lowercase() == needle || s.id == needle);
+        let found = skills
+            .iter()
+            .find(|s| s.name.to_lowercase() == needle || s.id == needle);
         match found {
             Some(s) if s.enabled => {
                 // Local skill: return instructions (prompt injection)
@@ -136,7 +143,10 @@ impl Tool for ActivateSkillTool {
                 Ok(result)
             }
             Some(s) => Err(ToolExecError(format!("skill '{}' is disabled", s.name))),
-            None => Err(ToolExecError(format!("skill '{}' not found", args.skill_name))),
+            None => Err(ToolExecError(format!(
+                "skill '{}' not found",
+                args.skill_name
+            ))),
         }
     }
 }
@@ -201,8 +211,7 @@ impl Tool for ReadSkillReferenceTool {
             .join(&args.skill_id)
             .join(&args.filename);
 
-        std::fs::read_to_string(&path).map_err(|e| {
-            ToolExecError(format!("failed to read '{}': {}", args.filename, e))
-        })
+        std::fs::read_to_string(&path)
+            .map_err(|e| ToolExecError(format!("failed to read '{}': {}", args.filename, e)))
     }
 }

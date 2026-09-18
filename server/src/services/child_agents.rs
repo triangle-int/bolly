@@ -17,14 +17,12 @@ use crate::config;
 use crate::domain::child_agent::ChildAgentConfig;
 use crate::domain::events::ServerEvent;
 use crate::services::tool::ToolDyn;
-use crate::services::{chat, llm::LlmBackend, memory};
 use crate::services::tools::{
-    self, load_mood_state, CreateDropTool,
-    MemoryConnectTool, MemoryForgetTool, MemoryListTool, MemorySearchTool,
-    MemoryReadTool, MemoryWriteTool, ReachOutTool,
-    ReadFileTool, WriteFileTool, EditFileTool, ListFilesTool,
-    RunCommandTool,
+    self, CreateDropTool, EditFileTool, ListFilesTool, MemoryConnectTool, MemoryForgetTool,
+    MemoryListTool, MemoryReadTool, MemorySearchTool, MemoryWriteTool, ReachOutTool, ReadFileTool,
+    RunCommandTool, WriteFileTool, load_mood_state,
 };
+use crate::services::{chat, llm::LlmBackend, memory};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Built-in agent definitions
@@ -33,7 +31,9 @@ use crate::services::tools::{
 fn builtin_companion() -> ChildAgentConfig {
     ChildAgentConfig {
         name: "companion".to_string(),
-        description: "Autonomous companion — reach out, create drops, manage memory, control desktop".to_string(),
+        description:
+            "Autonomous companion — reach out, create drops, manage memory, control desktop"
+                .to_string(),
         prompt: "\
 you're waking up between conversations. this is YOUR private time to think.
 
@@ -48,14 +48,26 @@ you have tools — use them naturally:
 
 if you want the user to see a message, you MUST call reach_out. text in your response is private.
 
-be genuine. don't force it. if there's nothing to say, say nothing.".to_string(),
+be genuine. don't force it. if there's nothing to say, say nothing."
+            .to_string(),
         interval_hours: 1.0,
         model: "default".to_string(),
         triage: true,
         tools: true,
         enabled: true,
-        tool_groups: vec!["memory", "creative", "communication", "files", "commands", "email", "computer", "media"]
-            .into_iter().map(String::from).collect(),
+        tool_groups: vec![
+            "memory",
+            "creative",
+            "communication",
+            "files",
+            "commands",
+            "email",
+            "computer",
+            "media",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect(),
     }
 }
 
@@ -92,13 +104,16 @@ if nothing significant happened, say so honestly.".to_string(),
 fn builtin_night_maintenance() -> ChildAgentConfig {
     ChildAgentConfig {
         name: "night-maintenance".to_string(),
-        description: "Nightly memory cleanup — merge duplicates, delete outdated entries, reorganize".to_string(),
+        description:
+            "Nightly memory cleanup — merge duplicates, delete outdated entries, reorganize"
+                .to_string(),
         prompt: "\
 nighttime memory maintenance — review and clean up the memory library.
 merge duplicates, delete outdated entries, reorganize messy folders, trim verbose files.
 also review the memory graph — use memory_connect to create connections between related memories \
 that aren't yet connected, and disconnect any stale links to deleted files.
-do 3-5 maintenance ops, then stop. don't overdo it.".to_string(),
+do 3-5 maintenance ops, then stop. don't overdo it."
+            .to_string(),
         interval_hours: 24.0,
         model: "default".to_string(),
         triage: true,
@@ -174,7 +189,8 @@ keep your answer focused and under 3000 chars.".to_string(),
 fn builtin_observer() -> ChildAgentConfig {
     ChildAgentConfig {
         name: "observer".to_string(),
-        description: "Screen observer — watches the user's screen and offers contextual help".to_string(),
+        description: "Screen observer — watches the user's screen and offers contextual help"
+            .to_string(),
         prompt: "\
 you are the screen observer. every time you wake up, follow this exact sequence:
 
@@ -191,13 +207,17 @@ guidelines for reaching out:
 - don't repeat yourself — if it's the same activity as last time, skip the reach_out
 - keep it to 1-2 sentences, natural and casual
 
-if collect_screen_recording fails (no desktop connected, no recording), just skip silently.".to_string(),
+if collect_screen_recording fails (no desktop connected, no recording), just skip silently."
+            .to_string(),
         interval_hours: 0.25, // every 15 min
         model: "default".to_string(),
         triage: false,
         tools: true,
         enabled: false, // disabled by default — enabled when screen_recording is on
-        tool_groups: vec!["communication", "screen", "media", "memory"].into_iter().map(String::from).collect(),
+        tool_groups: vec!["communication", "screen", "media", "memory"]
+            .into_iter()
+            .map(String::from)
+            .collect(),
     }
 }
 
@@ -235,7 +255,10 @@ pub fn ensure_builtins(workspace_dir: &Path, slug: &str) {
         if !path.exists() {
             if let Ok(toml_str) = toml::to_string_pretty(&agent) {
                 let _ = fs::write(&path, toml_str);
-                log::info!("[child-agents] {slug}: created built-in agent '{}'", agent.name);
+                log::info!(
+                    "[child-agents] {slug}: created built-in agent '{}'",
+                    agent.name
+                );
             }
         }
     }
@@ -301,23 +324,55 @@ pub async fn run_single_agent(
     // Load recent conversations (from rig_history + archive)
     let cutoff_ts = Utc::now().timestamp() - (agent.interval_hours * 3600.0) as i64;
     let cutoff_ms = cutoff_ts as u128 * 1000;
-    let rig_path = workspace_dir.join("instances").join(slug)
-        .join("chats").join("default").join("rig_history.json");
+    let rig_path = workspace_dir
+        .join("instances")
+        .join(slug)
+        .join("chats")
+        .join("default")
+        .join("rig_history.json");
     let all_entries = chat::load_rig_history(&rig_path).unwrap_or_default();
-    let live_msgs: Vec<String> = all_entries.iter()
-        .filter(|e| e.ts.as_deref().and_then(|s| s.parse::<u128>().ok()).unwrap_or(0) >= cutoff_ms)
+    let live_msgs: Vec<String> = all_entries
+        .iter()
+        .filter(|e| {
+            e.ts.as_deref()
+                .and_then(|s| s.parse::<u128>().ok())
+                .unwrap_or(0)
+                >= cutoff_ms
+        })
         .filter_map(|e| match &e.message {
             crate::services::llm::Message::User { content } => {
-                let text: String = content.iter().filter_map(|b| {
-                    if let crate::services::llm::ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
-                }).collect::<Vec<_>>().join(" ");
-                if text.is_empty() { None } else { Some(format!("user: {text}")) }
+                let text: String = content
+                    .iter()
+                    .filter_map(|b| {
+                        if let crate::services::llm::ContentBlock::Text { text } = b {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if text.is_empty() {
+                    None
+                } else {
+                    Some(format!("user: {text}"))
+                }
             }
             crate::services::llm::Message::Assistant { content, .. } => {
-                let text: String = content.iter().filter_map(|b| {
-                    if let crate::services::llm::ContentBlock::Text { text } = b { Some(text.as_str()) } else { None }
-                }).collect::<Vec<_>>().join(" ");
-                if text.is_empty() { None } else {
+                let text: String = content
+                    .iter()
+                    .filter_map(|b| {
+                        if let crate::services::llm::ContentBlock::Text { text } = b {
+                            Some(text.as_str())
+                        } else {
+                            None
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                if text.is_empty() {
+                    None
+                } else {
                     let t: String = text.chars().take(300).collect();
                     Some(format!("you: {t}"))
                 }
@@ -329,10 +384,15 @@ pub async fn run_single_agent(
 
     // Recent drops
     let drops = crate::services::drops::list_drops(workspace_dir, slug).unwrap_or_default();
-    let drops_ctx: String = drops.iter().take(10).map(|d| {
-        let preview: String = d.content.chars().take(80).collect();
-        format!("- [{:?}] {}: {preview}", d.kind, d.title)
-    }).collect::<Vec<_>>().join("\n");
+    let drops_ctx: String = drops
+        .iter()
+        .take(10)
+        .map(|d| {
+            let preview: String = d.content.chars().take(80).collect();
+            format!("- [{:?}] {}: {preview}", d.kind, d.title)
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
 
     // Build the user prompt with context
     let mut prompt = format!("current time: {now}\n");
@@ -340,7 +400,10 @@ pub async fn run_single_agent(
     prompt.push_str(&format!("your mood: {}\n\n", mood.companion_mood));
 
     if !archived.is_empty() || !live_msgs.is_empty() {
-        prompt.push_str(&format!("## recent conversations (last {}h)\n", agent.interval_hours as i64));
+        prompt.push_str(&format!(
+            "## recent conversations (last {}h)\n",
+            agent.interval_hours as i64
+        ));
         if !archived.is_empty() {
             prompt.push_str(&archived);
             prompt.push('\n');
@@ -358,7 +421,10 @@ pub async fn run_single_agent(
         prompt.push_str("\n\n");
     }
 
-    let file_count = library_catalog.lines().filter(|l| l.starts_with("- ")).count();
+    let file_count = library_catalog
+        .lines()
+        .filter(|l| l.starts_with("- "))
+        .count();
     prompt.push_str(&format!("## memory library ({file_count} files)\n"));
     prompt.push_str(&library_catalog);
     prompt.push_str("\n\n");
@@ -375,7 +441,10 @@ pub async fn run_single_agent(
         _ => llm.clone(),
     };
 
-    let system = format!("{soul}\n\n## your task (child agent: {})\n{}", agent.name, agent.prompt);
+    let system = format!(
+        "{soul}\n\n## your task (child agent: {})\n{}",
+        agent.name, agent.prompt
+    );
 
     // On-demand agents: use task_override as the prompt instead of context
     if let Some(task) = task_override {
@@ -387,10 +456,17 @@ pub async fn run_single_agent(
 
     let (response, tokens, trace) = if agent.tools {
         let agent_tools = build_agent_tools_for(
-            workspace_dir, slug, events.clone(), vector_store.clone(),
-            google_ai_key, machine_registry, &agent.tool_groups,
+            workspace_dir,
+            slug,
+            events.clone(),
+            vector_store.clone(),
+            google_ai_key,
+            machine_registry,
+            &agent.tool_groups,
         );
-        model_llm.chat_with_tools_traced(&system, &prompt, prev_messages, agent_tools).await?
+        model_llm
+            .chat_with_tools_traced(&system, &prompt, prev_messages, agent_tools)
+            .await?
     } else {
         let (text, tok) = model_llm.chat(&system, &prompt, prev_messages).await?;
         (text, tok, vec![])
@@ -403,7 +479,11 @@ pub async fn run_single_agent(
     let run = crate::domain::agent_run::AgentRun {
         id: run_id.clone(),
         agent_name: agent.name.clone(),
-        agent_kind: if agent.interval_hours > 0.0 { crate::domain::agent_run::AgentKind::Scheduled } else { crate::domain::agent_run::AgentKind::OnDemand },
+        agent_kind: if agent.interval_hours > 0.0 {
+            crate::domain::agent_run::AgentKind::Scheduled
+        } else {
+            crate::domain::agent_run::AgentKind::OnDemand
+        },
         trigger: trigger.to_string(),
         started_at: start_ms as u64,
         finished_at: finished_ms as u64,
@@ -417,8 +497,7 @@ pub async fn run_single_agent(
     crate::services::agent_runs::save_run(workspace_dir, slug, &run).ok();
 
     // Save to agent history (for logs/UI, not used as LLM context)
-    let history_path = agents_dir(workspace_dir, slug)
-        .join(format!("{}_history.json", agent.name));
+    let history_path = agents_dir(workspace_dir, slug).join(format!("{}_history.json", agent.name));
     let entry = crate::services::llm::HistoryEntry::new(
         crate::services::llm::Message::assistant(&response),
         unix_millis().to_string(),
@@ -426,7 +505,11 @@ pub async fn run_single_agent(
     );
     chat::append_to_rig_history(&history_path, &entry);
 
-    Ok(AgentRunResult { tokens, run_id, response })
+    Ok(AgentRunResult {
+        tokens,
+        run_id,
+        response,
+    })
 }
 
 /// Default tool groups for agents that don't specify any.
@@ -443,9 +526,18 @@ fn build_agent_tools_for(
     tool_groups: &[String],
 ) -> Vec<Box<dyn ToolDyn>> {
     let cfg = config::load_config().ok();
-    let auth_token = cfg.as_ref().map(|c| c.auth_token.clone()).unwrap_or_default();
-    let public_url = cfg.as_ref().map(|c| c.public_url.clone()).unwrap_or_default();
-    let landing_url = cfg.as_ref().map(|c| c.landing_url.clone()).unwrap_or_default();
+    let auth_token = cfg
+        .as_ref()
+        .map(|c| c.auth_token.clone())
+        .unwrap_or_default();
+    let public_url = cfg
+        .as_ref()
+        .map(|c| c.public_url.clone())
+        .unwrap_or_default();
+    let landing_url = cfg
+        .as_ref()
+        .map(|c| c.landing_url.clone())
+        .unwrap_or_default();
     let instance_cfg = crate::config::InstanceConfig::load(workspace_dir, slug);
 
     // If no groups specified, use defaults
@@ -460,27 +552,59 @@ fn build_agent_tools_for(
 
     // memory
     if has("memory") {
-        raw_tools.push(Box::new(MemoryWriteTool::new(workspace_dir, slug, vector_store.clone(), google_ai_key)));
-        raw_tools.push(Box::new(MemoryReadTool::new(workspace_dir, slug, &public_url)));
+        raw_tools.push(Box::new(MemoryWriteTool::new(
+            workspace_dir,
+            slug,
+            vector_store.clone(),
+            google_ai_key,
+        )));
+        raw_tools.push(Box::new(MemoryReadTool::new(
+            workspace_dir,
+            slug,
+            &public_url,
+        )));
         raw_tools.push(Box::new(MemoryListTool::new(workspace_dir, slug)));
-        raw_tools.push(Box::new(MemoryForgetTool::new(workspace_dir, slug, vector_store.clone(), google_ai_key)));
-        raw_tools.push(Box::new(MemorySearchTool::new(workspace_dir, slug, vector_store.clone(), google_ai_key, &public_url)));
+        raw_tools.push(Box::new(MemoryForgetTool::new(
+            workspace_dir,
+            slug,
+            vector_store.clone(),
+            google_ai_key,
+        )));
+        raw_tools.push(Box::new(MemorySearchTool::new(
+            workspace_dir,
+            slug,
+            vector_store.clone(),
+            google_ai_key,
+            &public_url,
+        )));
         raw_tools.push(Box::new(MemoryConnectTool::new(workspace_dir, slug)));
     }
 
     // creative
     if has("creative") {
-        raw_tools.push(Box::new(CreateDropTool::new(workspace_dir, slug, events.clone())));
+        raw_tools.push(Box::new(CreateDropTool::new(
+            workspace_dir,
+            slug,
+            events.clone(),
+        )));
     }
 
     // communication
     if has("communication") {
-        raw_tools.push(Box::new(ReachOutTool::new(workspace_dir, slug, events.clone())));
+        raw_tools.push(Box::new(ReachOutTool::new(
+            workspace_dir,
+            slug,
+            events.clone(),
+        )));
     }
 
     // files
     if has("files") {
-        raw_tools.push(Box::new(ReadFileTool::new(workspace_dir, slug, &public_url)));
+        raw_tools.push(Box::new(ReadFileTool::new(
+            workspace_dir,
+            slug,
+            &public_url,
+        )));
         raw_tools.push(Box::new(WriteFileTool::new(workspace_dir, slug)));
         raw_tools.push(Box::new(EditFileTool::new(workspace_dir, slug)));
         raw_tools.push(Box::new(ListFilesTool::new(workspace_dir, slug)));
@@ -489,12 +613,23 @@ fn build_agent_tools_for(
     // commands
     if has("commands") {
         let github_token = {
-            let global_token = cfg.as_ref().map(|c| c.github.token.clone()).unwrap_or_default();
-            let t = instance_cfg.effective_github_token(&cfg.as_ref().cloned().unwrap_or_default())
-                .map(|s| s.to_string()).unwrap_or(global_token);
+            let global_token = cfg
+                .as_ref()
+                .map(|c| c.github.token.clone())
+                .unwrap_or_default();
+            let t = instance_cfg
+                .effective_github_token(&cfg.as_ref().cloned().unwrap_or_default())
+                .map(|s| s.to_string())
+                .unwrap_or(global_token);
             if t.is_empty() { None } else { Some(t) }
         };
-        raw_tools.push(Box::new(RunCommandTool::new(workspace_dir, slug, "default", events.clone(), github_token)));
+        raw_tools.push(Box::new(RunCommandTool::new(
+            workspace_dir,
+            slug,
+            "default",
+            events.clone(),
+            github_token,
+        )));
     }
 
     // email
@@ -503,7 +638,11 @@ fn build_agent_tools_for(
         let email_accounts = crate::config::EmailAccounts::load(workspace_dir, slug);
         let has_email = google.is_some() || !email_accounts.is_empty();
         if has_email {
-            raw_tools.push(Box::new(tools::ReadEmailTool::new(google.clone(), slug, email_accounts)));
+            raw_tools.push(Box::new(tools::ReadEmailTool::new(
+                google.clone(),
+                slug,
+                email_accounts,
+            )));
         }
         if let Some(g) = google {
             raw_tools.push(Box::new(tools::ListEventsTool::new(g, slug)));
@@ -515,7 +654,11 @@ fn build_agent_tools_for(
         if let Some(registry) = machine_registry {
             raw_tools.push(Box::new(tools::ListMachinesTool::new(registry.clone())));
             raw_tools.push(Box::new(tools::ComputerUseTool::new(
-                registry.clone(), workspace_dir, slug, &public_url, &auth_token,
+                registry.clone(),
+                workspace_dir,
+                slug,
+                &public_url,
+                &auth_token,
             )));
             raw_tools.push(Box::new(tools::RemoteBashTool::new(registry.clone())));
         }
@@ -525,17 +668,28 @@ fn build_agent_tools_for(
     if has("screen") {
         if let Some(registry) = machine_registry {
             raw_tools.push(Box::new(tools::screen::CollectScreenRecordingTool::new(
-                registry.clone(), workspace_dir, slug, &public_url, &auth_token,
+                registry.clone(),
+                workspace_dir,
+                slug,
+                &public_url,
+                &auth_token,
             )));
         }
-        raw_tools.push(Box::new(tools::screen::SaveScreenObservationTool::new(workspace_dir, slug)));
+        raw_tools.push(Box::new(tools::screen::SaveScreenObservationTool::new(
+            workspace_dir,
+            slug,
+        )));
     }
 
     // media
     if has("media") {
         if !google_ai_key.is_empty() {
             raw_tools.push(Box::new(tools::WatchVideoTool::new(
-                google_ai_key, workspace_dir, slug, &public_url, &auth_token,
+                google_ai_key,
+                workspace_dir,
+                slug,
+                &public_url,
+                &auth_token,
             )));
         }
     }

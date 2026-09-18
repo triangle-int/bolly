@@ -1,7 +1,10 @@
 //! Screen capture via the `screenshots` crate (cross-platform).
 //! Takes a screenshot every second and stores it as JPEG in memory.
 
-use std::sync::{Mutex, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 use std::time::Duration;
 
 static STREAMING: AtomicBool = AtomicBool::new(false);
@@ -65,8 +68,7 @@ fn take_screenshot_jpeg() -> Result<Vec<u8>, String> {
 
     let w = capture.width();
     let h = capture.height();
-    let rgba = image::RgbaImage::from_raw(w, h, capture.into_raw())
-        .ok_or("bad image buffer")?;
+    let rgba = image::RgbaImage::from_raw(w, h, capture.into_raw()).ok_or("bad image buffer")?;
     let img = DynamicImage::ImageRgba8(rgba);
 
     // Scale down for efficiency
@@ -81,7 +83,12 @@ fn take_screenshot_jpeg() -> Result<Vec<u8>, String> {
     let rgb = img.to_rgb8();
     let mut buf = Cursor::new(Vec::new());
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 50)
-        .encode(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8)
+        .encode(
+            rgb.as_raw(),
+            rgb.width(),
+            rgb.height(),
+            image::ExtendedColorType::Rgb8,
+        )
         .map_err(|e| e.to_string())?;
 
     Ok(buf.into_inner())

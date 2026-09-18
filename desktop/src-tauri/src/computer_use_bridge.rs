@@ -1,6 +1,6 @@
-use std::sync::Mutex;
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
+use std::sync::Mutex;
 use tauri::Emitter;
 use tokio_tungstenite::tungstenite::Message;
 
@@ -103,7 +103,8 @@ pub fn set_screen_recording_allowed(allowed: bool) -> Result<(), String> {
 
 #[tauri::command]
 pub fn get_server_url() -> Result<String, String> {
-    SERVER_URL.lock()
+    SERVER_URL
+        .lock()
         .map_err(|e| e.to_string())?
         .clone()
         .ok_or_else(|| "not connected".into())
@@ -137,7 +138,11 @@ pub fn stop_screen_recording(app: tauri::AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-async fn run_agent(app: &tauri::AppHandle, instance_url: &str, auth_token: &str) -> Result<(), String> {
+async fn run_agent(
+    app: &tauri::AppHandle,
+    instance_url: &str,
+    auth_token: &str,
+) -> Result<(), String> {
     let ws_proto = if instance_url.starts_with("https") {
         "wss"
     } else {
@@ -174,10 +179,7 @@ async fn run_agent(app: &tauri::AppHandle, instance_url: &str, auth_token: &str)
         })
         .unwrap_or((1920, 1080));
 
-    let screen_recording_allowed = SCREEN_RECORDING_ALLOWED
-        .lock()
-        .map(|v| *v)
-        .unwrap_or(false);
+    let screen_recording_allowed = SCREEN_RECORDING_ALLOWED.lock().map(|v| *v).unwrap_or(false);
 
     // Instance slug: only set explicitly via set_instance_slug.
     // URL parsing removed — tenant slug != instance directory name.
@@ -300,8 +302,8 @@ async fn run_agent(app: &tauri::AppHandle, instance_url: &str, auth_token: &str)
 
         // Temporarily hide overlay before screenshot so it doesn't appear in the capture
         // But never hide when recording — the REC indicator must stay visible
-        let hide_for_screenshot = action == "screenshot"
-            && !RECORDING_ACTIVE.lock().map(|v| *v).unwrap_or(false);
+        let hide_for_screenshot =
+            action == "screenshot" && !RECORDING_ACTIVE.lock().map(|v| *v).unwrap_or(false);
         if hide_for_screenshot {
             overlay::set_visible(app, false);
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -312,8 +314,15 @@ async fn run_agent(app: &tauri::AppHandle, instance_url: &str, auth_token: &str)
         // Other actions (screenshot, bash, file I/O) use spawn_blocking.
         let is_input_action = matches!(
             action.as_str(),
-            "key" | "type" | "left_click" | "right_click" | "middle_click"
-                | "double_click" | "mouse_move" | "scroll" | "switch_desktop"
+            "key"
+                | "type"
+                | "left_click"
+                | "right_click"
+                | "middle_click"
+                | "double_click"
+                | "mouse_move"
+                | "scroll"
+                | "switch_desktop"
         );
 
         let result = if is_input_action {
@@ -327,7 +336,8 @@ async fn run_agent(app: &tauri::AppHandle, instance_url: &str, auth_token: &str)
                 let r = execute_action(&call_clone, &action_clone, &mut *s);
                 let _ = tx.send(r);
             });
-            rx.await.unwrap_or_else(|e| Err(format!("main thread recv: {e}")))
+            rx.await
+                .unwrap_or_else(|e| Err(format!("main thread recv: {e}")))
         } else {
             let call_clone = call.clone();
             let action_clone = action.clone();
@@ -360,21 +370,37 @@ async fn run_agent(app: &tauri::AppHandle, instance_url: &str, auth_token: &str)
 
         // Build human-readable detail for the overlay
         let detail = match action.as_str() {
-            "key" => call.get("key").and_then(|v| v.as_str()).unwrap_or("").to_string(),
+            "key" => call
+                .get("key")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string(),
             "type" => {
                 let t = call.get("text").and_then(|v| v.as_str()).unwrap_or("");
                 let preview: String = t.chars().take(30).collect();
-                if t.chars().count() > 30 { format!("{preview}...") } else { preview }
+                if t.chars().count() > 30 {
+                    format!("{preview}...")
+                } else {
+                    preview
+                }
             }
             "left_click" | "right_click" | "double_click" | "middle_click" => {
                 let (x, y) = parse_coordinate(&call);
                 format!("{x}, {y}")
             }
-            "scroll" => call.get("scroll_direction").and_then(|v| v.as_str()).unwrap_or("down").to_string(),
+            "scroll" => call
+                .get("scroll_direction")
+                .and_then(|v| v.as_str())
+                .unwrap_or("down")
+                .to_string(),
             "bash" => {
                 let c = call.get("command").and_then(|v| v.as_str()).unwrap_or("");
                 let preview: String = c.chars().take(40).collect();
-                if c.chars().count() > 40 { format!("{preview}...") } else { preview }
+                if c.chars().count() > 40 {
+                    format!("{preview}...")
+                } else {
+                    preview
+                }
             }
             _ => String::new(),
         };
@@ -521,16 +547,12 @@ fn execute_action(
             Ok(AgentResult::Action)
         }
         // ── Native screen capture ──
-        "start_recording" => {
-            crate::screen_recorder::start()
-                .map(|_| AgentResult::Output("streaming started".into()))
-                .map_err(|e| format!("start_recording: {e}"))
-        }
-        "stop_recording" => {
-            crate::screen_recorder::stop()
-                .map(|_| AgentResult::Output("streaming stopped".into()))
-                .map_err(|e| format!("stop_recording: {e}"))
-        }
+        "start_recording" => crate::screen_recorder::start()
+            .map(|_| AgentResult::Output("streaming started".into()))
+            .map_err(|e| format!("start_recording: {e}")),
+        "stop_recording" => crate::screen_recorder::stop()
+            .map(|_| AgentResult::Output("streaming stopped".into()))
+            .map_err(|e| format!("stop_recording: {e}")),
         "get_frame" => {
             // Get the latest captured frame as base64 JPEG
             match crate::screen_recorder::get_last_frame() {
@@ -574,7 +596,10 @@ fn execute_action(
                 let _ = std::fs::create_dir_all(parent);
             }
             match std::fs::write(&path, content) {
-                Ok(_) => Ok(AgentResult::Output(format!("written {} bytes to {path}", content.len()))),
+                Ok(_) => Ok(AgentResult::Output(format!(
+                    "written {} bytes to {path}",
+                    content.len()
+                ))),
                 Err(e) => Err(format!("write {path}: {e}")),
             }
         }
@@ -630,7 +655,9 @@ fn execute_bash(command: &str, cwd: Option<&str>) -> Result<AgentResult, String>
                 result.push_str(&stdout);
             }
             if !stderr.is_empty() {
-                if !result.is_empty() { result.push('\n'); }
+                if !result.is_empty() {
+                    result.push('\n');
+                }
                 result.push_str("[stderr] ");
                 result.push_str(&stderr);
             }
@@ -664,30 +691,43 @@ fn parse_coordinate(call: &serde_json::Value) -> (i32, i32) {
 }
 
 fn hostname() -> String {
-    gethostname::gethostname()
-        .to_string_lossy()
-        .to_string()
+    gethostname::gethostname().to_string_lossy().to_string()
 }
 
 /// Upload a local file to the server via curl.
 /// Returns the upload_id on success.
-fn upload_file_to_server(path: &str, upload_url: &str, auth_token: &str) -> Result<AgentResult, String> {
+fn upload_file_to_server(
+    path: &str,
+    upload_url: &str,
+    auth_token: &str,
+) -> Result<AgentResult, String> {
     // Check file exists and has content
     let size = match std::fs::metadata(path) {
         Ok(m) => m.len(),
         Err(e) => return Err(format!("file not found: {path} ({e})")),
     };
     if size < 1000 {
-        return Err(format!("file too small ({size} bytes), recording may not have started: {path}"));
+        return Err(format!(
+            "file too small ({size} bytes), recording may not have started: {path}"
+        ));
     }
 
-    eprintln!("[upload] uploading {path} ({:.1} MB) to {upload_url}", size as f64 / 1024.0 / 1024.0);
+    eprintln!(
+        "[upload] uploading {path} ({:.1} MB) to {upload_url}",
+        size as f64 / 1024.0 / 1024.0
+    );
 
     let output = std::process::Command::new("curl")
         .args([
-            "-s", "-w", "\n%{http_code}", "-X", "POST",
-            "-H", &format!("Authorization: Bearer {auth_token}"),
-            "-F", &format!("file=@{path}"),
+            "-s",
+            "-w",
+            "\n%{http_code}",
+            "-X",
+            "POST",
+            "-H",
+            &format!("Authorization: Bearer {auth_token}"),
+            "-F",
+            &format!("file=@{path}"),
             upload_url,
         ])
         .output()
@@ -697,7 +737,10 @@ fn upload_file_to_server(path: &str, upload_url: &str, auth_token: &str) -> Resu
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
 
     if !output.status.success() {
-        return Err(format!("curl exit {}: {stderr}", output.status.code().unwrap_or(-1)));
+        return Err(format!(
+            "curl exit {}: {stderr}",
+            output.status.code().unwrap_or(-1)
+        ));
     }
 
     // stdout ends with \nHTTP_CODE, split it

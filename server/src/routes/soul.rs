@@ -2,7 +2,7 @@ use axum::{
     Json, Router,
     extract::{Path, State},
     http::StatusCode,
-    routing::{get, put, post},
+    routing::{get, post, put},
 };
 
 use crate::{
@@ -22,10 +22,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/soul/templates", get(get_templates))
 }
 
-async fn get_soul(
-    State(state): State<AppState>,
-    Path(instance_slug): Path<String>,
-) -> Json<Soul> {
+async fn get_soul(State(state): State<AppState>, Path(instance_slug): Path<String>) -> Json<Soul> {
     Json(soul::read_soul(&state.workspace_dir, &instance_slug))
 }
 

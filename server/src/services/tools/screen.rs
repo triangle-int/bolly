@@ -5,9 +5,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::{ToolExecError, openai_schema};
 use crate::services::machine_registry::{AgentToolCall, MachineRegistry};
 use crate::services::tool::{Tool, ToolDefinition};
-use super::{openai_schema, ToolExecError};
 
 // Screen recording path no longer used — frames are streamed via WebSocket
 // and stitched on the server from the ring buffer.
@@ -26,7 +26,10 @@ pub struct ScreenObservation {
 }
 
 pub fn save_observation(workspace_dir: &Path, slug: &str, obs: &ScreenObservation) {
-    let dir = workspace_dir.join("instances").join(slug).join("observations");
+    let dir = workspace_dir
+        .join("instances")
+        .join(slug)
+        .join("observations");
     let _ = fs::create_dir_all(&dir);
     let path = dir.join(format!("{}.json", obs.id));
     if let Ok(json) = serde_json::to_string_pretty(obs) {
@@ -35,7 +38,10 @@ pub fn save_observation(workspace_dir: &Path, slug: &str, obs: &ScreenObservatio
 }
 
 pub fn list_observations(workspace_dir: &Path, slug: &str) -> Vec<ScreenObservation> {
-    let dir = workspace_dir.join("instances").join(slug).join("observations");
+    let dir = workspace_dir
+        .join("instances")
+        .join(slug)
+        .join("observations");
     let entries = match fs::read_dir(&dir) {
         Ok(e) => e,
         Err(_) => return vec![],
@@ -121,17 +127,25 @@ impl Tool for CollectScreenRecordingTool {
 
     async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
         let machines = self.registry.list().await;
-        let machine = machines.iter().find(|m| m.screen_recording_allowed)
+        let machine = machines
+            .iter()
+            .find(|m| m.screen_recording_allowed)
             .ok_or_else(|| ToolExecError("no desktop with screen recording enabled".into()))?;
         let machine_id = machine.machine_id.clone();
 
         // 1. Take all buffered frames from the server's ring buffer
         let frames = self.registry.take_frames(&machine_id).await;
         if frames.is_empty() {
-            return Err(ToolExecError("no frames captured yet — recording may not have started".into()));
+            return Err(ToolExecError(
+                "no frames captured yet — recording may not have started".into(),
+            ));
         }
 
-        log::info!("[screen] stitching {} frames from '{}'", frames.len(), machine_id);
+        log::info!(
+            "[screen] stitching {} frames from '{}'",
+            frames.len(),
+            machine_id
+        );
 
         // 2. Write frames to temp dir
         let tmp_dir = format!("/tmp/bolly_frames_{}", std::process::id());
@@ -148,10 +162,20 @@ impl Tool for CollectScreenRecordingTool {
         let output_path = format!("{tmp_dir}/recording.mp4");
         let ffmpeg = tokio::process::Command::new("ffmpeg")
             .args([
-                "-y", "-framerate", "1",
-                "-i", &format!("{tmp_dir}/frame_%05d.jpg"),
-                "-c:v", "libx264", "-preset", "ultrafast", "-crf", "28",
-                "-pix_fmt", "yuv420p", "-an",
+                "-y",
+                "-framerate",
+                "1",
+                "-i",
+                &format!("{tmp_dir}/frame_%05d.jpg"),
+                "-c:v",
+                "libx264",
+                "-preset",
+                "ultrafast",
+                "-crf",
+                "28",
+                "-pix_fmt",
+                "yuv420p",
+                "-an",
                 &output_path,
             ])
             .output()
@@ -161,25 +185,40 @@ impl Tool for CollectScreenRecordingTool {
         if !ffmpeg.status.success() {
             let stderr = String::from_utf8_lossy(&ffmpeg.stderr);
             let _ = std::fs::remove_dir_all(&tmp_dir);
-            return Err(ToolExecError(format!("ffmpeg stitch failed: {}", &stderr[..stderr.len().min(300)])));
+            return Err(ToolExecError(format!(
+                "ffmpeg stitch failed: {}",
+                &stderr[..stderr.len().min(300)]
+            )));
         }
 
         // 4. Save as upload
         let video_bytes = std::fs::read(&output_path)
             .map_err(|e| ToolExecError(format!("failed to read stitched video: {e}")))?;
         let upload_meta = crate::services::uploads::save_upload(
-            &self.workspace_dir, &self.instance_slug, "screen_recording.mp4", &video_bytes,
-        ).map_err(|e| ToolExecError(format!("failed to save upload: {e}")))?;
+            &self.workspace_dir,
+            &self.instance_slug,
+            "screen_recording.mp4",
+            &video_bytes,
+        )
+        .map_err(|e| ToolExecError(format!("failed to save upload: {e}")))?;
 
         // 5. Clean up temp dir
         let _ = std::fs::remove_dir_all(&tmp_dir);
 
         let upload_id = upload_meta.id.clone();
-        let file_path = self.workspace_dir
-            .join("instances").join(&self.instance_slug)
-            .join("uploads").join(&upload_meta.stored_name);
+        let file_path = self
+            .workspace_dir
+            .join("instances")
+            .join(&self.instance_slug)
+            .join("uploads")
+            .join(&upload_meta.stored_name);
 
-        log::info!("[screen] stitched {} frames → {} ({} bytes)", frames.len(), upload_id, video_bytes.len());
+        log::info!(
+            "[screen] stitched {} frames → {} ({} bytes)",
+            frames.len(),
+            upload_id,
+            video_bytes.len()
+        );
 
         Ok(format!(
             "Screen recording collected ({} frames, {} seconds).\n\
@@ -188,7 +227,8 @@ impl Tool for CollectScreenRecordingTool {
              Now use watch_video to analyze what the user was doing.\n\
              File path: {}\n\n\
              After watching, call save_screen_observation with the upload_id, machine_id, and your analysis.",
-            frames.len(), frames.len(),
+            frames.len(),
+            frames.len(),
             file_path.display()
         ))
     }

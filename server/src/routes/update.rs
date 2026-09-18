@@ -1,6 +1,10 @@
-use std::sync::Mutex;
-use axum::{Json, Router, extract::State, routing::{get, post}};
 use crate::app::state::AppState;
+use axum::{
+    Json, Router,
+    extract::State,
+    routing::{get, post},
+};
+use std::sync::Mutex;
 
 // ── GitHub API cache (avoid rate limits: 60 req/h unauthenticated) ──
 
@@ -55,7 +59,9 @@ async fn check_update(State(state): State<AppState>) -> Json<UpdateCheck> {
     };
 
     // Parse commit SHA from nightly release body: "Auto-built from main (abc1234)"
-    let release_commit = release.body.as_deref()
+    let release_commit = release
+        .body
+        .as_deref()
         .and_then(|b| b.split('(').nth(1))
         .and_then(|s| s.strip_suffix(')'))
         .unwrap_or("");
@@ -95,16 +101,16 @@ async fn check_update(State(state): State<AppState>) -> Json<UpdateCheck> {
 
 async fn apply_update(State(state): State<AppState>) -> Json<serde_json::Value> {
     // Find update script — check multiple locations
-    let bolly_home = std::env::var("BOLLY_HOME").unwrap_or_else(|_| {
-        state.workspace_dir.to_string_lossy().to_string()
-    });
+    let bolly_home = std::env::var("BOLLY_HOME")
+        .unwrap_or_else(|_| state.workspace_dir.to_string_lossy().to_string());
     let candidates = [
-        format!("{bolly_home}/bin/update"),           // self-hosted install (new)
-        "/opt/bolly/scripts/update-bolly.sh".into(),  // Docker/Fly
-        "/opt/bolly/bin/update".into(),               // legacy bare-metal
+        format!("{bolly_home}/bin/update"), // self-hosted install (new)
+        "/opt/bolly/scripts/update-bolly.sh".into(), // Docker/Fly
+        "/opt/bolly/bin/update".into(),     // legacy bare-metal
     ];
 
-    let script = candidates.iter()
+    let script = candidates
+        .iter()
         .map(std::path::PathBuf::from)
         .find(|p| p.exists());
 
@@ -126,7 +132,10 @@ async fn apply_update(State(state): State<AppState>) -> Json<serde_json::Value> 
 
         // Read version before update to detect actual changes
         let version_file = std::path::Path::new(&bolly_home_clone).join("bin/.version");
-        let version_before = std::fs::read_to_string(&version_file).unwrap_or_default().trim().to_string();
+        let version_before = std::fs::read_to_string(&version_file)
+            .unwrap_or_default()
+            .trim()
+            .to_string();
 
         let result = tokio::process::Command::new("sh")
             .arg("-c")
@@ -145,13 +154,20 @@ async fn apply_update(State(state): State<AppState>) -> Json<serde_json::Value> 
 
                 // Check if the binary actually changed (don't rely on script exit code
                 // since the script in the Docker image may be outdated)
-                let version_after = std::fs::read_to_string(&version_file).unwrap_or_default().trim().to_string();
+                let version_after = std::fs::read_to_string(&version_file)
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string();
 
                 if version_after != version_before && !version_after.is_empty() {
-                    log::info!("[update] binary updated: {version_before} → {version_after}, restarting...");
+                    log::info!(
+                        "[update] binary updated: {version_before} → {version_after}, restarting..."
+                    );
                     std::process::exit(0);
                 } else {
-                    log::info!("[update] no change after update script (before={version_before}, after={version_after})");
+                    log::info!(
+                        "[update] no change after update script (before={version_before}, after={version_after})"
+                    );
                 }
             }
             Err(e) => {
@@ -167,7 +183,9 @@ fn get_channel_value(workspace_dir: &std::path::Path) -> String {
     let path = workspace_dir.join(".update-channel");
     if let Ok(ch) = std::fs::read_to_string(&path) {
         let ch = ch.trim().to_string();
-        if !ch.is_empty() { return ch; }
+        if !ch.is_empty() {
+            return ch;
+        }
     }
     "stable".to_string()
 }
@@ -188,7 +206,9 @@ async fn set_channel(
 ) -> Json<serde_json::Value> {
     let channel = req.channel.trim().to_lowercase();
     if channel != "stable" && channel != "nightly" {
-        return Json(serde_json::json!({ "ok": false, "error": "channel must be 'stable' or 'nightly'" }));
+        return Json(
+            serde_json::json!({ "ok": false, "error": "channel must be 'stable' or 'nightly'" }),
+        );
     }
     let path = state.workspace_dir.join(".update-channel");
     let _ = std::fs::write(&path, &channel);
@@ -229,7 +249,9 @@ async fn fetch_release_info(channel: &str) -> Option<ReleaseInfo> {
     let resp = client
         .get(&url)
         .header("User-Agent", "bolly-update")
-        .send().await.ok()?;
+        .send()
+        .await
+        .ok()?;
 
     if !resp.status().is_success() {
         log::warn!("[update] GitHub API returned {}", resp.status());
@@ -240,10 +262,13 @@ async fn fetch_release_info(channel: &str) -> Option<ReleaseInfo> {
 
     // Update cache
     if let Ok(mut cache) = RELEASE_CACHE.lock() {
-        *cache = Some((channel.to_string(), CachedResponse {
-            data: data.clone(),
-            fetched_at: std::time::Instant::now(),
-        }));
+        *cache = Some((
+            channel.to_string(),
+            CachedResponse {
+                data: data.clone(),
+                fetched_at: std::time::Instant::now(),
+            },
+        ));
     }
 
     Some(ReleaseInfo {
@@ -279,7 +304,12 @@ async fn get_changelog(State(state): State<AppState>) -> Json<Vec<Changelog>> {
     } else {
         let url = format!("https://api.github.com/repos/{repo}/releases?per_page=10");
         let client = reqwest::Client::new();
-        let resp = match client.get(&url).header("User-Agent", "bolly-update").send().await {
+        let resp = match client
+            .get(&url)
+            .header("User-Agent", "bolly-update")
+            .send()
+            .await
+        {
             Ok(r) if r.status().is_success() => r,
             Ok(r) => {
                 log::warn!("[changelog] GitHub API returned {}", r.status());
@@ -304,10 +334,15 @@ async fn get_changelog(State(state): State<AppState>) -> Json<Vec<Changelog>> {
         d
     };
 
-    let entries: Vec<Changelog> = data.iter()
+    let entries: Vec<Changelog> = data
+        .iter()
         .filter(|r| {
             let tag = r["tag_name"].as_str().unwrap_or("");
-            if channel == "nightly" { true } else { tag != "nightly" }
+            if channel == "nightly" {
+                true
+            } else {
+                tag != "nightly"
+            }
         })
         .filter_map(|r| {
             let version = r["tag_name"].as_str()?.to_string();

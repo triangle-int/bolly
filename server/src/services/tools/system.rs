@@ -5,14 +5,14 @@ use std::{
     sync::{Arc, LazyLock, Mutex},
 };
 
-use crate::services::tool::{ToolDefinition, Tool};
 use crate::services::chat;
+use crate::services::tool::{Tool, ToolDefinition};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use tokio::sync::broadcast;
 
-use super::{openai_schema, ToolExecError};
-use super::companion::{load_mood_state};
+use super::companion::load_mood_state;
+use super::{ToolExecError, openai_schema};
 use crate::app::state::PendingSecret;
 use crate::domain::events::ServerEvent;
 
@@ -67,9 +67,11 @@ impl Tool for RunCommandTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "run_command".into(),
-            description: "Run a shell command. Prefer built-in tools when available (github_* for git, \
+            description:
+                "Run a shell command. Prefer built-in tools when available (github_* for git, \
                 edit_file for editing, web_fetch for HTTP). Use run_command for everything else: \
-                builds, tests, scripts, system commands.".into(),
+                builds, tests, scripts, system commands."
+                    .into(),
             parameters: openai_schema::<RunCommandArgs>(),
         }
     }
@@ -114,15 +116,23 @@ impl Tool for RunCommandTool {
                 });
             });
             let env_pairs: Vec<(String, String)> = if let Some(ref t) = github_token {
-                vec![("GITHUB_TOKEN".into(), t.clone()), ("GH_TOKEN".into(), t.clone())]
-            } else { vec![] };
+                vec![
+                    ("GITHUB_TOKEN".into(), t.clone()),
+                    ("GH_TOKEN".into(), t.clone()),
+                ]
+            } else {
+                vec![]
+            };
             let result = tokio::task::spawn_blocking(move || {
-                let env_refs: Vec<(&str, &str)> = env_pairs.iter().map(|(k, v)| (k.as_str(), v.as_str())).collect();
+                let env_refs: Vec<(&str, &str)> = env_pairs
+                    .iter()
+                    .map(|(k, v)| (k.as_str(), v.as_str()))
+                    .collect();
                 run_command_pty(&cmd, &dir, timeout, Some(&chunk_cb), &env_refs)
             })
-                .await
-                .map_err(|e| ToolExecError(format!("task join error: {e}")))?
-                .map_err(|e| ToolExecError(e))?;
+            .await
+            .map_err(|e| ToolExecError(format!("task join error: {e}")))?
+            .map_err(|e| ToolExecError(e))?;
 
             match result {
                 PtyRunResult::Completed(output) => Ok(output),
@@ -142,17 +152,20 @@ impl Tool for RunCommandTool {
             }
         } else {
             let mut cmd = tokio::process::Command::new("sh");
-            cmd.arg("-c").arg(&command).current_dir(&work_dir).stdin(std::process::Stdio::null());
+            cmd.arg("-c")
+                .arg(&command)
+                .current_dir(&work_dir)
+                .stdin(std::process::Stdio::null());
             if let Some(ref token) = github_token {
                 cmd.env("GITHUB_TOKEN", token).env("GH_TOKEN", token);
             }
-            let output = tokio::time::timeout(
-                std::time::Duration::from_secs(timeout),
-                cmd.output(),
-            )
-            .await
-            .map_err(|_| ToolExecError(format!("command timed out after {timeout}s: {command}")))?
-            .map_err(|e| ToolExecError(format!("failed to execute command: {e}")))?;
+            let output =
+                tokio::time::timeout(std::time::Duration::from_secs(timeout), cmd.output())
+                    .await
+                    .map_err(|_| {
+                        ToolExecError(format!("command timed out after {timeout}s: {command}"))
+                    })?
+                    .map_err(|e| ToolExecError(format!("failed to execute command: {e}")))?;
 
             let stdout = String::from_utf8_lossy(&output.stdout);
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -235,7 +248,13 @@ fn looks_like_interactive_prompt(output: &str) -> bool {
 /// Execute a command inside a pseudo-terminal (PTY).
 /// If the command waits for interactive input, the PTY is parked as a session
 /// and the caller is told to use `interactive_session` to continue.
-fn run_command_pty(command: &str, work_dir: &Path, timeout_secs: u64, on_chunk: Option<&dyn Fn(&str)>, env_vars: &[(&str, &str)]) -> Result<PtyRunResult, String> {
+fn run_command_pty(
+    command: &str,
+    work_dir: &Path,
+    timeout_secs: u64,
+    on_chunk: Option<&dyn Fn(&str)>,
+    env_vars: &[(&str, &str)],
+) -> Result<PtyRunResult, String> {
     use portable_pty::{CommandBuilder, PtySize, native_pty_system};
     use std::io::Read;
     use std::sync::mpsc;
@@ -276,7 +295,9 @@ fn run_command_pty(command: &str, work_dir: &Path, timeout_secs: u64, on_chunk: 
         .map_err(|e| format!("failed to clone pty reader: {e}"))?;
 
     // Keep the writer alive — we may need it if the command is interactive
-    let writer = pair.master.take_writer()
+    let writer = pair
+        .master
+        .take_writer()
         .map_err(|e| format!("failed to take pty writer: {e}"))?;
 
     // Use Vec<u8> channel (compatible with PtySession) — empty vec signals EOF
@@ -316,9 +337,7 @@ fn run_command_pty(command: &str, work_dir: &Path, timeout_secs: u64, on_chunk: 
         let remaining = deadline.saturating_duration_since(Instant::now());
         if remaining.is_zero() {
             let _ = child.kill();
-            return Err(format!(
-                "command timed out after {timeout_secs}s"
-            ));
+            return Err(format!("command timed out after {timeout_secs}s"));
         }
 
         let wait = remaining.min(idle_check_interval);
@@ -345,7 +364,8 @@ fn run_command_pty(command: &str, work_dir: &Path, timeout_secs: u64, on_chunk: 
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 if !output.is_empty() && last_data_at.elapsed() >= idle_check_interval {
-                    let waiting_on_tty = child_pid.map_or(false, |pid| is_process_tree_waiting_on_tty(pid));
+                    let waiting_on_tty =
+                        child_pid.map_or(false, |pid| is_process_tree_waiting_on_tty(pid));
                     let raw = String::from_utf8_lossy(&output);
                     let clean = strip_ansi_codes(&raw);
                     let prompt_detected = looks_like_interactive_prompt(&clean);
@@ -372,7 +392,10 @@ fn run_command_pty(command: &str, work_dir: &Path, timeout_secs: u64, on_chunk: 
             writer,
             output_rx: rx,
         };
-        PTY_SESSIONS.lock().unwrap().insert(session_id.clone(), session);
+        PTY_SESSIONS
+            .lock()
+            .unwrap()
+            .insert(session_id.clone(), session);
         log::info!("[run_command] parked interactive session: {session_id}");
         return Ok(PtyRunResult::WaitingForInput {
             output: truncated,
@@ -388,7 +411,9 @@ fn run_command_pty(command: &str, work_dir: &Path, timeout_secs: u64, on_chunk: 
         let code = exit_status
             .map(|s| s.exit_code().to_string())
             .unwrap_or_else(|| "unknown".into());
-        Ok(PtyRunResult::Completed(format!("command completed with exit code {code}")))
+        Ok(PtyRunResult::Completed(format!(
+            "command completed with exit code {code}"
+        )))
     } else {
         let mut result = truncated;
         if clean.chars().count() > 4000 {
@@ -534,7 +559,9 @@ impl Tool for InteractiveSessionTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "interactive_session".into(),
-            description: "Persistent interactive terminal session. Actions: start, write, read, close.".into(),
+            description:
+                "Persistent interactive terminal session. Actions: start, write, read, close."
+                    .into(),
             parameters: openai_schema::<InteractiveSessionArgs>(),
         }
     }
@@ -681,7 +708,9 @@ impl Tool for InteractiveSessionTool {
                 .map_err(|e| ToolExecError(e))?;
 
                 if output.is_empty() {
-                    Ok(format!("[session {session_id}] Input sent. No new output yet."))
+                    Ok(format!(
+                        "[session {session_id}] Input sent. No new output yet."
+                    ))
                 } else {
                     Ok(format!("[session {session_id}]\n{output}"))
                 }
@@ -754,10 +783,22 @@ fn unescape_input(s: &str) -> Vec<u8> {
     while let Some(c) = chars.next() {
         if c == '\\' {
             match chars.peek() {
-                Some('n') => { chars.next(); result.push(b'\n'); }
-                Some('r') => { chars.next(); result.push(b'\r'); }
-                Some('t') => { chars.next(); result.push(b'\t'); }
-                Some('\\') => { chars.next(); result.push(b'\\'); }
+                Some('n') => {
+                    chars.next();
+                    result.push(b'\n');
+                }
+                Some('r') => {
+                    chars.next();
+                    result.push(b'\r');
+                }
+                Some('t') => {
+                    chars.next();
+                    result.push(b'\t');
+                }
+                Some('\\') => {
+                    chars.next();
+                    result.push(b'\\');
+                }
                 Some('x') => {
                     chars.next();
                     let mut hex = String::new();
@@ -882,14 +923,16 @@ impl Tool for GetSettingsTool {
             .and_then(|raw| serde_json::from_str(&raw).ok())
             .unwrap_or_else(|| serde_json::json!({}));
 
-        let name = project_state.get("identity")
+        let name = project_state
+            .get("identity")
             .and_then(|i| i.get("name"))
             .and_then(|n| n.as_str())
             .unwrap_or("(not set)");
         lines.push(format!("companion name: {name}"));
 
         // Timezone
-        let tz = project_state.get("timezone")
+        let tz = project_state
+            .get("timezone")
             .and_then(|t| t.as_str())
             .unwrap_or("UTC (default)");
         lines.push(format!("timezone: {tz}"));
@@ -906,8 +949,21 @@ impl Tool for GetSettingsTool {
                     crate::config::ModelMode::Fast => "fast",
                     crate::config::ModelMode::Heavy => "heavy",
                 };
-                lines.push(format!("llm: anthropic / {} (mode: {mode})", config.llm.model_name()));
-                lines.push(format!("fast model: {}", config.llm.fast_model_name()));
+                if let Some(reason) = config.llm.setup_required() {
+                    lines.push(format!(
+                        "llm: {:?} — setup required: {reason}",
+                        config.llm.provider
+                    ));
+                } else {
+                    lines.push(format!(
+                        "llm: {:?} / {} (mode: {mode})",
+                        config.llm.provider,
+                        config.llm.model_name()
+                    ));
+                }
+                if config.llm.provider != crate::config::LlmProvider::Codex {
+                    lines.push(format!("fast model: {}", config.llm.fast_model_name()));
+                }
 
                 let keys = config.llm.configured_providers();
                 if keys.is_empty() {
@@ -918,8 +974,10 @@ impl Tool for GetSettingsTool {
 
                 // GitHub
                 // GitHub — check instance config first, then fall back to global
-                let instance_cfg = crate::config::InstanceConfig::load(&self.workspace_dir, &self.instance_slug);
-                let github_token_set = !instance_cfg.github.token.is_empty() || !config.github.token.is_empty();
+                let instance_cfg =
+                    crate::config::InstanceConfig::load(&self.workspace_dir, &self.instance_slug);
+                let github_token_set =
+                    !instance_cfg.github.token.is_empty() || !config.github.token.is_empty();
                 if github_token_set {
                     lines.push("github: token configured".into());
                 } else {
@@ -940,7 +998,8 @@ impl Tool for GetSettingsTool {
                 if config.mcp_servers.is_empty() {
                     lines.push("extensions (mcp): none".into());
                 } else {
-                    let names: Vec<&str> = config.mcp_servers.iter().map(|s| s.name.as_str()).collect();
+                    let names: Vec<&str> =
+                        config.mcp_servers.iter().map(|s| s.name.as_str()).collect();
                     lines.push(format!("extensions (mcp): {}", names.join(", ")));
                 }
             }
@@ -960,13 +1019,19 @@ impl Tool for GetSettingsTool {
         }
 
         // Email accounts (SMTP/IMAP)
-        let email_accounts = crate::config::EmailAccounts::load(&self.workspace_dir, &self.instance_slug);
+        let email_accounts =
+            crate::config::EmailAccounts::load(&self.workspace_dir, &self.instance_slug);
         if email_accounts.is_empty() {
             lines.push("email accounts (smtp/imap): none configured".into());
         } else {
-            let emails: Vec<String> = email_accounts.iter()
+            let emails: Vec<String> = email_accounts
+                .iter()
                 .map(|a| {
-                    let addr = if a.smtp_from.is_empty() { &a.smtp_user } else { &a.smtp_from };
+                    let addr = if a.smtp_from.is_empty() {
+                        &a.smtp_user
+                    } else {
+                        &a.smtp_from
+                    };
                     addr.to_string()
                 })
                 .collect();
@@ -975,7 +1040,10 @@ impl Tool for GetSettingsTool {
 
         // Soul
         let soul_exists = self.instance_dir.join("soul.md").exists();
-        lines.push(format!("soul.md: {}", if soul_exists { "exists" } else { "not created" }));
+        lines.push(format!(
+            "soul.md: {}",
+            if soul_exists { "exists" } else { "not created" }
+        ));
 
         Ok(lines.join("\n"))
     }
@@ -995,7 +1063,9 @@ pub struct UpdateConfigTool {
 
 impl UpdateConfigTool {
     pub fn new(
-        config_path: &Path, workspace_dir: &Path, instance_slug: &str,
+        config_path: &Path,
+        workspace_dir: &Path,
+        instance_slug: &str,
         machine_registry: crate::services::machine_registry::MachineRegistry,
     ) -> Self {
         Self {
@@ -1070,8 +1140,12 @@ pub struct EmailAccountArg {
     pub imap_password: String,
 }
 
-fn default_587() -> u16 { 587 }
-fn default_993() -> u16 { 993 }
+fn default_587() -> u16 {
+    587
+}
+fn default_993() -> u16 {
+    993
+}
 
 #[derive(Deserialize, JsonSchema)]
 pub struct McpServerArg {
@@ -1109,9 +1183,11 @@ impl Tool for UpdateConfigTool {
                 "auto" => config.llm.model_mode = crate::config::ModelMode::Auto,
                 "fast" => config.llm.model_mode = crate::config::ModelMode::Fast,
                 "heavy" => config.llm.model_mode = crate::config::ModelMode::Heavy,
-                other => return Err(ToolExecError(format!(
-                    "unknown model_mode \"{other}\". supported: auto, fast, heavy"
-                ))),
+                other => {
+                    return Err(ToolExecError(format!(
+                        "unknown model_mode \"{other}\". supported: auto, fast, heavy"
+                    )));
+                }
             }
             changes.push(format!("model_mode → {m}"));
         }
@@ -1119,26 +1195,40 @@ impl Tool for UpdateConfigTool {
         if let Some(key) = &args.openai_key {
             let k = key.trim().to_string();
             config.llm.tokens.open_ai = k.clone();
-            changes.push(if k.is_empty() { "openai key cleared".into() } else { "openai key updated".into() });
+            changes.push(if k.is_empty() {
+                "openai key cleared".into()
+            } else {
+                "openai key updated".into()
+            });
         }
 
         if let Some(key) = &args.anthropic_key {
             let k = key.trim().to_string();
             config.llm.tokens.anthropic = k.clone();
-            changes.push(if k.is_empty() { "anthropic key cleared".into() } else { "anthropic key updated".into() });
+            changes.push(if k.is_empty() {
+                "anthropic key cleared".into()
+            } else {
+                "anthropic key updated".into()
+            });
         }
 
         if let Some(key) = &args.brave_search_key {
             let k = key.trim().to_string();
             config.llm.tokens.brave_search = k.clone();
-            changes.push(if k.is_empty() { "brave search key cleared".into() } else { "brave search key updated".into() });
+            changes.push(if k.is_empty() {
+                "brave search key cleared".into()
+            } else {
+                "brave search key updated".into()
+            });
         }
 
         if let Some(server) = &args.add_mcp_server {
             let name = server.name.trim().to_string();
             let url = server.url.trim().to_string();
             if name.is_empty() || url.is_empty() {
-                return Err(ToolExecError("MCP server name and url cannot be empty".into()));
+                return Err(ToolExecError(
+                    "MCP server name and url cannot be empty".into(),
+                ));
             }
             if config.mcp_servers.iter().any(|s| s.name == name) {
                 return Err(ToolExecError(format!("MCP server '{name}' already exists")));
@@ -1177,11 +1267,16 @@ impl Tool for UpdateConfigTool {
                 let tz = tz.trim().to_string();
                 if !tz.is_empty() {
                     if tz.parse::<chrono_tz::Tz>().is_err() {
-                        return Err(ToolExecError(format!("invalid timezone \"{tz}\". use IANA format like \"Asia/Bishkek\"")));
+                        return Err(ToolExecError(format!(
+                            "invalid timezone \"{tz}\". use IANA format like \"Asia/Bishkek\""
+                        )));
                     }
                 }
                 project_state["timezone"] = serde_json::Value::String(tz.clone());
-                changes.push(format!("timezone → {}", if tz.is_empty() { "UTC" } else { &tz }));
+                changes.push(format!(
+                    "timezone → {}",
+                    if tz.is_empty() { "UTC" } else { &tz }
+                ));
                 instance_changes = true;
             }
 
@@ -1207,30 +1302,49 @@ impl Tool for UpdateConfigTool {
         if let Some(token) = &args.github_token {
             let token = token.trim().to_string();
             // Write github token to per-instance config, not global
-            let mut instance_cfg = crate::config::InstanceConfig::load(&self.workspace_dir, &self.instance_slug);
+            let mut instance_cfg =
+                crate::config::InstanceConfig::load(&self.workspace_dir, &self.instance_slug);
             instance_cfg.github.token = token.clone();
-            instance_cfg.save(&self.workspace_dir, &self.instance_slug)
+            instance_cfg
+                .save(&self.workspace_dir, &self.instance_slug)
                 .map_err(|e| ToolExecError(format!("failed to save instance config: {e}")))?;
-            changes.push(if token.is_empty() { "github token removed".into() } else { "github token updated".into() });
+            changes.push(if token.is_empty() {
+                "github token removed".into()
+            } else {
+                "github token updated".into()
+            });
         }
 
         if let Some(enabled) = args.screen_recording {
-            let mut instance_cfg = crate::config::InstanceConfig::load(&self.workspace_dir, &self.instance_slug);
+            let mut instance_cfg =
+                crate::config::InstanceConfig::load(&self.workspace_dir, &self.instance_slug);
             instance_cfg.screen_recording = enabled;
-            instance_cfg.save(&self.workspace_dir, &self.instance_slug)
+            instance_cfg
+                .save(&self.workspace_dir, &self.instance_slug)
                 .map_err(|e| ToolExecError(format!("failed to save instance config: {e}")))?;
-            changes.push(format!("screen recording → {}", if enabled { "enabled" } else { "disabled" }));
+            changes.push(format!(
+                "screen recording → {}",
+                if enabled { "enabled" } else { "disabled" }
+            ));
 
             // Enable/disable the observer agent
-            let observer_path = self.workspace_dir
-                .join("instances").join(&self.instance_slug)
-                .join("agents").join("observer.toml");
+            let observer_path = self
+                .workspace_dir
+                .join("instances")
+                .join(&self.instance_slug)
+                .join("agents")
+                .join("observer.toml");
             if let Ok(raw) = std::fs::read_to_string(&observer_path) {
-                if let Ok(mut agent) = toml::from_str::<crate::domain::child_agent::ChildAgentConfig>(&raw) {
+                if let Ok(mut agent) =
+                    toml::from_str::<crate::domain::child_agent::ChildAgentConfig>(&raw)
+                {
                     agent.enabled = enabled;
                     if let Ok(toml_str) = toml::to_string_pretty(&agent) {
                         let _ = std::fs::write(&observer_path, toml_str);
-                        changes.push(format!("observer agent → {}", if enabled { "enabled" } else { "disabled" }));
+                        changes.push(format!(
+                            "observer agent → {}",
+                            if enabled { "enabled" } else { "disabled" }
+                        ));
                     }
                 }
             }
@@ -1240,9 +1354,16 @@ impl Tool for UpdateConfigTool {
             tokio::spawn(async move {
                 let machines = registry.list().await;
                 for m in &machines {
-                    if !m.screen_recording_allowed { continue; }
+                    if !m.screen_recording_allowed {
+                        continue;
+                    }
                     if enabled {
-                        crate::services::tools::screen::start_recording_on_machine(&registry, &m.machine_id, &m.os).await;
+                        crate::services::tools::screen::start_recording_on_machine(
+                            &registry,
+                            &m.machine_id,
+                            &m.os,
+                        )
+                        .await;
                     } else {
                         let stop = crate::services::machine_registry::AgentToolCall {
                             request_id: uuid::Uuid::new_v4().to_string(),
@@ -1259,11 +1380,17 @@ impl Tool for UpdateConfigTool {
 
         // --- Agent interval ---
         if let Some(ref ai) = args.agent_interval {
-            let agent_path = self.workspace_dir
-                .join("instances").join(&self.instance_slug)
-                .join("agents").join(format!("{}.toml", ai.agent_name));
+            let agent_path = self
+                .workspace_dir
+                .join("instances")
+                .join(&self.instance_slug)
+                .join("agents")
+                .join(format!("{}.toml", ai.agent_name));
             if !agent_path.exists() {
-                return Err(ToolExecError(format!("agent '{}' not found", ai.agent_name)));
+                return Err(ToolExecError(format!(
+                    "agent '{}' not found",
+                    ai.agent_name
+                )));
             }
             let raw = std::fs::read_to_string(&agent_path)
                 .map_err(|e| ToolExecError(format!("failed to read agent config: {e}")))?;
@@ -1284,9 +1411,12 @@ impl Tool for UpdateConfigTool {
         if let Some(ref name) = args.reset_agent {
             match crate::services::child_agents::get_builtin_default(name) {
                 Some(default_config) => {
-                    let agent_path = self.workspace_dir
-                        .join("instances").join(&self.instance_slug)
-                        .join("agents").join(format!("{name}.toml"));
+                    let agent_path = self
+                        .workspace_dir
+                        .join("instances")
+                        .join(&self.instance_slug)
+                        .join("agents")
+                        .join(format!("{name}.toml"));
                     let toml_str = toml::to_string_pretty(&default_config)
                         .map_err(|e| ToolExecError(format!("failed to serialize: {e}")))?;
                     std::fs::write(&agent_path, toml_str)
@@ -1303,7 +1433,8 @@ impl Tool for UpdateConfigTool {
 
         // --- Email account management ---
         if let Some(acct) = &args.add_email_account {
-            let mut accounts = crate::config::EmailAccounts::load(&self.workspace_dir, &self.instance_slug);
+            let mut accounts =
+                crate::config::EmailAccounts::load(&self.workspace_dir, &self.instance_slug);
             let email_cfg = crate::config::EmailConfig {
                 smtp_host: acct.smtp_host.clone(),
                 smtp_port: acct.smtp_port,
@@ -1323,9 +1454,11 @@ impl Tool for UpdateConfigTool {
 
         if let Some(email) = &args.remove_email_account {
             let email = email.trim().to_string();
-            let mut accounts = crate::config::EmailAccounts::load(&self.workspace_dir, &self.instance_slug);
+            let mut accounts =
+                crate::config::EmailAccounts::load(&self.workspace_dir, &self.instance_slug);
             let before = accounts.len();
-            accounts.retain(|a| a.smtp_from != email && a.smtp_user != email && a.imap_user != email);
+            accounts
+                .retain(|a| a.smtp_from != email && a.smtp_user != email && a.imap_user != email);
             if accounts.len() == before {
                 return Err(ToolExecError(format!("email account '{email}' not found")));
             }
@@ -1339,9 +1472,12 @@ impl Tool for UpdateConfigTool {
         }
 
         // Save global config if anything changed there
-        if args.model_mode.is_some() || args.openai_key.is_some()
-            || args.anthropic_key.is_some() || args.brave_search_key.is_some()
-            || args.add_mcp_server.is_some() || args.remove_mcp_server.is_some()
+        if args.model_mode.is_some()
+            || args.openai_key.is_some()
+            || args.anthropic_key.is_some()
+            || args.brave_search_key.is_some()
+            || args.add_mcp_server.is_some()
+            || args.remove_mcp_server.is_some()
         {
             let output = toml::to_string_pretty(&config)
                 .map_err(|e| ToolExecError(format!("failed to serialize config: {e}")))?;
@@ -1349,7 +1485,10 @@ impl Tool for UpdateConfigTool {
                 .map_err(|e| ToolExecError(format!("failed to write config: {e}")))?;
         }
 
-        Ok(format!("updated: {}. changes take effect on next message.", changes.join(", ")))
+        Ok(format!(
+            "updated: {}. changes take effect on next message.",
+            changes.join(", ")
+        ))
     }
 }
 
@@ -1396,7 +1535,8 @@ impl Tool for ClearContextTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "clear_context".into(),
-            description: "Clear compacted context. Set clear_messages=true to also wipe chat history.".into(),
+            description:
+                "Clear compacted context. Set clear_messages=true to also wipe chat history.".into(),
             parameters: openai_schema::<ClearContextArgs>(),
         }
     }
@@ -1407,11 +1547,8 @@ impl Tool for ClearContextTool {
             chat::clear_context(&self.workspace_dir, &self.instance_slug, &self.chat_id);
         } else {
             // Only clear compacted summary
-            let compact = chat::compact_path(
-                &self.workspace_dir,
-                &self.instance_slug,
-                &self.chat_id,
-            );
+            let compact =
+                chat::compact_path(&self.workspace_dir, &self.instance_slug, &self.chat_id);
             if compact.exists() {
                 let _ = fs::remove_file(&compact);
             }
@@ -1755,7 +1892,10 @@ impl Tool for CallAgentTool {
         // Scheduled mode: write a timer file and return immediately
         if let Some(delay) = args.delay_seconds {
             if delay > 0 {
-                let instance_dir = self.workspace_dir.join("instances").join(&self.instance_slug);
+                let instance_dir = self
+                    .workspace_dir
+                    .join("instances")
+                    .join(&self.instance_slug);
                 let now = chrono::Utc::now().timestamp();
                 let scheduled = crate::services::tools::communication::ScheduledTask {
                     id: uuid::Uuid::new_v4().to_string(),
@@ -1766,18 +1906,34 @@ impl Tool for CallAgentTool {
                 let schedule_dir = instance_dir.join("scheduled");
                 std::fs::create_dir_all(&schedule_dir).map_err(|e| ToolExecError(e.to_string()))?;
                 let file_path = schedule_dir.join(format!("{}.json", scheduled.id));
-                let json = serde_json::to_string_pretty(&scheduled).map_err(|e| ToolExecError(e.to_string()))?;
+                let json = serde_json::to_string_pretty(&scheduled)
+                    .map_err(|e| ToolExecError(e.to_string()))?;
                 std::fs::write(&file_path, json).map_err(|e| ToolExecError(e.to_string()))?;
 
                 let time_desc = if delay >= 86400 {
-                    let d = delay / 86400; let h = (delay % 86400) / 3600;
-                    if h > 0 { format!("{d}d {h}h") } else { format!("{d}d") }
+                    let d = delay / 86400;
+                    let h = (delay % 86400) / 3600;
+                    if h > 0 {
+                        format!("{d}d {h}h")
+                    } else {
+                        format!("{d}d")
+                    }
                 } else if delay >= 3600 {
-                    let h = delay / 3600; let m = (delay % 3600) / 60;
-                    if m > 0 { format!("{h}h {m}m") } else { format!("{h}h") }
+                    let h = delay / 3600;
+                    let m = (delay % 3600) / 60;
+                    if m > 0 {
+                        format!("{h}h {m}m")
+                    } else {
+                        format!("{h}h")
+                    }
                 } else if delay >= 60 {
-                    let m = delay / 60; let s = delay % 60;
-                    if s > 0 { format!("{m}m {s}s") } else { format!("{m}m") }
+                    let m = delay / 60;
+                    let s = delay % 60;
+                    if s > 0 {
+                        format!("{m}m {s}s")
+                    } else {
+                        format!("{m}m")
+                    }
                 } else {
                     format!("{delay}s")
                 };
@@ -1786,18 +1942,31 @@ impl Tool for CallAgentTool {
         }
 
         // Immediate mode: run the agent now
-        let agents = crate::services::child_agents::load_agents(&self.workspace_dir, &self.instance_slug);
-        let agent = agents.iter().find(|a| a.name == args.agent_name)
+        let agents =
+            crate::services::child_agents::load_agents(&self.workspace_dir, &self.instance_slug);
+        let agent = agents
+            .iter()
+            .find(|a| a.name == args.agent_name)
             .ok_or_else(|| {
                 let available: Vec<_> = agents.iter().map(|a| a.name.as_str()).collect();
-                ToolExecError(format!("agent '{}' not found. available: {}", args.agent_name, available.join(", ")))
+                ToolExecError(format!(
+                    "agent '{}' not found. available: {}",
+                    args.agent_name,
+                    available.join(", ")
+                ))
             })?;
 
         if !agent.enabled {
-            return Err(ToolExecError(format!("agent '{}' is disabled", args.agent_name)));
+            return Err(ToolExecError(format!(
+                "agent '{}' is disabled",
+                args.agent_name
+            )));
         }
 
-        let instance_dir = self.workspace_dir.join("instances").join(&self.instance_slug);
+        let instance_dir = self
+            .workspace_dir
+            .join("instances")
+            .join(&self.instance_slug);
 
         log::info!("[call_agent] invoking '{}' with task: {task}", agent.name);
 
@@ -1817,7 +1986,12 @@ impl Tool for CallAgentTool {
         .await
         .map_err(|e| ToolExecError(format!("agent '{}' failed: {e}", agent.name)))?;
 
-        log::info!("[call_agent] '{}' completed ({} tokens, {})", agent.name, r.tokens, r.run_id);
+        log::info!(
+            "[call_agent] '{}' completed ({} tokens, {})",
+            agent.name,
+            r.tokens,
+            r.run_id
+        );
         Ok(format!("{}\n\n[agent run: {}]", r.response, r.run_id))
     }
 }
@@ -1856,7 +2030,8 @@ fn write_secret_to_file(
             let parts: Vec<&str> = key.split('.').collect();
             let mut current = &mut root;
             for &k in &parts[..parts.len() - 1] {
-                let table = current.as_table_mut()
+                let table = current
+                    .as_table_mut()
                     .ok_or_else(|| ToolExecError(format!("path component is not a table: {k}")))?;
                 if !table.contains_key(k) {
                     table.insert(k.to_string(), toml::Value::Table(toml::map::Map::new()));
@@ -1864,7 +2039,8 @@ fn write_secret_to_file(
                 current = table.get_mut(k).unwrap();
             }
             let leaf = parts.last().unwrap();
-            current.as_table_mut()
+            current
+                .as_table_mut()
                 .ok_or_else(|| ToolExecError(format!("parent of '{leaf}' is not a table")))?
                 .insert(leaf.to_string(), toml::Value::String(value.to_string()));
 
@@ -1954,9 +2130,11 @@ impl Tool for RequestSecretTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "request_secret".into(),
-            description: "Prompt user for a secret (API key, password, token) via secure masked input. \
+            description:
+                "Prompt user for a secret (API key, password, token) via secure masked input. \
                 Written directly to the specified file, never visible to you. \
-                For github token: use file=\"config\", key=\"github.token\".".into(),
+                For github token: use file=\"config\", key=\"github.token\"."
+                    .into(),
             parameters: openai_schema::<RequestSecretArgs>(),
         }
     }
@@ -2019,10 +2197,16 @@ impl Tool for RequestSecretTool {
         if args.file == "config" || args.file == "instance_config" {
             match args.key.as_deref() {
                 Some("github.token" | "github_token") => {
-                    let mut instance_cfg = crate::config::InstanceConfig::load(&self.workspace_dir, &self.instance_slug);
+                    let mut instance_cfg = crate::config::InstanceConfig::load(
+                        &self.workspace_dir,
+                        &self.instance_slug,
+                    );
                     instance_cfg.github.token = value.trim().to_string();
-                    instance_cfg.save(&self.workspace_dir, &self.instance_slug)
-                        .map_err(|e| ToolExecError(format!("failed to save instance config: {e}")))?;
+                    instance_cfg
+                        .save(&self.workspace_dir, &self.instance_slug)
+                        .map_err(|e| {
+                            ToolExecError(format!("failed to save instance config: {e}"))
+                        })?;
                     log::info!("[request_secret] github token saved to instance config");
                     return Ok("github token updated. changes take effect on next message.".into());
                 }
@@ -2067,7 +2251,8 @@ impl Tool for RestartMachineTool {
             description: "Restart the server process. Works on any platform — \
                 Fly.io, Docker (with restart policy), systemd, etc. \
                 Use when the environment is broken, MCP servers are stuck, \
-                or after an update that needs a clean restart.".into(),
+                or after an update that needs a clean restart."
+                .into(),
             parameters: openai_schema::<RestartMachineArgs>(),
         }
     }
@@ -2082,9 +2267,8 @@ impl Tool for RestartMachineTool {
         ) {
             log::info!("[restart] Fly.io: {app}/{machine_id}");
             let client = reqwest::Client::new();
-            let url = format!(
-                "http://_api.internal:4280/v1/apps/{app}/machines/{machine_id}/restart"
-            );
+            let url =
+                format!("http://_api.internal:4280/v1/apps/{app}/machines/{machine_id}/restart");
             if let Ok(resp) = client.post(&url).send().await {
                 if resp.status().is_success() {
                     return Ok("restart initiated via Fly.io — back in ~10 seconds".into());
@@ -2115,7 +2299,11 @@ pub struct ExportProfileTool {
 }
 
 impl ExportProfileTool {
-    pub fn new(workspace_dir: &Path, instance_slug: &str, events: broadcast::Sender<ServerEvent>) -> Self {
+    pub fn new(
+        workspace_dir: &Path,
+        instance_slug: &str,
+        events: broadcast::Sender<ServerEvent>,
+    ) -> Self {
         Self {
             workspace_dir: workspace_dir.to_path_buf(),
             instance_slug: instance_slug.to_string(),
@@ -2142,13 +2330,17 @@ impl Tool for ExportProfileTool {
             name: "create_backup".into(),
             description: "Create a downloadable .tar.gz backup of this instance. \
                 Includes soul, memory, drops, chat history, and all data. \
-                Returns a download link the user can click.".into(),
+                Returns a download link the user can click."
+                .into(),
             parameters: openai_schema::<ExportProfileArgs>(),
         }
     }
 
     async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let instance_dir = self.workspace_dir.join("instances").join(&self.instance_slug);
+        let instance_dir = self
+            .workspace_dir
+            .join("instances")
+            .join(&self.instance_slug);
         if !instance_dir.is_dir() {
             return Err(ToolExecError("instance directory not found".into()));
         }
@@ -2186,7 +2378,10 @@ impl Tool for ExportProfileTool {
             delta: String::new(),
         });
 
-        Ok(format!("exported profile as {filename} ({} bytes). {marker}", output.stdout.len()))
+        Ok(format!(
+            "exported profile as {filename} ({} bytes). {marker}",
+            output.stdout.len()
+        ))
     }
 }
 
@@ -2225,13 +2420,17 @@ impl Tool for ImportProfileTool {
             name: "restore_backup".into(),
             description: "Restore from a .tar.gz backup archive. \
                 Merges data (soul, memory, drops, chat history) from the archive. \
-                Accepts a file path or an upload ID from a user attachment (e.g. 'upload_12345').".into(),
+                Accepts a file path or an upload ID from a user attachment (e.g. 'upload_12345')."
+                .into(),
             parameters: openai_schema::<ImportProfileArgs>(),
         }
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let instance_dir = self.workspace_dir.join("instances").join(&self.instance_slug);
+        let instance_dir = self
+            .workspace_dir
+            .join("instances")
+            .join(&self.instance_slug);
         let source = args.source.trim();
 
         // Resolve source: upload ID or file path
@@ -2243,7 +2442,8 @@ impl Tool for ImportProfileTool {
                 .map_err(|_| ToolExecError(format!("upload '{source}' not found")))?;
             let meta: serde_json::Value = serde_json::from_str(&meta_raw)
                 .map_err(|_| ToolExecError("invalid upload metadata".into()))?;
-            let stored_name = meta["stored_name"].as_str()
+            let stored_name = meta["stored_name"]
+                .as_str()
                 .ok_or_else(|| ToolExecError("upload has no stored_name".into()))?;
             uploads_dir.join(stored_name)
         } else if source.starts_with('/') {
@@ -2253,7 +2453,10 @@ impl Tool for ImportProfileTool {
         };
 
         if !archive_path.is_file() {
-            return Err(ToolExecError(format!("file not found: {}", archive_path.display())));
+            return Err(ToolExecError(format!(
+                "file not found: {}",
+                archive_path.display()
+            )));
         }
 
         // Auto-detect: gzip magic bytes 1f 8b
@@ -2279,6 +2482,9 @@ impl Tool for ImportProfileTool {
         crate::services::memory::rebuild_catalog_snapshot(&self.workspace_dir, &self.instance_slug);
         crate::services::memory::invalidate_frozen_catalog(&self.instance_slug);
 
-        Ok(format!("imported profile from {}. memory catalog rebuilt.", args.source))
+        Ok(format!(
+            "imported profile from {}. memory catalog rebuilt.",
+            args.source
+        ))
     }
 }

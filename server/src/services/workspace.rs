@@ -45,7 +45,11 @@ fn read_companion_name(path: &Path) -> Option<String> {
     let raw = fs::read_to_string(path.join("project_state.json")).ok()?;
     let state: serde_json::Value = serde_json::from_str(&raw).ok()?;
     let name = state.get("identity")?.get("name")?.as_str()?;
-    if name.is_empty() { None } else { Some(name.to_string()) }
+    if name.is_empty() {
+        None
+    } else {
+        Some(name.to_string())
+    }
 }
 
 fn count_markdown_files(path: &Path) -> io::Result<usize> {
