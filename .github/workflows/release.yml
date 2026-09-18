@@ -65,7 +65,7 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: 10.34.5
 
       - name: Build client
         run: |
@@ -141,7 +141,7 @@ jobs:
 
       - uses: pnpm/action-setup@v4
         with:
-          version: latest
+          version: 10.34.5
 
       - name: Install protoc
         shell: bash
@@ -164,7 +164,7 @@ jobs:
 
       - name: Install frontend dependencies
         working-directory: desktop
-        run: pnpm install
+        run: pnpm install --frozen-lockfile
 
       - name: Check Apple signing
         id: apple-signing
