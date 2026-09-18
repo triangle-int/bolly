@@ -88,7 +88,7 @@
 
 			<h2>7. Data security</h2>
 			<p>
-				All connections are encrypted via TLS. Passwords are hashed. API keys and tokens are stored encrypted at rest. Each companion runs in an isolated container with its own storage volume. We follow industry-standard security practices, but no system is perfectly secure.
+				All connections are encrypted via TLS. Passwords are hashed. API keys and tokens are stored encrypted at rest. Each companion keeps its data in a separate local workspace. We follow industry-standard security practices, but no system is perfectly secure.
 			</p>
 
 			<h2>8. Your rights</h2>

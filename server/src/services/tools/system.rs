@@ -2228,7 +2228,7 @@ impl Tool for RequestSecretTool {
 }
 
 // ---------------------------------------------------------------------------
-// restart_machine — universal restart (works on Fly.io, Docker, systemd, etc.)
+// restart_machine — restart through a service manager when available
 // ---------------------------------------------------------------------------
 
 pub struct RestartMachineTool;
@@ -2248,8 +2248,7 @@ impl Tool for RestartMachineTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "restart_machine".into(),
-            description: "Restart the server process. Works on any platform — \
-                Fly.io, Docker (with restart policy), systemd, etc. \
+            description: "Restart the server process through its service manager. \
                 Use when the environment is broken, MCP servers are stuck, \
                 or after an update that needs a clean restart."
                 .into(),
@@ -2277,7 +2276,7 @@ impl Tool for RestartMachineTool {
         }
 
         // Fallback: exit process, rely on supervisor to restart
-        // (Docker restart: always, systemd Restart=always, etc.)
+        // (for example, systemd Restart=always)
         log::info!("[restart] exiting process (supervisor will restart)");
         tokio::spawn(async {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
