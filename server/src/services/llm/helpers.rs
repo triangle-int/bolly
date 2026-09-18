@@ -553,7 +553,7 @@ pub fn load_system_prompt(workspace_dir: &Path, instance_slug: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_multimodal_prompt, ContentBlock, Message};
+    use super::{ContentBlock, Message, build_multimodal_prompt};
     use crate::services::uploads::{get_upload_file_path, save_upload};
 
     #[test]

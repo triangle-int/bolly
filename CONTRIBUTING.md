@@ -66,6 +66,33 @@ Single source of truth: `VERSION` file in repo root.
 - **TypeScript/Svelte**: follow existing patterns
 - **Commits**: short imperative descriptions
 
+## CI checks
+
+GitHub Actions runs `.github/workflows/ci.yml` on pull requests, pushes to
+`main`, and manual dispatches. It checks Rust formatting, tests and Clippy,
+all three Svelte frontends, desktop JavaScript tests,
+and the installer/release shell regression tests. Rust desktop checks run on
+macOS; server checks run on Linux. CI uses the Rust version in
+`rust-toolchain.toml`, Node.js 22, and pnpm 10.34.5.
+
+To run the checks locally:
+
+```bash
+cargo fmt --all -- --check
+for project in client desktop landing; do
+  pnpm --dir "$project" install --frozen-lockfile
+  pnpm --dir "$project" check
+  pnpm --dir "$project" build
+done
+pnpm --dir desktop test
+# Build the frontends above before checking Rust (the server embeds client/build).
+# Native dependencies are the same as for development of each package.
+cargo test --locked --workspace --all-targets
+cargo clippy --locked --workspace --all-targets
+bash scripts/tests/install.sh
+bash scripts/tests/release-workflow.sh
+```
+
 ## Reporting Issues
 
 Use [GitHub Issues](https://github.com/triangle-int/bolly/issues). Include:
