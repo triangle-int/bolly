@@ -5,8 +5,8 @@
 <h1 align="center">Bolly</h1>
 
 <p align="center">
-  <strong>An open-source AI companion with persistent memory, computer use, and creative autonomy.</strong><br>
-  Self-hosted. Fully BYOK. No rate limits.
+  <strong>Your AI, with a computer of its own.</strong><br>
+  A personal AI companion that lives on your machine and works across your computers.
 </p>
 
 <p align="center">
@@ -23,28 +23,65 @@
 
 <br>
 
-## Quick Start
+Bolly is an open-source, self-hosted AI companion with a persistent identity, long-term memory, and the ability to use real computers.
+
+Run Bolly's always-on brain on a Mac mini, home server, or spare computer. Then connect the desktop app on your other machines so Bolly can work with their screens, apps, files, and terminals from one interface.
+
+Unlike a faceless agent dashboard, Bolly has a voice, personality, mood, and animated presence you can make your own. Your companion and its memories stay on hardware you control.
+
+<br>
+
+## How it works
+
+### 1. Give Bolly a home
+
+Install the Bolly server on an always-on macOS or Linux machine. It keeps your companion running, stores its memory, and coordinates its work.
 
 ```bash
 curl -fsSL https://bollyai.dev/install.sh | bash
 ```
 
-Open `http://localhost:26559` — the onboarding walks you through everything.
+Open `http://localhost:26559` and follow the onboarding.
+
+### 2. Connect your computers
+
+Install the desktop app on the computers where you want Bolly to act. Each connected machine becomes another place where your companion can see the screen, use apps, work with files, and run commands.
+
+For example, Bolly can live on a Mac mini at home while you talk to it through the desktop app on your MacBook.
+
+### 3. Ask it to do the work
+
+Talk to Bolly normally. It can research something on the web, organize files, work inside an app, run a command on a connected machine, or continue a task while you are away.
+
+Computer-use actions appear through a visible desktop overlay. You choose which machines to connect and grant the operating-system permissions they need.
 
 <br>
 
-## Features
+## Why Bolly
 
-- **Memory** — File-based library with BM25 + vector search. Learns and remembers across conversations, organized by topic.
-- **Mood & Personality** — Dynamic emotional state that shifts with conversation. Defines its own voice through `soul.md` — editable by the companion itself.
-- **Autonomy** — Wakes every 45 minutes during heartbeat cycles. Writes to you first, creates ideas and reflections, sends emails, schedules reminders.
-- **Privacy-First** — Everything lives on your machine. No cloud dependency, no telemetry. File-based storage you can read, edit, and back up.
-- **Scheduled Check-ins** — Set recurring reminders, study sessions, or daily check-ins. The companion reaches out on its own schedule.
-- **Learning & Skills** — 50+ built-in tools — web search, email, file management, shell access, Google Calendar & Drive. Extensible via MCP.
+### A companion, not a control panel
+
+Bolly is designed around one persistent character rather than a collection of disposable chats. Its personality lives in `soul.md`, its mood changes over time, and its animated skin gives it a recognizable presence.
+
+### One mind across multiple computers
+
+The server holds Bolly's identity and memory. Connected desktop apps give it eyes and hands on other machines. You can keep the server somewhere reliable and interact with the same companion from wherever you work.
+
+### Memory you can inspect
+
+Bolly stores memories as ordinary files organized by topic. You can read them, edit them, back them up, or remove them. Keyword and semantic retrieval bring relevant memories back into later conversations.
+
+### Proactive when you want it to be
+
+Heartbeats and schedules let Bolly check in, follow recurring routines, and start useful work without waiting for a new message every time.
+
+### Yours from end to end
+
+Bolly is self-hosted and BYOK. There is no required Bolly cloud account, and Bolly does not impose its own usage limits. Your model provider's pricing and limits still apply.
 
 <br>
 
-### Companion Skins
+## Companion skins
 
 <table>
 <tr>
@@ -61,115 +98,102 @@ Open `http://localhost:26559` — the onboarding walks you through everything.
 </tr>
 </table>
 
-<br>
-
-### Computer Use
-
-Connect the desktop app and your companion can see your screen, click, type, scroll, and run commands — across multiple machines with a visual overlay.
+Skins change how your companion looks and feels without replacing its memory or identity. More customization is planned.
 
 <br>
 
-### 50+ Tools
+## Capabilities
 
-| Category | Capabilities |
-|----------|-------------|
-| **Files** | Read, write, edit, search, explore code |
-| **Shell** | Run commands, interactive sessions |
-| **Web** | Search, fetch pages (Anthropic native) |
-| **Media** | Watch video (Google AI) |
-| **Email** | Send & read email (SMTP/IMAP + Gmail OAuth) |
-| **Google** | Calendar events, Drive files |
-| **Memory** | Write, read, search, forget |
-| **Computer** | Screenshot, click, type, bash, files |
-| **MCP** | Extensible via Model Context Protocol |
+- **Computer use** — See the screen, click, type, scroll, and use apps on connected machines.
+- **Remote files and shell** — Read and edit files or run commands on the server and connected computers.
+- **Persistent memory** — Remember people, preferences, projects, and shared moments across conversations.
+- **Voice** — Speak through optional text-to-speech and voice mode.
+- **Web and communication** — Search the web, work with email, and use installed integrations.
+- **Skills and MCP** — Add new workflows and connect external tools without changing Bolly's core.
+- **Schedules and heartbeats** — Run recurring routines and initiate conversations proactively.
 
 <br>
 
 ## Install
 
-### One-line install (Linux & macOS)
+### Server
+
+The one-line installer sets up the native Bolly server and service on macOS or Linux:
 
 ```bash
 curl -fsSL https://bollyai.dev/install.sh | bash
 ```
 
-Open `http://localhost:26559` and follow the onboarding.
+When installation finishes, open `http://localhost:26559` and complete onboarding.
 
-The release workflow runs on `v*` tags; manual runs must select a `v*` tag.
-It publishes server binaries and macOS, Windows, and Linux desktop release
-artifacts. Nothing in this workflow provisions or updates running servers.
+### Desktop app
 
-### Desktop App
+Download the desktop app from [GitHub Releases](https://github.com/triangle-int/bolly/releases). Builds are available for macOS, Windows, and Linux.
 
-Download from [Releases](https://github.com/triangle-int/bolly/releases) — macOS (Apple Silicon + Intel), Windows, and Linux.
+Connect it to your self-hosted Bolly server to use the companion interface and enable computer use on that machine.
 
-Connects to **Cloud** (managed at bollyai.dev) or **Self-hosted** (your own server).
+The release workflow runs on `v*` tags; manual runs must select a `v*` tag. It publishes server binaries and macOS, Windows, and Linux desktop artifacts. Nothing in this workflow provisions or updates running servers.
 
 <br>
 
 ## Architecture
 
-```
-server/     Rust (Axum) — single binary with embedded client
-client/     SvelteKit 5 — dark theme UI
-desktop/    Tauri 2 — native desktop app with computer use
-landing/    SvelteKit — marketing site + managed hosting dashboard
+```text
+server/     Rust + Axum — always-on brain, tools, memory, and embedded web client
+client/     SvelteKit 5 — companion interface
+desktop/    Tauri 2 — native client and computer-use bridge
+landing/    SvelteKit — public website and documentation
 ```
 
 | Layer | Technology |
-|-------|-----------|
-| Server | Rust, Axum, Tokio (single binary via rust-embed) |
-| LLM | Anthropic Claude (BYOK) |
-| Frontend | SvelteKit 5, Tailwind CSS |
-| Desktop | Tauri 2 with computer use |
-| Memory | File-based + vector search (Google AI embeddings) |
-| Email | SMTP/IMAP + Gmail OAuth |
-| Calendar | Google Calendar API |
-| Storage | Google Drive API |
-| Deploy | Binary, systemd, launchd |
+|-------|------------|
+| Server | Rust, Axum, Tokio |
+| LLM | Anthropic or OpenAI API |
+| Web client | SvelteKit 5, Tailwind CSS |
+| Desktop | Tauri 2 |
+| Memory | File-based storage with keyword and vector search |
+| Extensions | Skills and Model Context Protocol |
+| Distribution | Native binaries, launchd, and systemd |
 
 ### Data layout
 
-Everything is a file. No black boxes.
+Everything important is stored as files under `~/.bolly`:
 
-```
+```text
 ~/.bolly/
 ├── config.toml
 └── instances/
     └── {slug}/
         ├── soul.md              personality definition
-        ├── heartbeat.md         customizable heartbeat behavior
+        ├── heartbeat.md         proactive behavior
         ├── mood.json            emotional state
-        ├── memory/              file-based memory library
-        │   ├── about/           facts about the user
-        │   ├── preferences/     user preferences
-        │   └── moments/         shared experiences
+        ├── memory/              long-term memory library
         ├── drops/               autonomous creative artifacts
         ├── uploads/             user-uploaded files
         ├── skills/              installed skills
-        └── chats/
-            └── {chat_id}/
-                └── rig_history.json
+        └── chats/               conversation history
 ```
 
 <br>
 
 ## Configuration
 
-Everything is configured through the Settings UI. For advanced use, the config file is at `~/.bolly/config.toml`.
+Most settings are available through the interface. Advanced configuration lives at `~/.bolly/config.toml`.
 
-| Environment Variable | Description |
-|----------|-------------|
-| `BOLLY_HOME` | Data directory (default `~/.bolly`) |
-| `BOLLY_AUTH_TOKEN` | Auth token override |
-| `BOLLY_PUBLIC_URL` | Public URL for the instance |
-| `RUST_LOG` | Logging level (default `info`) |
+| Environment variable | Description |
+|----------------------|-------------|
+| `BOLLY_HOME` | Data directory, defaults to `~/.bolly` |
+| `BOLLY_AUTH_TOKEN` | Authentication token override |
+| `BOLLY_PUBLIC_URL` | Public URL for the server |
+| `ANTHROPIC_API_KEY` | Anthropic API key override |
+| `OPENAI_API_KEY` | OpenAI API key override |
+| `RUST_LOG` | Logging level, defaults to `info` |
 
 <br>
 
 ## Updates
 
-For one-line installations, Bolly checks for updates automatically. Apply via Settings UI or manually:
+For one-line installations, Bolly checks for updates automatically. Apply an update through Settings or run:
 
 ```bash
 ~/.bolly/bin/update
@@ -181,7 +205,7 @@ For one-line installations, Bolly checks for updates automatically. Apply via Se
 curl -fsSL https://bollyai.dev/uninstall.sh | bash
 ```
 
-Keep your data while removing the binary:
+Keep your data while removing the server:
 
 ```bash
 KEEP_DATA=1 curl -fsSL https://bollyai.dev/uninstall.sh | bash
@@ -195,35 +219,23 @@ KEEP_DATA=1 curl -fsSL https://bollyai.dev/uninstall.sh | bash
 # Server
 cd server && cargo run
 
-# Client (dev mode)
+# Web client
 cd client && pnpm install && pnpm dev
 
-# Desktop (Tauri)
+# Desktop app
 cd desktop && pnpm install && pnpm tauri dev
 
-# Landing
+# Landing site
 cd landing && pnpm install && pnpm dev
 ```
 
-Use `pnpm` (not npm) for client, landing, and desktop.
-
-### Versioning
-
-```bash
-./scripts/bump-version.sh 0.30.0
-git add -A && git commit -m "v0.30.0"
-git tag v0.30.0 && git push && git push origin v0.30.0
-```
-
-<br>
-
-## Contributing
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development setup and guidelines.
+Use `pnpm`, not npm, for the JavaScript workspaces. See [CONTRIBUTING.md](CONTRIBUTING.md) for the complete development setup.
 
 ## Security
 
-See [SECURITY.md](SECURITY.md) for reporting vulnerabilities.
+Computer use and remote access are powerful capabilities. Only connect machines you control, keep your authentication token private, and review the permissions granted to the desktop app.
+
+See [SECURITY.md](SECURITY.md) to report a vulnerability.
 
 ## License
 
