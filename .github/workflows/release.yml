@@ -74,7 +74,7 @@ jobs:
           pnpm build
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@1.98.1
         with:
           targets: ${{ matrix.target }}
 
@@ -154,7 +154,7 @@ jobs:
             choco install protoc -y
           fi
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.98.1
         with:
           targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin' || '' }}
 

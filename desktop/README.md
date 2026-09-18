@@ -81,8 +81,8 @@ pnpm test
 pnpm check
 pnpm build
 cd ..
-cargo +1.93.1 check
-cargo +1.93.1 test
+cargo check
+cargo test
 ```
 
 Tests exercise the real frontend state module with mocked keychain/settings
