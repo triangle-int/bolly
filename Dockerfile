@@ -5,7 +5,7 @@ RUN corepack enable
 COPY client/ ./
 RUN pnpm install --frozen-lockfile && pnpm build
 
-FROM rust:1.93.1-bookworm AS server
+FROM rust:1.98.1-bookworm AS server
 RUN apt-get update -qq && apt-get install -y --no-install-recommends \
     protobuf-compiler libssl-dev pkg-config clang cmake && \
     rm -rf /var/lib/apt/lists/*
