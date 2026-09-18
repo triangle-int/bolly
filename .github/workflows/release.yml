@@ -8,11 +8,12 @@ on:
 
 permissions:
   contents: write
-  packages: write
 
 jobs:
   # ── Create empty draft release first (fast) ──
   create-release:
+    # Manual runs must select a release tag, never a branch.
+    if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -28,15 +29,12 @@ jobs:
             git log --oneline "${prev_tag}..HEAD" > /tmp/commits.txt
           fi
 
-      - name: Create draft release
+      - name: Create or reuse release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          body=$(cat /tmp/commits.txt | sed 's/^/- /')
-          gh release create "${{ github.ref_name }}" \
-            --title "Bolly ${{ github.ref_name }}" \
-            --notes "$body" \
-            --draft
+          GH_REPO: ${{ github.repository }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: bash scripts/release-workflow.sh release
 
   # ── Server binaries (parallel with desktop) ──
   server:
@@ -220,33 +218,79 @@ jobs:
 
   # ── Docker image (parallel with everything) ──
   docker:
+    needs: create-release
     runs-on: ubuntu-latest
+    # Serialize the check and push across reruns of the same version.
+    concurrency:
+      group: ghcr-version-${{ github.ref_name }}
+      cancel-in-progress: false
+    outputs:
+      digest: ${{ steps.digest.outputs.digest }}
+    permissions:
+      contents: read
+      packages: write
     steps:
       - uses: actions/checkout@v4
       - uses: docker/setup-buildx-action@v4
 
-      - name: Auth with Fly registry
+      - name: Log in to GHCR
         uses: docker/login-action@v4
         with:
-          registry: registry.fly.io
-          username: x
-          password: ${{ secrets.FLY_API_TOKEN }}
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Build and push
+      - name: Inspect versioned image
+        id: existing
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: bash scripts/release-workflow.sh inspect
+
+      - name: Build and push versioned image
+        if: steps.existing.outputs.absent == 'true'
+        id: image
         uses: docker/build-push-action@v7
         with:
           context: .
           push: true
-          tags: registry.fly.io/bolly:latest
+          platforms: linux/amd64
+          tags: ghcr.io/triangle-int/bolly:${{ github.ref_name }}
+          build-args: |
+            GIT_HASH=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  # ── Publish release (after all builds succeed) ──
+      - name: Expose image digest
+        id: digest
+        env:
+          IMAGE_DIGEST: ${{ steps.existing.outputs.digest || steps.image.outputs.digest }}
+        run: bash scripts/release-workflow.sh digest
+
+  # Publication and latest promotion must share one lock across all release tags.
   publish:
     needs: [server, desktop, docker]
     runs-on: ubuntu-latest
+    concurrency:
+      group: ghcr-latest
+      cancel-in-progress: false
+    permissions:
+      contents: write
+      packages: write
     steps:
-      - name: Publish release
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish release and promote if still latest
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --draft=false --latest
+          RELEASE_TAG: ${{ github.ref_name }}
+          GH_REPO: ${{ github.repository }}
+          IMAGE_DIGEST: ${{ needs.docker.outputs.digest }}
+        run: bash scripts/release-workflow.sh publish

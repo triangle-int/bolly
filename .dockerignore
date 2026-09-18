@@ -1,6 +1,7 @@
-target/
-node_modules/
-client/build/
-client/.svelte-kit/
-.git/
-*.md
+**/target/
+**/node_modules/
+**/build/
+**/.svelte-kit/
+.git
+**/.env
+**/.env.*
