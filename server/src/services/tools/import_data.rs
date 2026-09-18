@@ -16,7 +16,6 @@ pub struct ImportDataTool {
     api_key: String,
     events: broadcast::Sender<ServerEvent>,
     vector_store: Arc<VectorStore>,
-    google_ai_key: String,
 }
 
 impl ImportDataTool {
@@ -27,7 +26,6 @@ impl ImportDataTool {
         api_key: &str,
         events: broadcast::Sender<ServerEvent>,
         vector_store: Arc<VectorStore>,
-        google_ai_key: &str,
     ) -> Self {
         Self {
             workspace_dir: workspace_dir.to_path_buf(),
@@ -36,7 +34,6 @@ impl ImportDataTool {
             api_key: api_key.to_string(),
             events,
             vector_store,
-            google_ai_key: google_ai_key.to_string(),
         }
     }
 }
@@ -131,7 +128,6 @@ impl Tool for ImportDataTool {
             import_dir,
             self.events.clone(),
             self.vector_store.clone(),
-            self.google_ai_key.clone(),
         );
 
         Ok(

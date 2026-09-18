@@ -43,8 +43,6 @@ async fn start_import(
         )
     })?;
 
-    let google_ai_key = std::env::var("GOOGLE_AI_KEY").unwrap_or_default();
-
     // Create temp dir for uploaded files
     let import_dir = state
         .workspace_dir
@@ -106,7 +104,6 @@ async fn start_import(
         import_dir,
         state.events.clone(),
         state.vector_store.clone(),
-        google_ai_key,
     );
 
     Ok(Json(ImportStarted {

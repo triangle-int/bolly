@@ -19,6 +19,8 @@ pub struct Config {
     pub landing_url: String,
     #[serde(default)]
     pub llm: LlmConfig,
+    #[serde(default)]
+    pub embedding: EmbeddingConfig,
     #[serde(default = "default_registry_url")]
     pub registry_url: String,
     #[serde(default)]
@@ -29,6 +31,117 @@ pub struct Config {
     pub mcp_servers: Vec<McpServerConfig>,
     #[serde(default)]
     pub github: GithubConfig,
+}
+
+/// Independent text embedding configuration. Credentials stay in llm.tokens.OPEN_AI.
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct EmbeddingConfig {
+    pub version: u32,
+    pub enabled: bool,
+    /// `openai` or an explicitly configured `openai_compatible` backend.
+    pub provider: String,
+    pub model: String,
+    pub dimensions: u32,
+    pub base_url: String,
+}
+
+impl Default for EmbeddingConfig {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            enabled: true,
+            provider: "openai".into(),
+            model: "text-embedding-3-small".into(),
+            dimensions: 768,
+            base_url: "https://api.openai.com/v1".into(),
+        }
+    }
+}
+
+impl EmbeddingConfig {
+    pub fn validate(&self) -> Result<(), &'static str> {
+        if self.version != 1 {
+            return Err("unsupported embedding config version");
+        }
+        if !matches!(self.provider.as_str(), "openai" | "openai_compatible") {
+            return Err("embedding provider is unconfigured or unsupported");
+        }
+        if self.model.trim().is_empty() || self.model.len() > 1024 {
+            return Err("invalid embedding model");
+        }
+        if self.dimensions == 0 || self.dimensions > 16384 {
+            return Err("invalid embedding dimensions");
+        }
+        let url = self.endpoint()?;
+        if self.provider == "openai" {
+            if self.base_url != "https://api.openai.com/v1" {
+                return Err("OpenAI embeddings require https://api.openai.com/v1 exactly");
+            }
+        } else {
+            let host = url.host_str().unwrap_or_default();
+            let ip_literal = host
+                .strip_prefix('[')
+                .and_then(|host| host.strip_suffix(']'))
+                .unwrap_or(host);
+            let loopback = host.eq_ignore_ascii_case("localhost")
+                || ip_literal
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|address| address.is_loopback());
+            if !loopback {
+                return Err("OpenAI-compatible embeddings require a loopback endpoint");
+            }
+        }
+        Ok(())
+    }
+
+    fn endpoint(&self) -> Result<reqwest::Url, &'static str> {
+        let url = reqwest::Url::parse(&self.base_url).map_err(|_| "invalid embedding base URL")?;
+        if !matches!(url.scheme(), "https" | "http")
+            || url.host_str().is_none()
+            || !url.username().is_empty()
+            || url.password().is_some()
+            || url.query().is_some()
+            || url.fragment().is_some()
+        {
+            return Err("embedding base URL must not contain credentials, query, or fragment");
+        }
+        Ok(url)
+    }
+
+    pub fn unavailable_reason(&self, key: &str) -> Option<&'static str> {
+        if !self.enabled {
+            return Some("embeddings disabled");
+        }
+        if let Err(reason) = self.validate() {
+            return Some(reason);
+        }
+        if self.provider == "openai" && key.trim().is_empty() {
+            return Some("OpenAI embedding API key is missing");
+        }
+        None
+    }
+
+    /// Never return credentials accidentally placed in a URL.
+    pub fn safe_status(&self, key: &str) -> serde_json::Value {
+        let reason = self.unavailable_reason(key);
+        serde_json::json!({
+            "version": self.version, "enabled": self.enabled,
+            "provider": self.provider, "model": self.model, "dimensions": self.dimensions,
+            "base_url": self.endpoint().ok().map(|url| url.to_string()),
+            "authentication": if self.provider == "openai" { "OpenAI bearer key" } else { "none" },
+            "configured": reason.is_none(), "reason": reason,
+            "status": if reason.is_some() { "unavailable" } else { "unverified" },
+            "fallback": "bm25", "changes_require_restart": true,
+            "update_semantics": "full_replacement",
+        })
+    }
+}
+
+impl Config {
+    pub fn embedding_status(&self) -> serde_json::Value {
+        self.embedding.safe_status(&self.llm.tokens.open_ai)
+    }
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, Default)]
@@ -432,6 +545,7 @@ impl Default for Config {
             landing_url: String::new(),
             public_url: String::new(),
             llm: LlmConfig::default(),
+            embedding: EmbeddingConfig::default(),
             registry_url: default_registry_url(),
             plan: String::new(),
             mcp_servers: Vec::new(),
@@ -895,5 +1009,105 @@ mod tests {
             assert!(reloaded.voice_enabled);
             assert_eq!(reloaded.elevenlabs_voice_id, "test-voice");
         }
+    }
+}
+
+#[cfg(test)]
+mod embedding_config_tests {
+    use super::*;
+
+    #[test]
+    fn embedding_defaults_roundtrip_and_safe_status_are_independent_of_chat() {
+        let mut cfg: Config = toml::from_str("").unwrap();
+        let saved = toml::to_string(&cfg).unwrap();
+        assert!(saved.contains("[embedding]"));
+        let value = serde_json::to_value(&cfg).unwrap();
+        assert_eq!(value["embedding"]["version"], 1);
+        assert_eq!(value["embedding"]["provider"], "openai");
+        assert_eq!(value["embedding"]["model"], "text-embedding-3-small");
+        assert_eq!(value["embedding"]["dimensions"], 768);
+        assert_eq!(value["embedding"]["base_url"], "https://api.openai.com/v1");
+        for chat in [
+            LlmProvider::Anthropic,
+            LlmProvider::Codex,
+            LlmProvider::Openai,
+        ] {
+            cfg.llm.provider = chat;
+            cfg.llm.tokens.open_ai = "secret-openai-token".into();
+            let status = cfg.embedding_status();
+            assert_eq!(status["configured"], true);
+            assert_eq!(status["provider"], "openai");
+            assert!(!status.to_string().contains("secret-openai-token"));
+        }
+        let restored: Config = toml::from_str(&saved).unwrap();
+        assert_eq!(restored.embedding_status()["configured"], false);
+    }
+
+    #[test]
+    fn invalid_disabled_or_unconfigured_embeddings_report_bm25_without_secrets() {
+        for raw in [
+            "[embedding]\nenabled=false",
+            "[embedding]\nprovider='google'",
+            "[embedding]\nversion=99",
+            "[embedding]\ndimensions=0",
+            "[embedding]\nbase_url='https://user:secret@example.test/v1?key=secret'",
+        ] {
+            let mut cfg: Config = toml::from_str(raw).unwrap();
+            cfg.llm.tokens.open_ai = "secret-token".into();
+            let status = cfg.embedding_status();
+            assert_eq!(status["configured"], false, "{raw}");
+            assert_eq!(status["fallback"], "bm25");
+            assert!(!status.to_string().contains("secret"));
+        }
+    }
+
+    #[test]
+    fn compatible_embeddings_allow_only_unauthenticated_loopback_endpoints() {
+        for allowed in [
+            "http://localhost:11434/v1",
+            "http://127.0.0.1:11434/v1",
+            "http://127.200.3.4:11434/v1",
+            "http://[::1]:11434/v1",
+        ] {
+            let config = EmbeddingConfig {
+                provider: "openai_compatible".into(),
+                base_url: allowed.into(),
+                ..EmbeddingConfig::default()
+            };
+            assert_eq!(config.validate(), Ok(()), "{allowed}");
+            let status = config.safe_status("");
+            assert_eq!(status["configured"], true);
+            assert_eq!(status["authentication"], "none");
+        }
+
+        for rejected in [
+            "http://example.com/v1",
+            "https://10.0.0.1/v1",
+            "http://192.168.1.2/v1",
+            "http://169.254.169.254/latest/meta-data",
+            "http://[fe80::1]/v1",
+            "http://user:password@localhost:11434/v1",
+            "http://localhost:11434/v1?key=value",
+            "http://localhost:11434/v1#fragment",
+        ] {
+            let config = EmbeddingConfig {
+                provider: "openai_compatible".into(),
+                base_url: rejected.into(),
+                ..EmbeddingConfig::default()
+            };
+            assert!(config.validate().is_err(), "{rejected}");
+        }
+    }
+
+    #[test]
+    fn official_openai_requires_the_exact_endpoint_and_key() {
+        let mut config = EmbeddingConfig::default();
+        assert_eq!(config.validate(), Ok(()));
+        assert_eq!(
+            config.unavailable_reason(""),
+            Some("OpenAI embedding API key is missing")
+        );
+        config.base_url = "https://api.openai.com/v1/".into();
+        assert!(config.validate().is_err());
     }
 }

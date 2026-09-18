@@ -17,6 +17,10 @@ pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/config/model-mode", put(update_model_mode))
         .route("/api/config/status", get(get_status))
+        .route(
+            "/api/config/embedding",
+            get(get_embedding).put(update_embedding),
+        )
         .route("/api/config/llm", put(update_llm_key))
         .route("/api/config/provider", put(update_provider))
         .route("/api/config/mcp", get(list_mcp_servers))
@@ -57,6 +61,7 @@ async fn get_status(State(state): State<AppState>) -> Json<serde_json::Value> {
     };
 
     Json(json!({
+        "embedding": embedding_status(&state, &config),
         "llm_configured": config.llm.is_configured(),
         "provider": provider,
         "setup_required": config.llm.setup_required(),
@@ -70,6 +75,39 @@ async fn get_status(State(state): State<AppState>) -> Json<serde_json::Value> {
         "auth_token_set": !config.auth_token.is_empty(),
         "is_managed": !config.landing_url.is_empty() || std::env::var("FLY_APP_NAME").is_ok(),
     }))
+}
+
+/// Report the active vector space separately from pending persisted settings.
+fn embedding_status(state: &AppState, config: &config::Config) -> serde_json::Value {
+    let mut status = state.vector_store.embedding_status();
+    let needs_restart = state.vector_store.embedding_needs_restart(config);
+    status["needs_restart"] = json!(needs_restart);
+    status["pending"] = if needs_restart {
+        config.embedding_status()
+    } else {
+        serde_json::Value::Null
+    };
+    status
+}
+
+async fn get_embedding(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let config = state.config.read().await;
+    Json(embedding_status(&state, &config))
+}
+
+async fn update_embedding(
+    State(state): State<AppState>,
+    Json(settings): Json<config::EmbeddingConfig>,
+) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+    settings
+        .validate()
+        .map_err(|error| (StatusCode::BAD_REQUEST, error.to_owned()))?;
+    let mut cfg = state.config.write().await;
+    let mut next = cfg.clone();
+    next.embedding = settings;
+    save_config_at(&next, &state.workspace_dir.join("config.toml"))?;
+    *cfg = next;
+    Ok(Json(embedding_status(&state, &cfg)))
 }
 
 // ---------------------------------------------------------------------------
@@ -195,7 +233,11 @@ async fn update_llm_key(
         log::info!("LLM backend rebuilt after API key change");
     }
 
-    Ok(Json(json!({ "status": "ok", "updated": changes })))
+    let cfg = state.config.read().await;
+    Ok(Json(json!({ "status": "ok", "updated": changes,
+        "embedding": embedding_status(&state, &cfg),
+        "needs_restart": state.vector_store.embedding_needs_restart(&cfg),
+    })))
 }
 
 // ---------------------------------------------------------------------------
@@ -432,7 +474,13 @@ async fn update_server(
 
 /// Write the current config back to disk.
 fn save_config(config: &config::Config) -> Result<(), (StatusCode, String)> {
-    let config_path = config::config_path();
+    save_config_at(config, &config::config_path())
+}
+
+fn save_config_at(
+    config: &config::Config,
+    config_path: &std::path::Path,
+) -> Result<(), (StatusCode, String)> {
     let original = match std::fs::read_to_string(&config_path) {
         Ok(raw) => raw,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
@@ -496,4 +544,93 @@ async fn update_provider(
     }
 
     Ok(Json(json!({ "status": "ok", "provider": provider })))
+}
+
+#[cfg(test)]
+mod embedding_status_tests {
+    use super::*;
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn embedding_update_validates_persists_and_requires_restart() {
+        let workspace = tempfile::tempdir().unwrap();
+        let mut state = AppState::new(config::Config::default()).await;
+        state.workspace_dir = workspace.path().to_owned();
+        let mut settings = config::EmbeddingConfig::default();
+        settings.model = "updated-model".into();
+        let Json(saved) = update_embedding(State(state.clone()), Json(settings.clone()))
+            .await
+            .unwrap();
+        assert_eq!(saved["needs_restart"], true);
+        let persisted: config::Config =
+            toml::from_str(&std::fs::read_to_string(workspace.path().join("config.toml")).unwrap())
+                .unwrap();
+        assert_eq!(persisted.embedding, settings);
+        settings.base_url = "https://user:secret@invalid.test/v1".into();
+        let (code, error) = update_embedding(State(state.clone()), Json(settings))
+            .await
+            .unwrap_err();
+        assert_eq!(code, StatusCode::BAD_REQUEST);
+        assert!(!error.contains("secret"));
+        assert_eq!(state.config.read().await.embedding.model, "updated-model");
+    }
+
+    #[tokio::test]
+    async fn embedding_status_distinguishes_active_and_pending_config() {
+        let state = AppState::new(config::Config::default()).await;
+        {
+            let mut cfg = state.config.write().await;
+            cfg.embedding.model = "pending-model".into();
+            cfg.llm.tokens.open_ai = "new-secret".into();
+        }
+        let Json(status) = get_status(State(state)).await;
+        assert_eq!(status["embedding"]["model"], "text-embedding-3-small");
+        assert_eq!(status["embedding"]["needs_restart"], true);
+        assert_eq!(status["embedding"]["pending"]["model"], "pending-model");
+        assert_eq!(status["embedding"]["status"], "unavailable");
+        assert!(!status.to_string().contains("new-secret"));
+    }
+
+    #[tokio::test]
+    async fn status_api_exposes_embedding_settings_without_tokens() {
+        let mut cfg = config::Config::default();
+        cfg.llm.tokens.open_ai = "secret-openai-key".into();
+        cfg.llm.tokens.google_ai = "secret-google-key".into();
+        let state = AppState::new(cfg).await;
+        let Json(status) = get_status(State(state)).await;
+        assert_eq!(status["embedding"]["provider"], "openai");
+        assert_eq!(status["embedding"]["dimensions"], 768);
+        assert_eq!(status["embedding"]["fallback"], "bm25");
+        assert_eq!(status["embedding"]["update_semantics"], "full_replacement");
+        assert!(!status.to_string().contains("secret-"));
+    }
+
+    #[tokio::test]
+    async fn embedding_api_rejects_unknown_fields() {
+        let state = AppState::new(config::Config::default()).await;
+        let response = router()
+            .with_state(state)
+            .oneshot(
+                axum::http::Request::builder()
+                    .method("PUT")
+                    .uri("/api/config/embedding")
+                    .header("content-type", "application/json")
+                    .body(axum::body::Body::from(
+                        serde_json::json!({
+                            "version": 1,
+                            "enabled": true,
+                            "provider": "openai",
+                            "model": "text-embedding-3-small",
+                            "dimensions": 768,
+                            "base_url": "https://api.openai.com/v1",
+                            "unexpected": true
+                        })
+                        .to_string(),
+                    ))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
 }

@@ -100,7 +100,6 @@ async fn main() {
         // Backfill missing or invalid local indexes from memory files (background, non-blocking)
         let vs = state.vector_store.clone();
         let ws = state.workspace_dir.clone();
-        let gai = google_ai_key;
         tokio::spawn(async move {
             // Scan all instances and backfill
             let instances_dir = ws.join("instances");
@@ -125,7 +124,7 @@ async fn main() {
                     }
                 }
                 info!("[backfill] starting for instance {slug}");
-                match vs.backfill_text_memories(&ws, &slug, &gai).await {
+                match vs.backfill_text_memories(&ws, &slug).await {
                     Ok(count) => info!("[backfill] {slug}: indexed {count} chunks"),
                     Err(e) => {
                         log::warn!("[backfill] {slug}: failed: {e}");

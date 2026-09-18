@@ -124,7 +124,6 @@ pub async fn run_single_turn(
     voice_mode: bool,
     vector_store: std::sync::Arc<crate::services::vector::VectorStore>,
     google_ai_key: &str,
-    keyword_store: std::sync::Arc<crate::services::keyword_search::KeywordStore>,
     machine_registry: crate::services::machine_registry::MachineRegistry,
     public_url: &str,
 ) -> io::Result<SingleTurnResult> {
@@ -527,52 +526,10 @@ pub async fn run_single_turn(
         recent.into_iter().rev().collect::<Vec<_>>().join("\n")
     };
     if !rag_query.is_empty() {
-        // ── Hybrid search: vector (semantic) + BM25 (keyword) ──
-        let mut all_results: Vec<crate::services::vector::VectorSearchResult> = Vec::new();
-
-        // 1. Vector search (semantic similarity)
-        if !google_ai_key.is_empty() {
-            match crate::services::embedding::embed_text(
-                google_ai_key,
-                &rag_query,
-                crate::services::embedding::TaskType::RetrievalQuery,
-            )
-            .await
-            {
-                Ok(query_vec) => match vector_store.search(&instance_slug, query_vec, 5).await {
-                    Ok(results) => {
-                        for r in results.into_iter().filter(|r| r.score > 0.3) {
-                            all_results.push(r);
-                        }
-                    }
-                    Err(e) => log::debug!("[rag] vector search skipped: {e}"),
-                },
-                Err(e) => log::debug!("[rag] embed skipped: {e}"),
-            }
-        }
-
-        // 2. BM25 keyword search
-        {
-            // Lazy reindex if needed
-            if !keyword_store.has_index(&instance_slug) {
-                keyword_store.reindex(workspace_dir, &instance_slug);
-            }
-            let bm25_results = keyword_store.search(&instance_slug, &rag_query, 5);
-            for r in bm25_results {
-                // Deduplicate by path
-                if !all_results.iter().any(|existing| existing.path == r.path) {
-                    all_results.push(r);
-                }
-            }
-        }
-
-        // 3. Sort by score descending, take top 5
-        all_results.sort_by(|a, b| {
-            b.score
-                .partial_cmp(&a.score)
-                .unwrap_or(std::cmp::Ordering::Equal)
-        });
-        all_results.truncate(5);
+        // Provider failures fall back to a fresh BM25 view of memory files.
+        let mut all_results = vector_store
+            .search_context(&instance_slug, &rag_query, 5)
+            .await;
 
         // 4. Graph expansion — follow edges 1 hop to pull connected memories
         if !all_results.is_empty() {
@@ -830,14 +787,13 @@ pub async fn run_single_turn(
             .collect::<Vec<_>>();
         let events_bg = events.clone();
         let vs = vector_store.clone();
-        let gai_key = google_ai_key.to_string();
         tokio::spawn(async move {
-            if let Err(e) =
-                memory::extract_and_store(&ws, &slug, &recent_pair, &fast, &vs, &gai_key).await
-            {
+            if let Err(e) = memory::extract_and_store(&ws, &slug, &recent_pair, &fast, &vs).await {
                 log::warn!("memory extraction failed: {e}");
             }
-            embed_recent_media(&ws, &slug, &vs, &gai_key).await;
+            log::debug!(
+                "[memory] raw upload semantic indexing skipped: text-only embedding backend"
+            );
             extract_sentiment(
                 &ws,
                 &slug,
@@ -2143,182 +2099,5 @@ respond ONLY with those three lines."#,
             mood: mood.companion_mood.clone(),
         });
         log::info!("[sentiment] {instance_slug} mood → {}", mood.companion_mood);
-    }
-}
-
-async fn convert_audio_to_mp3(input: &std::path::Path) -> Option<Vec<u8>> {
-    let tmp = input.with_extension("_convert.mp3");
-    let status = tokio::process::Command::new("ffmpeg")
-        .args([
-            "-i",
-            &input.to_string_lossy(),
-            "-vn",
-            "-ar",
-            "44100",
-            "-ac",
-            "1",
-            "-b:a",
-            "64k",
-            "-f",
-            "mp3",
-            "-y",
-        ])
-        .arg(&tmp)
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .await
-        .ok()?;
-    if !status.success() {
-        let _ = std::fs::remove_file(&tmp);
-        return None;
-    }
-    let bytes = std::fs::read(&tmp).ok();
-    let _ = std::fs::remove_file(&tmp);
-    bytes
-}
-
-/// Embed recent image/video/audio uploads into the vector store.
-/// Scans uploads from the last 5 minutes and embeds any that aren't already indexed.
-async fn embed_recent_media(
-    workspace_dir: &std::path::Path,
-    instance_slug: &str,
-    vector_store: &crate::services::vector::VectorStore,
-    google_ai_key: &str,
-) {
-    use crate::services::embedding;
-
-    let uploads_dir = workspace_dir
-        .join("instances")
-        .join(instance_slug)
-        .join("uploads");
-
-    let entries = match std::fs::read_dir(&uploads_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    let five_mins_ago = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis() as u64
-        - 5 * 60 * 1000;
-
-    for entry in entries.flatten() {
-        let path = entry.path();
-
-        // Only process metadata sidecar files (upload_*.json, not *_blob.*)
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-        if !name.ends_with(".json") || !name.starts_with("upload_") {
-            continue;
-        }
-
-        let meta_str = match std::fs::read_to_string(&path) {
-            Ok(s) => s,
-            Err(_) => continue,
-        };
-
-        let meta: serde_json::Value = match serde_json::from_str(&meta_str) {
-            Ok(v) => v,
-            Err(_) => continue,
-        };
-
-        let upload_id = meta["id"].as_str().unwrap_or("");
-        let mime_type = meta["mime_type"].as_str().unwrap_or("");
-        let original_name = meta["original_name"].as_str().unwrap_or("");
-        let uploaded_at: u64 = meta["uploaded_at"]
-            .as_str()
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-
-        // Skip old uploads
-        if uploaded_at < five_mins_ago {
-            continue;
-        }
-
-        // Skip already-embedded uploads
-        let embedded_marker = uploads_dir.join(format!("{upload_id}.embedded"));
-        if embedded_marker.exists() {
-            continue;
-        }
-
-        // Only embed images, video, and audio
-        let source_type = if mime_type.starts_with("image/") {
-            "media_image"
-        } else if mime_type.starts_with("video/") {
-            "media_video"
-        } else if mime_type.starts_with("audio/") {
-            "media_audio"
-        } else {
-            continue;
-        };
-
-        // Read the actual file
-        let stored_name = meta["stored_name"].as_str().unwrap_or("");
-        let file_path = uploads_dir.join(stored_name);
-        let bytes = match std::fs::read(&file_path) {
-            Ok(b) => b,
-            Err(_) => continue,
-        };
-
-        // Skip very large files (>20MB) — Gemini has limits
-        if bytes.len() > 20 * 1024 * 1024 {
-            log::info!(
-                "[media_embed] skipping {original_name} — too large ({} MB)",
-                bytes.len() / 1024 / 1024
-            );
-            continue;
-        }
-
-        let desc = format!("{source_type}: {original_name}");
-
-        // Convert unsupported audio formats (m4a, ogg, etc.) to mp3 via ffmpeg
-        let (embed_bytes, embed_mime) = if source_type == "media_audio"
-            && mime_type != "audio/mpeg"
-            && mime_type != "audio/wav"
-        {
-            match convert_audio_to_mp3(&file_path).await {
-                Some(mp3_bytes) => (mp3_bytes, "audio/mpeg"),
-                None => {
-                    log::warn!("[media_embed] ffmpeg conversion failed for {original_name}");
-                    continue;
-                }
-            }
-        } else {
-            (bytes, mime_type)
-        };
-
-        let vector = match source_type {
-            "media_image" => {
-                embedding::embed_text_and_image(google_ai_key, &desc, &embed_bytes, embed_mime)
-                    .await
-            }
-            _ => embedding::embed_media(google_ai_key, &embed_bytes, embed_mime).await,
-        };
-
-        match vector {
-            Ok(vec) => {
-                if let Err(e) = vector_store
-                    .upsert_media(
-                        instance_slug,
-                        upload_id,
-                        source_type,
-                        mime_type,
-                        original_name,
-                        &format!("{source_type}: {original_name}"),
-                        vec,
-                    )
-                    .await
-                {
-                    log::warn!("[media_embed] upsert failed for {original_name}: {e}");
-                } else {
-                    let _ = std::fs::write(&embedded_marker, "");
-                    log::info!("[media_embed] embedded {source_type} {original_name}");
-                }
-            }
-            Err(e) => {
-                log::warn!("[media_embed] embed failed for {original_name}: {e}");
-            }
-        }
     }
 }

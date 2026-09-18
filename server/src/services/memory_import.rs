@@ -15,7 +15,7 @@ use tokio::sync::broadcast;
 const CHEAP_MODEL: &str = "claude-haiku-4-5-20251001";
 const FAST_MODEL: &str = "claude-sonnet-4-6";
 use crate::domain::events::ServerEvent;
-use crate::services::{embedding, memory, vector::VectorStore};
+use crate::services::{memory, vector::VectorStore};
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -90,7 +90,6 @@ pub fn spawn_import(
     upload_dir: PathBuf,
     events: broadcast::Sender<ServerEvent>,
     vector_store: Arc<VectorStore>,
-    google_ai_key: String,
 ) {
     tokio::spawn(async move {
         match run_import(
@@ -101,7 +100,6 @@ pub fn spawn_import(
             &upload_dir,
             &events,
             &vector_store,
-            &google_ai_key,
         )
         .await
         {
@@ -142,7 +140,6 @@ async fn run_import(
     upload_dir: &Path,
     events: &broadcast::Sender<ServerEvent>,
     vector_store: &VectorStore,
-    google_ai_key: &str,
 ) -> anyhow::Result<usize> {
     // ── Stage 0: Parse uploaded files into chunks ──
     emit(
@@ -196,10 +193,6 @@ async fn run_import(
         ImportStage::Organizing,
         "organizing and deduplicating...",
     );
-    let memory_dir = workspace_dir
-        .join("instances")
-        .join(instance_slug)
-        .join("memory");
     let existing_catalog = memory::build_library_catalog(workspace_dir, instance_slug);
     let ops = organize_facts(http, api_key, &facts, &existing_catalog).await?;
     emit(
@@ -217,35 +210,7 @@ async fn run_import(
         "writing memories...",
     );
     let count = ops.len();
-    for op in &ops {
-        let full_path = memory_dir.join(&op.path);
-        if let Some(parent) = full_path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(&full_path, &op.content)?;
-
-        // Vector index
-        if !google_ai_key.is_empty() {
-            let chunks = crate::services::vector::chunk_text(&op.content);
-            let mut chunk_vecs = Vec::new();
-            for chunk in &chunks {
-                if let Ok(vec) = embedding::embed_text(
-                    google_ai_key,
-                    chunk,
-                    embedding::TaskType::RetrievalDocument,
-                )
-                .await
-                {
-                    chunk_vecs.push((chunk.clone(), vec));
-                }
-            }
-            if !chunk_vecs.is_empty() {
-                let _ = vector_store
-                    .upsert_text_memory(instance_slug, &op.path, chunk_vecs)
-                    .await;
-            }
-        }
-    }
+    write_import_memories(workspace_dir, instance_slug, &ops, vector_store).await?;
 
     // Invalidate catalog cache so the new memories show up in context
     memory::invalidate_frozen_catalog(instance_slug);
@@ -254,6 +219,25 @@ async fn run_import(
     let _ = std::fs::remove_dir_all(upload_dir);
 
     Ok(count)
+}
+
+/// Persist source files even when derived semantic indexing is unavailable.
+async fn write_import_memories(
+    workspace: &Path,
+    slug: &str,
+    ops: &[MemoryOp],
+    store: &VectorStore,
+) -> anyhow::Result<()> {
+    let memory_dir = workspace.join("instances").join(slug).join("memory");
+    for op in ops {
+        let path = memory_dir.join(&op.path);
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(path, &op.content)?;
+        memory::embed_memory_file(store, slug, &op.path, &op.content).await;
+    }
+    Ok(())
 }
 
 // ── Parsing ──────────────────────────────────────────────────────────────────
@@ -667,4 +651,37 @@ async fn organize_facts(
     })?;
 
     Ok(ops)
+}
+
+#[cfg(test)]
+mod embedding_import_tests {
+    use super::*;
+    #[tokio::test]
+    async fn embedding_import_writes_without_key_and_uses_configured_backend() {
+        use crate::services::embedding::tests::{MockServer, response};
+        let workspace = tempfile::tempdir().unwrap();
+        let ops = vec![MemoryOp {
+            path: "about/stars.md".into(),
+            content: "Orion nebula".into(),
+        }];
+        let store = VectorStore::connect(workspace.path()).await;
+        write_import_memories(workspace.path(), "one", &ops, &store)
+            .await
+            .unwrap();
+        assert!(
+            std::fs::read_to_string(workspace.path().join("instances/one/memory/about/stars.md"))
+                .unwrap()
+                .contains("Orion")
+        );
+        let mock = MockServer::new(vec![(200, response(vec![1., 0., 0.]))]).await;
+        let store = VectorStore::connect_with_config(workspace.path(), &mock.config).await;
+        write_import_memories(workspace.path(), "one", &ops, &store)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.list_all("one", 10).await.unwrap()[0].path,
+            "about/stars.md"
+        );
+        assert_eq!(mock.requests.lock().unwrap().len(), 1);
+    }
 }

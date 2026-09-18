@@ -327,7 +327,6 @@ pub async fn run_agent_loop(
             voice_mode,
             state.vector_store.clone(),
             &google_ai_key,
-            state.keyword_store.clone(),
             state.machine_registry.clone(),
             &public_url,
         );

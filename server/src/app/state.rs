@@ -8,7 +8,6 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     config::{self, Config},
     domain::events::ServerEvent,
-    services::keyword_search::KeywordStore,
     services::llm::LlmBackend,
     services::machine_registry::MachineRegistry,
     services::mcp::McpRegistry,
@@ -42,8 +41,6 @@ pub struct AppState {
     pub _landing_auth_token: String,
     /// Versioned local vector store for semantic memory search.
     pub vector_store: Arc<VectorStore>,
-    /// BM25 keyword search over memory files.
-    pub keyword_store: Arc<KeywordStore>,
     /// Registry of connected Tauri agent machines (for computer use).
     pub machine_registry: MachineRegistry,
 }
@@ -69,7 +66,8 @@ impl AppState {
         let landing_auth_token = config.auth_token.clone();
 
         // Open the local derived vector index.
-        let vector_store = VectorStore::connect(&config::workspace_root()).await;
+        let vector_store =
+            VectorStore::connect_with_config(&config::workspace_root(), &config).await;
 
         // Fetch plan from landing API if configured
         if !landing_url.is_empty() && !landing_auth_token.is_empty() {
@@ -103,7 +101,6 @@ impl AppState {
             landing_url,
             _landing_auth_token: landing_auth_token,
             vector_store: Arc::new(vector_store),
-            keyword_store: Arc::new(KeywordStore::new()),
             machine_registry: MachineRegistry::new(),
         }
     }
@@ -147,6 +144,12 @@ impl AppState {
             log::info!(
                 "config reloaded: MCP servers reconnected ({} tools)",
                 self.mcp_registry.tool_count().await
+            );
+        }
+
+        if self.vector_store.embedding_needs_restart(&new_config) {
+            log::info!(
+                "embedding settings changed: restart required; active index remains unchanged"
             );
         }
 

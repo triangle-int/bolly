@@ -22,12 +22,30 @@ fast = "gpt-5.4"
 cheap = "gpt-5.4-mini"
 
 [llm.tokens]
-OPEN_AI = ""         # Required when provider is openai
+OPEN_AI = ""         # OpenAI chat and independent semantic text memory
 ANTHROPIC = ""       # Required when provider is anthropic — API key (sk-ant-...)
-GOOGLE_AI = ""       # Optional — Google AI / Gemini (vector memory search)
+GOOGLE_AI = ""       # Optional — Google AI / Gemini video analysis
 ELEVENLABS = ""      # Optional — ElevenLabs (text-to-speech)
 OPENROUTER = ""      # Optional — OpenRouter (video analysis)
 
 # Optional: set FAL_KEY env var for AI image generation via fal.ai MCP
 
 # Email is configured per-instance via Settings UI
+
+# Text embeddings are independent of the chat provider and reuse OPEN_AI above.
+# Restart after changing this section or the OpenAI key. Missing/disabled/unavailable
+# embeddings use BM25; memory writes and generic media attachments keep working.
+# Raw media is not embedded until description/transcript support is implemented.
+[embedding]
+version = 1
+enabled = true
+provider = "openai"
+model = "text-embedding-3-small"
+dimensions = 768
+base_url = "https://api.openai.com/v1"
+# The embedding config API replaces this whole section; omitted fields reset to defaults.
+# For local development only, set provider = "openai_compatible" and use an HTTP(S)
+# localhost, 127/8, or ::1 endpoint. Compatible endpoints are always unauthenticated:
+# OPEN_AI is never sent to them. Remote, private-network, link-local, metadata, userinfo,
+# query, and fragment URLs are rejected. No OpenRouter or remote custom provider support
+# is implied, and no custom endpoint credential exists in this release.

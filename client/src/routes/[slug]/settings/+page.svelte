@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { page } from "$app/state";
+	import { embeddingStatusText } from "$lib/embedding-status.js";
+	import type { EmbeddingStatus } from "$lib/api/client.js";
 	import {
 		fetchGoogleAccounts,
 		getGoogleConnectUrl,
@@ -350,12 +352,13 @@
 
 	const apiKeyDefs = [
 		{ id: "api_key", name: "Anthropic", hint: "sk-ant-...", required: false, configKey: "anthropic" },
-		{ id: "openai", name: "OpenAI", hint: "sk-...", required: false, configKey: "openai" },
-		{ id: "google_ai", name: "Google AI", hint: "Memory search + video/audio analysis", required: false, configKey: "google_ai" },
+		{ id: "openai", name: "OpenAI", hint: "Chat + semantic memory (independent of chat provider)", required: false, configKey: "openai" },
+		{ id: "google_ai", name: "Google AI", hint: "Video analysis", required: false, configKey: "google_ai" },
 		{ id: "elevenlabs", name: "ElevenLabs", hint: "Text-to-speech voice", required: false, configKey: "elevenlabs" },
 	];
 
 	// Provider + Model mode + API keys state
+	let embeddingStatus = $state<EmbeddingStatus | undefined>(undefined);
 	let provider = $state("anthropic");
 	let setupRequired = $state<string | null>(null);
 	let providerSaving = $state(false);
@@ -373,6 +376,7 @@
 			if (s.configured_keys) configuredKeys = s.configured_keys;
 			if (s.provider) provider = s.provider === "api" ? "anthropic" : s.provider;
 			setupRequired = s.setup_required ?? null;
+			embeddingStatus = s.embedding;
 		}).catch(() => {});
 	});
 
@@ -396,6 +400,7 @@
 			// Refresh status
 			const s = await fetchConfigStatus();
 			setupRequired = s.setup_required ?? null;
+			embeddingStatus = s.embedding;
 			if (s.configured_keys) configuredKeys = s.configured_keys;
 		} catch (e) {
 			keyError = e instanceof Error ? e.message : "failed";
@@ -921,6 +926,8 @@
 				<p class="section-desc">Connect your API keys. Required for API key providers.</p>
 			</div>
 		</div>
+		<p class="section-desc">{embeddingStatusText(embeddingStatus)}</p>
+		<p class="section-desc">Embedding settings and OpenAI key changes require a server restart. Updates replace the full embedding configuration. Local OpenAI-compatible endpoints are unauthenticated and never receive your OpenAI key. Raw media is saved without semantic indexing.</p>
 		<div class="keys-list">
 			{#each apiKeyDefs as key (key.id)}
 				{@const configured = configuredKeys.includes(key.configKey)}
