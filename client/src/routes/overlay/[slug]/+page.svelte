@@ -5,50 +5,23 @@
 
 	const slug = $derived($page.params.slug!);
 
-	/** Skin clip definitions (duplicated from skin store to avoid context dependency) */
-	interface ClipSource { webm: string; mov: string; }
-	interface SkinClips {
-		idle: ClipSource;
-		thinking: ClipSource[];
-	}
-
-	const skinClips: Record<string, SkinClips> = {
-		orb: {
-			idle: { webm: "/skins/orb/orb-idle-loop.webm", mov: "/skins/orb/orb-idle-loop.mov" },
-			thinking: [
-				{ webm: "/skins/orb/morph-cube.webm", mov: "/skins/orb/morph-cube.mov" },
-				{ webm: "/skins/orb/morph-tesseract.webm", mov: "/skins/orb/morph-tesseract.mov" },
-				{ webm: "/skins/orb/morph-prism.webm", mov: "/skins/orb/morph-prism.mov" },
-			],
-		},
-		mint: {
-			idle: { webm: "/skins/mint/idle-loop.webm", mov: "/skins/mint/idle-loop.mov" },
-			thinking: [
-				{ webm: "/skins/mint/reading.webm", mov: "/skins/mint/reading.mov" },
-				{ webm: "/skins/mint/typing.webm", mov: "/skins/mint/typing.mov" },
-			],
-		},
-	};
-
-	const useHEVC = typeof document !== "undefined" &&
-		document.createElement("video").canPlayType('video/mp4; codecs="hvc1.2.4.L123.B0"') !== "";
-
-	function src(clip: ClipSource): string { return useHEVC ? clip.mov : clip.webm; }
+	import { SKINS, clipSrc } from "$lib/stores/skin.svelte.js";
 
 	let skinId = $state("orb");
 	let thinking = $state(false);
 	let recording = $state(false);
 	let videoEl: HTMLVideoElement | undefined = $state();
 
-	const clips = $derived(skinClips[skinId] ?? skinClips.orb);
+	const skin = $derived(SKINS.find(s => s.id === skinId) ?? SKINS[0]);
+	const clips = $derived(skin.clips);
 	let thinkingIdx = $state(0);
 	const currentClip = $derived(thinking ? (clips.thinking[thinkingIdx] ?? clips.idle) : clips.idle);
-	const currentSrc = $derived(src(currentClip));
+	const currentSrc = $derived(clipSrc(currentClip));
 	const isLooping = $derived(!thinking);
 
 	// Apply video source
 	$effect(() => {
-		if (videoEl && currentSrc) {
+		if (!skin.avatar && videoEl && currentSrc) {
 			videoEl.src = currentSrc;
 			videoEl.loop = isLooping;
 			videoEl.play().catch(() => {});
@@ -65,7 +38,7 @@
 		let mounted = true;
 		// Fetch skin from server
 		void fetchSkin(slug).then((res) => {
-			if (mounted && res.skin && skinClips[res.skin]) skinId = res.skin;
+			if (mounted && res.skin && SKINS.some(s => s.id === res.skin)) skinId = res.skin;
 		}).catch(() => {});
 
 		// Listen for SSE/WebSocket events for thinking state
@@ -89,6 +62,9 @@
 
 <div class="overlay">
 	<div class="pip">
+		{#if skin.avatar}
+			<img class="pip-video" src={thinking ? skin.avatar.thinking : skin.avatar.idle} alt={thinking ? "Nolune is thinking" : "Nolune"} />
+		{:else}
 		<!-- svelte-ignore a11y_media_has_caption -->
 		<video
 			bind:this={videoEl}
@@ -98,6 +74,7 @@
 			autoplay
 			onended={handleEnded}
 		></video>
+		{/if}
 		{#if recording}
 			<div class="pip-rec"></div>
 		{/if}
@@ -141,7 +118,7 @@
 	.pip-video {
 		width: 100%;
 		height: 100%;
-		object-fit: cover;
+		object-fit: contain;
 	}
 
 	.pip-rec {

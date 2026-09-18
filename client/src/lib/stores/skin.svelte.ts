@@ -1,7 +1,7 @@
 /**
  * Skin store — per-instance skin selection, persisted on the server.
  *
- * Each skin defines a set of video clips used by SharedScene.
+ * Skins can use a static vector avatar or a set of video clips.
  */
 
 import { getContext, setContext } from "svelte";
@@ -19,6 +19,8 @@ export interface SkinDefinition {
 	id: string;
 	label: string;
 	thumbnail: string;
+	/** Vector avatar overrides video rendering; clips remain for legacy skins. */
+	avatar?: { idle: string; thinking: string };
 	clips: {
 		idle: ClipSource;
 		onboarding: ClipSource;
@@ -38,9 +40,11 @@ function orbClip(name: string): ClipSource {
 
 export const SKINS: SkinDefinition[] = [
 	{
+		// Keep the persisted ID so existing default instances inherit the new identity.
 		id: "orb",
-		label: "Nolune",
-		thumbnail: "/skins/orb/orb.webp",
+		label: "Nolune · Little Moon",
+		thumbnail: "/skins/moon/character.svg",
+		avatar: { idle: "/skins/moon/character.svg", thinking: "/skins/moon/thinking.svg" },
 		clips: {
 			idle: orbClip("orb-idle-loop"),
 			onboarding: orbClip("orb-onboarding"),

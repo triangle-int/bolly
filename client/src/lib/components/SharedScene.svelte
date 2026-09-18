@@ -44,6 +44,7 @@
 
 	// React to mode/thinking changes
 	$effect(() => {
+		if (skinStore.skin.avatar) return;
 		const mode = store.mode;
 		const thinking = store.thinking;
 
@@ -95,6 +96,7 @@
 	}
 
 	$effect(() => {
+		if (skinStore.skin.avatar) return;
 		const clip = videoSrc;
 		const loop = isLooping;
 		const key = clip.webm;
@@ -200,7 +202,7 @@
 					// Full viewport background - use container size
 					const cw = container?.clientWidth ?? 1200;
 					const ch = container?.clientHeight ?? 800;
-					ts = Math.max(cw, ch) * 1.2;
+					ts = skinStore.skin.avatar ? baseSize() : Math.max(cw, ch) * 1.2;
 					to = 0.6;
 				} else {
 					ts = 0; to = 0;
@@ -340,9 +342,13 @@
 			<button
 				class="orb-btn"
 				aria-label={orb.slug}
+				onclick={() => { if (store.mode === "home") store.selectInstance(orb.slug); }}
 				style="left: {orb.x}%; top: {orb.y}%; width: {orb.size}px; height: {orb.size}px; opacity: {orb.opacity};"
 				disabled={store.mode !== "home"}
 			>
+				{#if skinStore.skin.avatar}
+					<img class="moon-avatar" src={store.thinking ? skinStore.skin.avatar.thinking : skinStore.skin.avatar.idle} alt={store.thinking ? "Nolune is thinking" : "Nolune"} />
+				{:else}
 				<video
 					bind:this={videoRefs[orb.slug]}
 					autoplay muted playsinline
@@ -351,6 +357,7 @@
 					class="orb-vid"
 					onended={handleVideoEnded}
 				></video>
+				{/if}
 			</button>
 		{/if}
 	{/each}
@@ -424,6 +431,8 @@
 	.orb-btn:disabled {
 		cursor: default;
 	}
+
+	.moon-avatar { width: 70%; height: 70%; object-fit: contain; pointer-events: none; }
 
 	.orb-vid {
 		position: absolute;

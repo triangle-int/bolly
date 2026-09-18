@@ -1,6 +1,6 @@
 <script lang="ts">
 	import "./layout.css";
-	import favicon from "$lib/assets/favicon.png";
+	import favicon from "$lib/assets/favicon.svg";
 	import { getInstances } from "$lib/stores/instances.svelte.js";
 	import { getWebSocket } from "$lib/stores/websocket.svelte.js";
 	import { createSceneStore, setSceneStore } from "$lib/stores/scene.svelte.js";

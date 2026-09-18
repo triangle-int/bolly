@@ -838,7 +838,7 @@
 					<img src={skin.thumbnail} alt={skin.label} class="skin-thumb" />
 					<div>
 						<span class="mode-name">{skin.label}</span>
-						<span class="mode-desc">{skin.clips.thinking.length} animations</span>
+						<span class="mode-desc">{skin.avatar ? "Little Moon companion" : `${skin.clips.thinking.length} animations`}</span>
 					</div>
 				</button>
 			{/each}
