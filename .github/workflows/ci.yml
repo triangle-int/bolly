@@ -26,21 +26,25 @@ jobs:
       - run: cargo fmt --all -- --check
 
   rust:
-    name: Rust / ${{ matrix.package }} / ${{ matrix.check }}
+    name: Rust / ${{ matrix.component }} / ${{ matrix.check }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - package: server
+          - component: server
+            manifest: server/Cargo.toml
             os: ubuntu-latest
             check: test
-          - package: server
+          - component: server
+            manifest: server/Cargo.toml
             os: ubuntu-latest
             check: clippy
-          - package: bolly-desktop
+          - component: desktop
+            manifest: desktop/src-tauri/Cargo.toml
             os: macos-latest
             check: test
-          - package: bolly-desktop
+          - component: desktop
+            manifest: desktop/src-tauri/Cargo.toml
             os: macos-latest
             check: clippy
     runs-on: ${{ matrix.os }}
@@ -62,7 +66,7 @@ jobs:
       - run: rustup component add clippy
       - uses: Swatinem/rust-cache@v2
         with:
-          key: ${{ matrix.package }}-${{ matrix.check }}
+          key: ${{ matrix.component }}-${{ matrix.check }}
       - name: Install Linux dependencies
         if: runner.os == 'Linux'
         run: |
@@ -72,21 +76,21 @@ jobs:
         if: runner.os == 'macOS'
         run: brew install protobuf
       - name: Build embedded client
-        if: matrix.package == 'server'
+        if: matrix.component == 'server'
         run: |
           pnpm --dir client install --frozen-lockfile
           pnpm --dir client build
       - name: Build desktop frontend
-        if: matrix.package == 'bolly-desktop'
+        if: matrix.component == 'desktop'
         run: |
           pnpm --dir desktop install --frozen-lockfile
           pnpm --dir desktop build
       - name: Run tests
         if: matrix.check == 'test'
-        run: cargo test --locked -p ${{ matrix.package }} --all-targets
+        run: cargo test --locked --manifest-path ${{ matrix.manifest }} --all-targets
       - name: Run Clippy
         if: matrix.check == 'clippy'
-        run: cargo clippy --locked -p ${{ matrix.package }} --all-targets
+        run: cargo clippy --locked --manifest-path ${{ matrix.manifest }} --all-targets
 
   frontend:
     name: Frontend / ${{ matrix.project }}
