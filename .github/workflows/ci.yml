@@ -1,0 +1,138 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  rust-format:
+    name: Rust formatting
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install repository Rust toolchain
+        run: rustup show active-toolchain
+      - run: rustup component add rustfmt
+      - run: cargo fmt --all -- --check
+
+  rust:
+    name: Rust / ${{ matrix.component }} / ${{ matrix.check }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - component: server
+            manifest: server/Cargo.toml
+            os: ubuntu-latest
+            check: test
+          - component: server
+            manifest: server/Cargo.toml
+            os: ubuntu-latest
+            check: clippy
+          - component: desktop
+            manifest: desktop/src-tauri/Cargo.toml
+            os: macos-latest
+            check: test
+          - component: desktop
+            manifest: desktop/src-tauri/Cargo.toml
+            os: macos-latest
+            check: clippy
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: |
+            client/pnpm-lock.yaml
+            desktop/pnpm-lock.yaml
+      - name: Install repository Rust toolchain
+        run: rustup show active-toolchain
+      - run: rustup component add clippy
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.component }}-${{ matrix.check }}
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y protobuf-compiler pkg-config libssl-dev
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: brew install protobuf
+      - name: Build embedded client
+        if: matrix.component == 'server'
+        run: |
+          pnpm --dir client install --frozen-lockfile
+          pnpm --dir client build
+      - name: Build desktop frontend
+        if: matrix.component == 'desktop'
+        run: |
+          pnpm --dir desktop install --frozen-lockfile
+          pnpm --dir desktop build
+      - name: Run tests
+        if: matrix.check == 'test'
+        run: cargo test --locked --manifest-path ${{ matrix.manifest }} --all-targets
+      - name: Run Clippy
+        if: matrix.check == 'clippy'
+        run: cargo clippy --locked --manifest-path ${{ matrix.manifest }} --all-targets
+
+  frontend:
+    name: Frontend / ${{ matrix.project }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [client, desktop, landing]
+    defaults:
+      run:
+        working-directory: ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10.34.5
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: ${{ matrix.project }}/pnpm-lock.yaml
+      - run: pnpm install --frozen-lockfile
+      - name: Svelte and TypeScript checks
+        run: pnpm check
+      - name: JavaScript tests
+        if: matrix.project == 'desktop'
+        run: pnpm test
+      - run: pnpm build
+
+  scripts:
+    name: Shell regression tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check shell syntax
+        run: |
+          for script in scripts/*.sh scripts/tests/*.sh; do
+            bash -n "$script"
+          done
+      - name: Test installer
+        run: bash scripts/tests/install.sh
+      - name: Test release workflow
+        run: bash scripts/tests/release-workflow.sh

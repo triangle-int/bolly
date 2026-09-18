@@ -61,12 +61,12 @@
 		}
 	}
 
-	onMount(async () => {
+	onMount(() => {
+		let mounted = true;
 		// Fetch skin from server
-		try {
-			const res = await fetchSkin(slug);
-			if (res.skin && skinClips[res.skin]) skinId = res.skin;
-		} catch {}
+		void fetchSkin(slug).then((res) => {
+			if (mounted && res.skin && skinClips[res.skin]) skinId = res.skin;
+		}).catch(() => {});
 
 		// Listen for SSE/WebSocket events for thinking state
 		// For now, poll the agent_running status
@@ -75,12 +75,15 @@
 				const res = await fetch(`/api/instances/${slug}/chat/default`);
 				if (res.ok) {
 					const data = await res.json();
-					thinking = data.agent_running ?? false;
+					if (mounted) thinking = data.agent_running ?? false;
 				}
 			} catch {}
 		}, 2000);
 
-		return () => clearInterval(poll);
+		return () => {
+			mounted = false;
+			clearInterval(poll);
+		};
 	});
 </script>
 
