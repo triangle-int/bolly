@@ -1,26 +1,17 @@
-//! LanceDB vector store — embedded vector search for semantic memory.
+//! Versioned local vector search for derived semantic memory.
 
-use std::path::Path;
-use std::sync::Arc;
-
-use arrow_array::{
-    Array, FixedSizeListArray, Float32Array, Int32Array, Int64Array, RecordBatch, StringArray,
-    types::Float32Type,
+use super::{
+    embedding,
+    vector_index::{Record, Store},
 };
-use arrow_schema::{DataType, Field, Schema};
-use futures::TryStreamExt;
-use lancedb::query::{ExecutableQuery, QueryBase};
-use uuid::Uuid;
+use std::path::Path;
 
-use super::embedding;
-
-/// UUID v5 namespace for deterministic point IDs.
-const NS: Uuid = Uuid::from_bytes([
-    0x6b, 0x6f, 0x6c, 0x6c, 0x79, 0x2d, 0x76, 0x65, 0x63, 0x74, 0x6f, 0x72, 0x2d, 0x6e, 0x73, 0x21,
-]);
+// Keep aligned with the existing Google embedding endpoint. Provider migration is separate.
+const EMBEDDING_PROVIDER: &str = "google";
+const EMBEDDING_MODEL: &str = "gemini-embedding-2-preview";
 
 pub struct VectorStore {
-    db: lancedb::Connection,
+    store: std::sync::Arc<Store>,
 }
 
 #[derive(Debug, Clone)]
@@ -32,240 +23,100 @@ pub struct VectorSearchResult {
     pub upload_id: Option<String>,
 }
 
-/// Arrow schema for memory vectors.
-fn table_schema() -> Arc<Schema> {
-    let dim = embedding::output_dim() as i32;
-    Arc::new(Schema::new(vec![
-        Field::new("id", DataType::Utf8, false),
-        Field::new("source_type", DataType::Utf8, false),
-        Field::new("path", DataType::Utf8, false),
-        Field::new("chunk_index", DataType::Int32, false),
-        Field::new("content_preview", DataType::Utf8, false),
-        Field::new("timestamp", DataType::Int64, false),
-        Field::new("upload_id", DataType::Utf8, true),
-        Field::new(
-            "vector",
-            DataType::FixedSizeList(Arc::new(Field::new("item", DataType::Float32, true)), dim),
-            false,
-        ),
-    ]))
-}
-
-fn table_name(slug: &str) -> String {
-    format!("memories_{slug}")
-}
-
-fn point_id(source_type: &str, path: &str, chunk_index: u32) -> String {
-    Uuid::new_v5(
-        &NS,
-        format!("{source_type}:{path}:{chunk_index}").as_bytes(),
-    )
-    .to_string()
-}
-
-/// Read a string column value from a RecordBatch.
-fn col_str(batch: &RecordBatch, col: &str, row: usize) -> String {
-    batch
-        .column_by_name(col)
-        .and_then(|c| c.as_any().downcast_ref::<StringArray>())
-        .map(|a| {
-            if a.is_valid(row) {
-                a.value(row).to_string()
-            } else {
-                String::new()
-            }
-        })
-        .unwrap_or_default()
-}
-
-fn col_str_opt(batch: &RecordBatch, col: &str, row: usize) -> Option<String> {
-    batch
-        .column_by_name(col)
-        .and_then(|c| c.as_any().downcast_ref::<StringArray>())
-        .and_then(|a| {
-            if a.is_valid(row) {
-                let s = a.value(row);
-                if s.is_empty() {
-                    None
-                } else {
-                    Some(s.to_string())
-                }
-            } else {
-                None
-            }
-        })
-}
-
-fn extract_results(batches: &[RecordBatch], has_distance: bool) -> Vec<VectorSearchResult> {
-    let mut out = Vec::new();
-    for batch in batches {
-        for row in 0..batch.num_rows() {
-            let score = if has_distance {
-                let dist = batch
-                    .column_by_name("_distance")
-                    .and_then(|c| c.as_any().downcast_ref::<Float32Array>())
-                    .map(|a| a.value(row))
-                    .unwrap_or(1.0);
-                1.0 - dist // cosine distance -> similarity
-            } else {
-                0.0
-            };
-            out.push(VectorSearchResult {
-                path: col_str(batch, "path", row),
-                source_type: col_str(batch, "source_type", row),
-                content_preview: col_str(batch, "content_preview", row),
-                score,
-                upload_id: col_str_opt(batch, "upload_id", row),
-            });
-        }
+fn result(record: Record, score: f32) -> VectorSearchResult {
+    VectorSearchResult {
+        path: record.path,
+        source_type: record.source_type,
+        content_preview: record.content_preview,
+        score,
+        upload_id: record.upload_id,
     }
-    out
-}
-
-/// Build a RecordBatch for inserting into a memory table.
-fn make_batch(
-    ids: Vec<String>,
-    source_types: Vec<String>,
-    paths: Vec<String>,
-    chunk_indices: Vec<i32>,
-    previews: Vec<String>,
-    timestamps: Vec<i64>,
-    upload_ids: Vec<Option<String>>,
-    vectors: Vec<Vec<f32>>,
-) -> Result<RecordBatch, String> {
-    let dim = embedding::output_dim() as i32;
-    let vecs: Vec<Option<Vec<Option<f32>>>> = vectors
-        .into_iter()
-        .map(|v| Some(v.into_iter().map(Some).collect()))
-        .collect();
-    let uid_refs: Vec<Option<&str>> = upload_ids.iter().map(|o| o.as_deref()).collect();
-
-    RecordBatch::try_new(
-        table_schema(),
-        vec![
-            Arc::new(StringArray::from_iter_values(&ids)),
-            Arc::new(StringArray::from_iter_values(&source_types)),
-            Arc::new(StringArray::from_iter_values(&paths)),
-            Arc::new(Int32Array::from(chunk_indices)),
-            Arc::new(StringArray::from_iter_values(&previews)),
-            Arc::new(Int64Array::from(timestamps)),
-            Arc::new(StringArray::from(uid_refs)),
-            Arc::new(FixedSizeListArray::from_iter_primitive::<Float32Type, _, _>(vecs, dim)),
-        ],
-    )
-    .map_err(|e| format!("arrow batch: {e}"))
 }
 
 impl VectorStore {
-    /// Open (or create) a LanceDB database in the workspace directory.
     pub async fn connect(data_dir: &Path) -> Self {
-        let db_path = data_dir.join("lancedb");
-        std::fs::create_dir_all(&db_path).ok();
-        let path_str = db_path.to_str().unwrap();
-        let db = lancedb::connect(path_str)
-            .execute()
-            .await
-            .unwrap_or_else(|e| panic!("failed to open LanceDB at {path_str}: {e}"));
-        log::info!("[vector] opened LanceDB at {path_str}");
-        Self { db }
-    }
-
-    async fn open_table(&self, name: &str) -> Result<lancedb::Table, String> {
-        self.db
-            .open_table(name)
-            .execute()
-            .await
-            .map_err(|e| format!("lancedb open_table: {e}"))
-    }
-
-    /// Drop and recreate the table (reset all vectors).
-    pub async fn reset_collection(&self, instance_slug: &str) -> Result<(), String> {
-        let name = table_name(instance_slug);
-        let tables = self
-            .db
-            .table_names()
-            .execute()
-            .await
-            .map_err(|e| format!("lancedb: {e}"))?;
-        if tables.contains(&name) {
-            self.db
-                .drop_table(&name, &Vec::<String>::new())
-                .await
-                .map_err(|e| format!("lancedb drop: {e}"))?;
-            log::info!("[vector] dropped table {name}");
+        let data_dir = data_dir.to_owned();
+        let store = tokio::task::spawn_blocking(move || {
+            Store::new(
+                &data_dir,
+                EMBEDDING_PROVIDER,
+                EMBEDDING_MODEL,
+                embedding::output_dim(),
+            )
+        })
+        .await
+        .expect("vector store initialization task panicked");
+        Self {
+            store: std::sync::Arc::new(store),
         }
-        self.ensure_collection(instance_slug).await
     }
 
-    /// Ensure the table exists, create if not.
+    async fn mutate<T: Send + 'static>(
+        &self,
+        instance_slug: &str,
+        operation: impl FnOnce(std::sync::Arc<Store>, String) -> Result<T, String> + Send + 'static,
+    ) -> Result<T, String> {
+        let mutation = self.store.mutation_lock(instance_slug);
+        let _guard = mutation.lock_owned().await;
+        let store = self.store.clone();
+        let slug = instance_slug.to_owned();
+        tokio::task::spawn_blocking(move || operation(store, slug))
+            .await
+            .map_err(|error| format!("vector blocking task failed: {error}"))?
+    }
+
+    async fn read<T: Send + 'static>(
+        &self,
+        instance_slug: &str,
+        operation: impl FnOnce(std::sync::Arc<Store>, String) -> Result<T, String> + Send + 'static,
+    ) -> Result<T, String> {
+        let store = self.store.clone();
+        let slug = instance_slug.to_owned();
+        tokio::task::spawn_blocking(move || operation(store, slug))
+            .await
+            .map_err(|error| format!("vector blocking task failed: {error}"))?
+    }
+
     pub async fn ensure_collection(&self, instance_slug: &str) -> Result<(), String> {
-        let name = table_name(instance_slug);
-        let tables = self
-            .db
-            .table_names()
-            .execute()
+        self.mutate(instance_slug, |store, slug| store.ensure(&slug))
             .await
-            .map_err(|e| format!("lancedb: {e}"))?;
-        if !tables.contains(&name) {
-            self.db
-                .create_empty_table(&name, table_schema())
-                .execute()
-                .await
-                .map_err(|e| format!("lancedb create: {e}"))?;
-            log::info!("[vector] created table {name}");
-        }
-        Ok(())
     }
 
-    /// Upsert text memory chunks.
+    pub async fn reset_collection(&self, instance_slug: &str) -> Result<(), String> {
+        self.mutate(instance_slug, |store, slug| store.reset(&slug))
+            .await
+    }
+
+    pub async fn needs_backfill(&self, instance_slug: &str) -> Result<bool, String> {
+        self.mutate(instance_slug, |store, slug| store.needs_backfill(&slug))
+            .await
+    }
+
     pub async fn upsert_text_memory(
         &self,
         instance_slug: &str,
         path: &str,
         chunks: Vec<(String, Vec<f32>)>,
     ) -> Result<(), String> {
-        let table = self.open_table(&table_name(instance_slug)).await?;
-
-        // Delete existing chunks for this path
-        let escaped = path.replace('\'', "''");
-        table.delete(&format!("path = '{escaped}'")).await.ok();
-
-        if chunks.is_empty() {
-            return Ok(());
-        }
-
-        let n = chunks.len();
-        let ts = chrono::Utc::now().timestamp_millis();
-        let mut ids = Vec::with_capacity(n);
-        let mut src = Vec::with_capacity(n);
-        let mut pths = Vec::with_capacity(n);
-        let mut cidx = Vec::with_capacity(n);
-        let mut prev = Vec::with_capacity(n);
-        let mut tss = Vec::with_capacity(n);
-        let mut uids: Vec<Option<String>> = Vec::with_capacity(n);
-        let mut vecs = Vec::with_capacity(n);
-
-        for (i, (text, vector)) in chunks.into_iter().enumerate() {
-            ids.push(point_id("text_memory", path, i as u32));
-            src.push("text_memory".to_string());
-            pths.push(path.to_string());
-            cidx.push(i as i32);
-            prev.push(text.chars().take(500).collect());
-            tss.push(ts);
-            uids.push(None);
-            vecs.push(vector);
-        }
-
-        let batch = make_batch(ids, src, pths, cidx, prev, tss, uids, vecs)?;
-        table
-            .add(vec![batch])
-            .execute()
-            .await
-            .map_err(|e| format!("lancedb add: {e}"))?;
-        Ok(())
+        let path = path.to_owned();
+        let records = chunks
+            .into_iter()
+            .enumerate()
+            .map(|(i, (text, vector))| Record {
+                path: path.clone(),
+                source_type: "text_memory".into(),
+                chunk_index: i as u32,
+                content_preview: text.chars().take(500).collect(),
+                upload_id: None,
+                vector,
+            })
+            .collect();
+        self.mutate(instance_slug, move |store, slug| {
+            store.replace(&slug, &path, records)
+        })
+        .await
     }
 
-    /// Upsert a media embedding (image, video, audio).
     pub async fn upsert_media(
         &self,
         instance_slug: &str,
@@ -276,91 +127,59 @@ impl VectorStore {
         content_preview: &str,
         vector: Vec<f32>,
     ) -> Result<(), String> {
-        let table = self.open_table(&table_name(instance_slug)).await?;
-
-        let escaped = upload_id.replace('\'', "''");
-        table.delete(&format!("path = '{escaped}'")).await.ok(); // might not exist yet
-
-        let batch = make_batch(
-            vec![point_id(source_type, upload_id, 0)],
-            vec![source_type.to_string()],
-            vec![upload_id.to_string()],
-            vec![0],
-            vec![content_preview.chars().take(500).collect()],
-            vec![chrono::Utc::now().timestamp_millis()],
-            vec![Some(upload_id.to_string())],
-            vec![vector],
-        )?;
-        table
-            .add(vec![batch])
-            .execute()
-            .await
-            .map_err(|e| format!("lancedb add: {e}"))?;
-        Ok(())
+        let upload_id = upload_id.to_owned();
+        let record = Record {
+            path: upload_id.clone(),
+            source_type: source_type.to_owned(),
+            chunk_index: 0,
+            content_preview: content_preview.chars().take(500).collect(),
+            upload_id: Some(upload_id.clone()),
+            vector,
+        };
+        self.mutate(instance_slug, move |store, slug| {
+            store.replace(&slug, &upload_id, vec![record])
+        })
+        .await
     }
 
-    /// Delete all points matching a path value.
     pub async fn delete_by_path(&self, instance_slug: &str, path: &str) -> Result<(), String> {
-        let table = self.open_table(&table_name(instance_slug)).await?;
-        let escaped = path.replace('\'', "''");
-        table
-            .delete(&format!("path = '{escaped}'"))
+        let path = path.to_owned();
+        self.mutate(instance_slug, move |store, slug| store.delete(&slug, &path))
             .await
-            .map(|_| ())
-            .map_err(|e| format!("lancedb delete: {e}"))
     }
 
-    /// Search for similar vectors.
     pub async fn search(
         &self,
         instance_slug: &str,
         query_vector: Vec<f32>,
         limit: usize,
     ) -> Result<Vec<VectorSearchResult>, String> {
-        let table = self.open_table(&table_name(instance_slug)).await?;
-
-        let count = table.count_rows(None).await.unwrap_or(0);
-        if count == 0 {
-            return Ok(vec![]);
-        }
-
-        let batches = table
-            .vector_search(query_vector)
-            .map_err(|e| format!("lancedb search: {e}"))?
-            .distance_type(lancedb::DistanceType::Cosine)
-            .limit(limit)
-            .execute()
-            .await
-            .map_err(|e| format!("lancedb execute: {e}"))?
-            .try_collect::<Vec<RecordBatch>>()
-            .await
-            .map_err(|e| format!("lancedb collect: {e}"))?;
-
-        Ok(extract_results(&batches, true))
+        self.read(instance_slug, move |store, slug| {
+            Ok(store
+                .search(&slug, &query_vector, limit)?
+                .into_iter()
+                .map(|(record, score)| result(record, score))
+                .collect())
+        })
+        .await
     }
 
-    /// List all points with metadata (for debugging).
     pub async fn list_all(
         &self,
         instance_slug: &str,
         limit: usize,
     ) -> Result<Vec<VectorSearchResult>, String> {
-        let table = self.open_table(&table_name(instance_slug)).await?;
-
-        let batches = table
-            .query()
-            .limit(limit)
-            .execute()
-            .await
-            .map_err(|e| format!("lancedb query: {e}"))?
-            .try_collect::<Vec<RecordBatch>>()
-            .await
-            .map_err(|e| format!("lancedb collect: {e}"))?;
-
-        Ok(extract_results(&batches, false))
+        self.read(instance_slug, move |store, slug| {
+            Ok(store
+                .list(&slug, limit)?
+                .into_iter()
+                .map(|record| result(record, 0.))
+                .collect())
+        })
+        .await
     }
 
-    /// Backfill all memories (text + media) into LanceDB.
+    /// Backfill all memories (text + media) into the local index.
     pub async fn backfill_text_memories(
         &self,
         workspace_dir: &Path,
@@ -369,21 +188,29 @@ impl VectorStore {
     ) -> Result<usize, String> {
         use super::memory;
 
-        self.ensure_collection(instance_slug).await?;
-
-        let entries = memory::scan_library(workspace_dir, instance_slug);
+        let mutation = self.store.mutation_lock(instance_slug);
+        let _guard = mutation.lock_owned().await;
+        let workspace = workspace_dir.to_owned();
+        let slug = instance_slug.to_owned();
+        let scan_workspace = workspace.clone();
+        let scan_slug = slug.clone();
+        let entries = tokio::task::spawn_blocking(move || {
+            memory::scan_library_checked(&scan_workspace, &scan_slug)
+        })
+        .await
+        .map_err(|error| format!("backfill scan task failed: {error}"))??;
+        let mut records = Vec::new();
         let mut count = 0;
 
-        for entry in &entries {
-            let file_path = workspace_dir
+        for entry in entries {
+            let file_path = workspace
                 .join("instances")
-                .join(instance_slug)
+                .join(&slug)
                 .join("memory")
                 .join(&entry.path);
-
             let ext = file_path
                 .extension()
-                .and_then(|e| e.to_str())
+                .and_then(|extension| extension.to_str())
                 .unwrap_or("")
                 .to_lowercase();
             let is_image = matches!(
@@ -394,14 +221,14 @@ impl VectorStore {
                 is_image || matches!(ext.as_str(), "pdf" | "mp4" | "mov" | "mp3" | "wav");
 
             if is_media {
-                let bytes = match std::fs::read(&file_path) {
-                    Ok(b) => b,
-                    Err(_) => continue,
-                };
+                let display_path = entry.path.clone();
+                let bytes = tokio::task::spawn_blocking(move || std::fs::read(&file_path))
+                    .await
+                    .map_err(|error| format!("backfill read task failed: {error}"))?
+                    .map_err(|error| format!("backfill read {display_path}: {error}"))?;
                 if bytes.len() > 20 * 1024 * 1024 {
                     continue;
                 }
-
                 let mime_type = match ext.as_str() {
                     "jpg" | "jpeg" => "image/jpeg",
                     "png" => "image/png",
@@ -415,7 +242,6 @@ impl VectorStore {
                     "wav" => "audio/wav",
                     _ => "application/octet-stream",
                 };
-
                 let source_type = if is_image {
                     "media_image"
                 } else if mime_type.starts_with("video/") {
@@ -425,77 +251,57 @@ impl VectorStore {
                 } else {
                     "media_document"
                 };
-
-                let desc = &entry.path;
-                let embed_result = if is_image {
-                    embedding::embed_text_and_image(google_ai_key, desc, &bytes, mime_type).await
+                let vector = if is_image {
+                    embedding::embed_text_and_image(google_ai_key, &entry.path, &bytes, mime_type)
+                        .await
                 } else {
                     embedding::embed_media(google_ai_key, &bytes, mime_type).await
-                };
-
-                match embed_result {
-                    Ok(vec) => {
-                        if let Err(e) = self
-                            .upsert_media(
-                                instance_slug,
-                                &entry.path,
-                                source_type,
-                                mime_type,
-                                &entry.path,
-                                desc,
-                                vec,
-                            )
-                            .await
-                        {
-                            log::warn!(
-                                "[vector] backfill media upsert failed for {}: {e}",
-                                entry.path
-                            );
-                        }
-                        count += 1;
-                    }
-                    Err(e) => {
-                        log::warn!(
-                            "[vector] backfill media embed error for {}: {e}",
-                            entry.path
-                        )
-                    }
                 }
+                .map_err(|error| format!("backfill embed {}: {error}", entry.path))?;
+                records.push(Record {
+                    path: entry.path.clone(),
+                    source_type: source_type.into(),
+                    chunk_index: 0,
+                    content_preview: entry.path.chars().take(500).collect(),
+                    upload_id: Some(entry.path),
+                    vector,
+                });
+                count += 1;
                 tokio::time::sleep(std::time::Duration::from_millis(100)).await;
             } else {
-                let content = match std::fs::read_to_string(&file_path) {
-                    Ok(c) => c,
-                    Err(_) => continue,
-                };
-
+                let display_path = entry.path.clone();
+                let content =
+                    tokio::task::spawn_blocking(move || std::fs::read_to_string(&file_path))
+                        .await
+                        .map_err(|error| format!("backfill read task failed: {error}"))?
+                        .map_err(|error| format!("backfill read {display_path}: {error}"))?;
                 let chunks = chunk_text(&content);
-                let mut chunk_vectors = Vec::new();
-
-                for chunk in &chunks {
-                    match embedding::embed_text(
+                for (chunk_index, chunk) in chunks.into_iter().enumerate() {
+                    let vector = embedding::embed_text(
                         google_ai_key,
-                        chunk,
+                        &chunk,
                         embedding::TaskType::RetrievalDocument,
                     )
                     .await
-                    {
-                        Ok(vec) => chunk_vectors.push((chunk.clone(), vec)),
-                        Err(e) => {
-                            log::warn!("[vector] backfill embed error for {}: {e}", entry.path);
-                            continue;
-                        }
-                    }
+                    .map_err(|error| format!("backfill embed {}: {error}", entry.path))?;
+                    records.push(Record {
+                        path: entry.path.clone(),
+                        source_type: "text_memory".into(),
+                        chunk_index: chunk_index as u32,
+                        content_preview: chunk.chars().take(500).collect(),
+                        upload_id: None,
+                        vector,
+                    });
+                    count += 1;
                     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                }
-
-                if !chunk_vectors.is_empty() {
-                    self.upsert_text_memory(instance_slug, &entry.path, chunk_vectors)
-                        .await?;
-                    count += chunks.len();
                 }
             }
         }
 
+        let store = self.store.clone();
+        tokio::task::spawn_blocking(move || store.commit_backfill(&slug, records))
+            .await
+            .map_err(|error| format!("backfill commit task failed: {error}"))??;
         Ok(count)
     }
 }
@@ -528,4 +334,179 @@ pub fn chunk_text(text: &str) -> Vec<String> {
 
     chunks.retain(|c| !c.trim().is_empty());
     chunks
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn empty_backfill_marks_only_its_companion_complete() {
+        let workspace =
+            std::env::temp_dir().join(format!("backfill-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&workspace).unwrap();
+        let store = VectorStore::connect(&workspace).await;
+        assert!(store.needs_backfill("one").await.unwrap());
+        assert_eq!(
+            store
+                .backfill_text_memories(&workspace, "one", "")
+                .await
+                .unwrap(),
+            0
+        );
+        assert!(!store.needs_backfill("one").await.unwrap());
+        assert!(store.needs_backfill("two").await.unwrap());
+        std::fs::remove_dir_all(workspace).unwrap();
+    }
+    #[tokio::test]
+    async fn failed_backfill_remains_retryable() {
+        let workspace =
+            std::env::temp_dir().join(format!("backfill-test-{}", uuid::Uuid::new_v4()));
+        let memory = workspace.join("instances/one/memory");
+        std::fs::create_dir_all(&memory).unwrap();
+        std::fs::write(memory.join("broken.md"), [0xff]).unwrap();
+        let store = VectorStore::connect(&workspace).await;
+        assert!(
+            store
+                .backfill_text_memories(&workspace, "one", "")
+                .await
+                .is_err()
+        );
+        assert!(store.needs_backfill("one").await.unwrap());
+        std::fs::write(memory.join("broken.md"), "").unwrap();
+        assert_eq!(
+            store
+                .backfill_text_memories(&workspace, "one", "")
+                .await
+                .unwrap(),
+            0
+        );
+        assert!(!store.needs_backfill("one").await.unwrap());
+        std::fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[tokio::test]
+    async fn failed_backfill_preserves_prior_records_and_completion_state() {
+        let workspace =
+            std::env::temp_dir().join(format!("backfill-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&workspace).unwrap();
+        let memory = workspace.join("instances/one/memory");
+        let store = VectorStore::connect(&workspace).await;
+        store
+            .backfill_text_memories(&workspace, "one", "")
+            .await
+            .unwrap();
+        let mut vector = vec![0.; embedding::output_dim() as usize];
+        vector[0] = 1.;
+        store
+            .upsert_text_memory("one", "prior.md", vec![("prior".into(), vector)])
+            .await
+            .unwrap();
+        std::fs::create_dir_all(&memory).unwrap();
+        std::fs::write(memory.join("broken.md"), [0xff]).unwrap();
+
+        assert!(
+            store
+                .backfill_text_memories(&workspace, "one", "")
+                .await
+                .is_err()
+        );
+        assert!(!store.needs_backfill("one").await.unwrap());
+        assert_eq!(store.list_all("one", 10).await.unwrap()[0].path, "prior.md");
+        std::fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[tokio::test]
+    async fn mutation_lock_serializes_same_companion_without_blocking_another() {
+        let workspace =
+            std::env::temp_dir().join(format!("vector-lock-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&workspace).unwrap();
+        let store = std::sync::Arc::new(VectorStore::connect(&workspace).await);
+        let guard = store.store.mutation_lock("one").lock_owned().await;
+        let mut vector = vec![0.; embedding::output_dim() as usize];
+        vector[0] = 1.;
+
+        let same = {
+            let store = store.clone();
+            let vector = vector.clone();
+            tokio::spawn(async move {
+                store
+                    .upsert_text_memory("one", "one.md", vec![("one".into(), vector)])
+                    .await
+            })
+        };
+        tokio::task::yield_now().await;
+        assert!(!same.is_finished());
+
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            store.upsert_text_memory("two", "two.md", vec![("two".into(), vector)]),
+        )
+        .await
+        .unwrap()
+        .unwrap();
+        drop(guard);
+        same.await.unwrap().unwrap();
+        std::fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[tokio::test]
+    async fn public_boundary_preserves_text_and_media_semantics() {
+        let workspace =
+            std::env::temp_dir().join(format!("vector-api-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&workspace).unwrap();
+        let store = VectorStore::connect(&workspace).await;
+        let mut vector = vec![0.; embedding::output_dim() as usize];
+        vector[0] = 1.;
+        store.ensure_collection("slug").await.unwrap();
+        store
+            .upsert_text_memory(
+                "slug",
+                "notes.md",
+                vec![
+                    ("é".repeat(600), vector.clone()),
+                    ("second".into(), vector.clone()),
+                ],
+            )
+            .await
+            .unwrap();
+        let records = store.list_all("slug", 10).await.unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].content_preview.chars().count(), 500);
+        assert_eq!(records[0].source_type, "text_memory");
+        assert!(records[0].upload_id.is_none());
+        assert_eq!(records[0].score, 0.);
+        store
+            .upsert_media(
+                "slug",
+                "notes.md",
+                "media_image",
+                "image/png",
+                "name",
+                "preview",
+                vector.clone(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(store.list_all("slug", 10).await.unwrap().len(), 1);
+        drop(store);
+        let store = VectorStore::connect(&workspace).await;
+        let hits = store.search("slug", vector.clone(), 10).await.unwrap();
+        assert_eq!(hits[0].upload_id.as_deref(), Some("notes.md"));
+        assert_eq!(hits[0].score, 1.);
+        assert!(store.list_all("slug", 0).await.unwrap().is_empty());
+        store
+            .upsert_text_memory("slug", "notes.md", vec![])
+            .await
+            .unwrap();
+        assert!(store.list_all("slug", 10).await.unwrap().is_empty());
+        store
+            .upsert_text_memory("slug", "a", vec![("a".into(), vector)])
+            .await
+            .unwrap();
+        store.delete_by_path("slug", "a").await.unwrap();
+        store.reset_collection("slug").await.unwrap();
+        assert!(store.needs_backfill("slug").await.unwrap());
+        std::fs::remove_dir_all(workspace).unwrap();
+    }
 }

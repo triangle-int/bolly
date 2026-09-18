@@ -19,9 +19,9 @@ reqwest = { version = "0.13", features = ["json", "query", "multipart"] }
 dirs = "6.0"
 toml = "1.0"
 uuid = { version = "1.0", features = ["v4", "v5"] }
-lancedb = "0.27"
-arrow-array = "57"
-arrow-schema = "57"
+postcard = { version = "1", default-features = false, features = ["alloc"] }
+sha2 = "0.10"
+tempfile = "3"
 chrono = "0.4"
 schemars = "1"
 tokio-util = { version = "0.7.18", features = ["rt", "compat", "io"] }

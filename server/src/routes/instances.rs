@@ -1,10 +1,10 @@
 use axum::response::IntoResponse;
 use axum::{
+    Json, Router,
     body::Body,
     extract::{Multipart, Path, State},
     http::StatusCode,
     routing::{delete, get, post, put},
-    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -760,10 +760,6 @@ async fn reindex_memory(
             log::warn!("[reindex] reset failed for {instance_slug}: {e}");
             StatusCode::INTERNAL_SERVER_ERROR
         })?;
-
-    // Remove backfill marker so it runs again
-    let marker = state.workspace_dir.join(".vectors_backfilled");
-    let _ = std::fs::remove_file(&marker);
 
     // Backfill in background
     let vs = state.vector_store.clone();

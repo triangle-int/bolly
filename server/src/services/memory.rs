@@ -131,6 +131,105 @@ pub fn scan_library(workspace_dir: &Path, instance_slug: &str) -> Vec<MemoryEntr
     entries
 }
 
+/// Strict scan used for backfill, where an omitted file would make a complete
+/// replacement index silently incomplete.
+pub fn scan_library_checked(
+    workspace_dir: &Path,
+    instance_slug: &str,
+) -> Result<Vec<MemoryEntry>, String> {
+    let dir = memory_dir(workspace_dir, instance_slug);
+    match std::fs::metadata(&dir) {
+        Ok(metadata) if metadata.is_dir() => {}
+        Ok(_) => return Err(format!("memory path is not a directory: {}", dir.display())),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(format!("scan memory directory {}: {error}", dir.display())),
+    }
+    let mut entries = Vec::new();
+    scan_dir_recursive_checked(&dir, &dir, &mut entries)?;
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    Ok(entries)
+}
+
+fn scan_dir_recursive_checked(
+    base: &Path,
+    current: &Path,
+    entries: &mut Vec<MemoryEntry>,
+) -> Result<(), String> {
+    let read_dir = std::fs::read_dir(current)
+        .map_err(|error| format!("scan memory directory {}: {error}", current.display()))?;
+    for entry in read_dir {
+        let entry = entry
+            .map_err(|error| format!("scan memory directory {}: {error}", current.display()))?;
+        let path = entry.path();
+        let file_name = entry.file_name().to_string_lossy().to_string();
+        if file_name.starts_with('.') || file_name.starts_with('_') {
+            continue;
+        }
+        let metadata = std::fs::metadata(&path)
+            .map_err(|error| format!("read memory metadata {}: {error}", path.display()))?;
+        if metadata.is_dir() {
+            scan_dir_recursive_checked(base, &path, entries)?;
+            continue;
+        }
+
+        let ext = path
+            .extension()
+            .and_then(|extension| extension.to_str())
+            .unwrap_or("")
+            .to_lowercase();
+        let is_text = ext == "md";
+        let is_media = matches!(
+            ext.as_str(),
+            "jpg" | "jpeg" | "png" | "webp" | "gif" | "svg" | "pdf" | "mp4" | "mov" | "mp3" | "wav"
+        );
+        if !is_text && !is_media {
+            continue;
+        }
+        let relative = path
+            .strip_prefix(base)
+            .unwrap_or(&path)
+            .to_string_lossy()
+            .to_string();
+        if is_media {
+            let kind = match ext.as_str() {
+                "jpg" | "jpeg" | "png" | "webp" | "gif" | "svg" => "image",
+                "pdf" => "document",
+                "mp4" | "mov" => "video",
+                "mp3" | "wav" => "audio",
+                _ => "file",
+            };
+            entries.push(MemoryEntry {
+                path: relative,
+                summary: format!("[{kind}: {ext}]"),
+                size: usize::try_from(metadata.len()).unwrap_or(usize::MAX),
+            });
+        } else {
+            let content = std::fs::read_to_string(&path)
+                .map_err(|error| format!("read memory text {}: {error}", path.display()))?;
+            let (frontmatter, body) = parse_frontmatter(&content);
+            let date_prefix = frontmatter
+                .updated
+                .or(frontmatter.created)
+                .map(|date| format!("({}) ", format_date_short(&date)))
+                .unwrap_or_default();
+            let summary_text = body
+                .lines()
+                .find(|line| !line.trim().is_empty())
+                .unwrap_or("")
+                .trim()
+                .chars()
+                .take(120)
+                .collect::<String>();
+            entries.push(MemoryEntry {
+                path: relative,
+                summary: format!("{date_prefix}{summary_text}"),
+                size: content.len(),
+            });
+        }
+    }
+    Ok(())
+}
+
 fn scan_dir_recursive(base: &Path, current: &Path, entries: &mut Vec<MemoryEntry>) {
     let read_dir = match std::fs::read_dir(current) {
         Ok(rd) => rd,
@@ -1092,4 +1191,57 @@ fn parse_memory_ops(response: &str) -> Vec<MemoryOp> {
     }
 
     Vec::new()
+}
+
+#[cfg(test)]
+mod strict_scan_tests {
+    use super::*;
+
+    #[test]
+    fn checked_scan_preserves_filtering_and_sorting() {
+        let workspace = std::env::temp_dir().join(format!("memory-scan-{}", uuid::Uuid::new_v4()));
+        let memory = workspace.join("instances/slug/memory");
+        std::fs::create_dir_all(memory.join("nested")).unwrap();
+        std::fs::write(memory.join("z.md"), "z").unwrap();
+        std::fs::write(memory.join("nested/a.md"), "a").unwrap();
+        std::fs::write(memory.join(".hidden.md"), "hidden").unwrap();
+        std::fs::write(memory.join("ignored.txt"), "ignored").unwrap();
+
+        let entries = scan_library_checked(&workspace, "slug").unwrap();
+        assert_eq!(
+            entries
+                .iter()
+                .map(|entry| entry.path.as_str())
+                .collect::<Vec<_>>(),
+            ["nested/a.md", "z.md"]
+        );
+        std::fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
+    fn checked_scan_reports_invalid_utf8_text() {
+        let workspace = std::env::temp_dir().join(format!("memory-scan-{}", uuid::Uuid::new_v4()));
+        let memory = workspace.join("instances/slug/memory");
+        std::fs::create_dir_all(&memory).unwrap();
+        std::fs::write(memory.join("broken.md"), [0xff]).unwrap();
+        assert!(scan_library_checked(&workspace, "slug").is_err());
+        std::fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn checked_scan_reports_unreadable_directory_where_enforced() {
+        use std::os::unix::fs::PermissionsExt;
+        let workspace = std::env::temp_dir().join(format!("memory-scan-{}", uuid::Uuid::new_v4()));
+        let memory = workspace.join("instances/slug/memory/blocked");
+        std::fs::create_dir_all(&memory).unwrap();
+        std::fs::set_permissions(&memory, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let result = scan_library_checked(&workspace, "slug");
+        std::fs::set_permissions(&memory, std::fs::Permissions::from_mode(0o700)).unwrap();
+        std::fs::remove_dir_all(workspace).unwrap();
+        // Root can bypass mode bits in some CI containers.
+        if let Err(error) = result {
+            assert!(error.contains("scan memory directory"));
+        }
+    }
 }

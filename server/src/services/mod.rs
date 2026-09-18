@@ -23,3 +23,5 @@ pub mod tools;
 pub mod uploads;
 pub mod vector;
 pub mod workspace;
+
+mod vector_index;
