@@ -53,14 +53,13 @@ pub mod system;
 pub use calendar::{CreateEventTool, ListEventsTool};
 pub use communication::{ReachOutTool, ReadEmailTool, ScheduledTask, SendEmailTool};
 pub use companion::{
-    ALLOWED_MOODS, EditSoulTool, PlayMusicTool, SetVoiceTool, get_voice_override, load_mood_state,
-    save_mood_state,
+    get_voice_override, load_mood_state, save_mood_state, EditSoulTool, SetVoiceTool, ALLOWED_MOODS,
 };
 pub use computer::{ComputerUseTool, ListMachinesTool, RemoteBashTool, RemoteFilesTool};
 pub use drive::{ListDriveFilesTool, ReadDriveFileTool, UploadDriveFileTool};
 pub use files::{EditFileTool, ListFilesTool, ReadFileTool, UploadFileTool, WriteFileTool};
 pub use image::ViewImageTool;
-pub use media::{ListenMusicTool, WatchVideoTool};
+pub use media::WatchVideoTool;
 pub use memory_tools::{
     MemoryConnectTool, MemoryForgetTool, MemoryListTool, MemoryReadTool, MemorySearchTool,
     MemoryWriteTool,
@@ -72,7 +71,6 @@ pub use system::{
     GetTimeTool, ImportProfileTool, InteractiveSessionTool, RequestSecretTool, RestartMachineTool,
     RunCommandTool, UpdateConfigTool,
 };
-
 // ---------------------------------------------------------------------------
 // Cached tool definitions snapshot (populated by build_tools, read by stats)
 // ---------------------------------------------------------------------------
@@ -264,15 +262,6 @@ pub fn tool_summary(name: &str, args: &str) -> String {
             v["file_id"].as_str().unwrap_or("?")
         ),
         "upload_drive_file" => format!("uploading {}", v["name"].as_str().unwrap_or("?")),
-        "play_music" => {
-            let action = v["action"].as_str().unwrap_or("?");
-            let track = v["track"].as_str().unwrap_or("");
-            if track.is_empty() {
-                format!("music {action}")
-            } else {
-                format!("{action} {track}")
-            }
-        }
         "set_voice" => {
             let vid = v["voice_id"].as_str().unwrap_or("");
             if vid.is_empty() {
@@ -538,11 +527,6 @@ pub fn build_tools(
         ))),
         // Mood is managed by background sentiment extraction + heartbeat, not tools.
         wrap(Box::new(EditSoulTool::new(workspace_dir, instance_slug))),
-        wrap(Box::new(PlayMusicTool::new(
-            workspace_dir,
-            instance_slug,
-            events.clone(),
-        ))),
         wrap(Box::new(SetVoiceTool::new(workspace_dir, instance_slug))),
         wrap(Box::new(RunCommandTool::new(
             workspace_dir,
@@ -612,13 +596,6 @@ pub fn build_tools(
         let cfg = crate::config::load_config().ok();
         let auth_token = cfg.as_ref().map(|c| c.auth_token.as_str()).unwrap_or("");
         tools.push(wrap(Box::new(WatchVideoTool::new(
-            google_ai_key,
-            workspace_dir,
-            instance_slug,
-            public_url,
-            auth_token,
-        ))));
-        tools.push(wrap(Box::new(ListenMusicTool::new(
             google_ai_key,
             workspace_dir,
             instance_slug,

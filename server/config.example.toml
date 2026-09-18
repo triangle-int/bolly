@@ -27,7 +27,7 @@ OPEN_AI = ""         # Required when provider is openai
 ANTHROPIC = ""       # Required when provider is anthropic — API key (sk-ant-...)
 GOOGLE_AI = ""       # Optional — Google AI / Gemini (vector memory search)
 ELEVENLABS = ""      # Optional — ElevenLabs (text-to-speech)
-OPENROUTER = ""      # Optional — OpenRouter (video/music analysis)
+OPENROUTER = ""      # Optional — OpenRouter (video analysis)
 
 # Optional: set FAL_KEY env var for AI image generation via fal.ai MCP
 

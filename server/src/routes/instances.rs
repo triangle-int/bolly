@@ -1,10 +1,10 @@
 use axum::response::IntoResponse;
 use axum::{
-    Json, Router,
     body::Body,
     extract::{Multipart, Path, State},
     http::StatusCode,
     routing::{delete, get, post, put},
+    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -89,14 +89,6 @@ pub fn router() -> Router<AppState> {
         )
         .route("/api/instances/{instance_slug}/voice", get(get_voice_id))
         .route("/api/instances/{instance_slug}/voice", put(set_voice_id))
-        .route(
-            "/api/instances/{instance_slug}/music",
-            get(get_music_enabled),
-        )
-        .route(
-            "/api/instances/{instance_slug}/music",
-            put(set_music_enabled),
-        )
         .route(
             "/api/instances/{instance_slug}/voice-mode",
             get(get_voice_enabled),
@@ -334,36 +326,6 @@ async fn set_voice_id(
 ) -> StatusCode {
     let mut inst = crate::config::InstanceConfig::load(&state.workspace_dir, &instance_slug);
     inst.elevenlabs_voice_id = req.voice_id;
-    match inst.save(&state.workspace_dir, &instance_slug) {
-        Ok(_) => StatusCode::OK,
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Music enabled
-// ---------------------------------------------------------------------------
-
-async fn get_music_enabled(
-    State(state): State<AppState>,
-    Path(instance_slug): Path<String>,
-) -> Json<serde_json::Value> {
-    let inst = crate::config::InstanceConfig::load(&state.workspace_dir, &instance_slug);
-    Json(serde_json::json!({ "music_enabled": inst.music_enabled }))
-}
-
-#[derive(Deserialize)]
-struct SetMusicEnabledRequest {
-    music_enabled: bool,
-}
-
-async fn set_music_enabled(
-    State(state): State<AppState>,
-    Path(instance_slug): Path<String>,
-    Json(req): Json<SetMusicEnabledRequest>,
-) -> StatusCode {
-    let mut inst = crate::config::InstanceConfig::load(&state.workspace_dir, &instance_slug);
-    inst.music_enabled = req.music_enabled;
     match inst.save(&state.workspace_dir, &instance_slug) {
         Ok(_) => StatusCode::OK,
         Err(_) => StatusCode::INTERNAL_SERVER_ERROR,

@@ -77,9 +77,6 @@ pub struct InstanceConfig {
     /// ElevenLabs voice ID override for this instance.
     #[serde(default)]
     pub elevenlabs_voice_id: String,
-    /// Whether background music/ambient plays automatically. Default: true.
-    #[serde(default = "default_true")]
-    pub music_enabled: bool,
     /// Whether voice mode (TTS) is enabled. Default: false.
     #[serde(default)]
     pub voice_enabled: bool,
@@ -94,10 +91,6 @@ pub struct InstanceConfig {
 
 fn default_skin() -> String {
     "orb".to_string()
-}
-
-fn default_true() -> bool {
-    true
 }
 
 impl InstanceConfig {
@@ -882,5 +875,25 @@ cheap = "custom-cheap"
     #[test]
     fn unknown_provider_is_not_silently_replaced() {
         assert!(toml::from_str::<Config>("[llm]\nprovider='openrouter'").is_err());
+    }
+}
+#[cfg(test)]
+mod tests {
+    use super::InstanceConfig;
+
+    #[test]
+    fn legacy_instance_config_preserves_voice_settings() {
+        for enabled in [true, false] {
+            let config: InstanceConfig = toml::from_str(&format!(
+                "music_enabled = {enabled}\nvoice_enabled = true\nelevenlabs_voice_id = 'test-voice'\n"
+            )).unwrap();
+            assert!(config.voice_enabled);
+            assert_eq!(config.elevenlabs_voice_id, "test-voice");
+            let saved = toml::to_string(&config).unwrap();
+            assert!(!saved.contains("music_enabled"));
+            let reloaded: InstanceConfig = toml::from_str(&saved).unwrap();
+            assert!(reloaded.voice_enabled);
+            assert_eq!(reloaded.elevenlabs_voice_id, "test-voice");
+        }
     }
 }

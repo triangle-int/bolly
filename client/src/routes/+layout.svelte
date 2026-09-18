@@ -7,7 +7,7 @@
 	import { createSkinStore, setSkinStore } from "$lib/stores/skin.svelte.js";
 	import { AuthError } from "$lib/api/client.js";
 	import type { ServerEvent } from "$lib/api/types.js";
-	import { onMount, onDestroy } from "svelte";
+	import { onMount } from "svelte";
 	import AuthGate from "$lib/components/auth/AuthGate.svelte";
 	import Toast from "$lib/components/layout/Toast.svelte";
 	import SecretDialog from "$lib/components/layout/SecretDialog.svelte";
@@ -22,8 +22,6 @@
 	setSceneStore(sceneStore);
 	const skinStore = createSkinStore();
 	setSkinStore(skinStore);
-
-	onDestroy(() => sceneStore.destroy());
 
 	// Sync theme class on <html> with active skin
 	const isMint = $derived(skinStore.skinId === 'mint');

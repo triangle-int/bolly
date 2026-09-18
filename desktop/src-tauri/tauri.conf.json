@@ -12,16 +12,12 @@
   "app": {
     "windows": [],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: http: https:; connect-src 'self' ipc: http://ipc.localhost; object-src 'none'; base-uri 'self'; frame-src 'none'",
+      "devCsp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: http: https:; connect-src 'self' ipc: http://ipc.localhost ws://localhost:1420; object-src 'none'; base-uri 'self'; frame-src 'none'"
     },
     "macOSPrivateApi": true
   },
   "plugins": {
-    "deep-link": {
-      "desktop": {
-        "schemes": ["bolly"]
-      }
-    },
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg2QzhFRjE0NUFDQzY0OQpSV1JKeHF4RjhZNXNDTi90c1o4L3JSdWtJeWdZQnFRUHR2dGV5eVk3Ull5U2ppbVhCZVd6dGhRaQo=",
       "endpoints": [
