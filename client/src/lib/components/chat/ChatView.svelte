@@ -112,8 +112,6 @@ import McpAppViewer from "./McpAppViewer.svelte";
 	$effect(() => { scene.setMood(mood); });
 	$effect(() => { scene.setThinking(sending || agentRunning); });
 	$effect(() => { scene.setVoiceAmplitude(voice.amplitude); });
-	// Auto-duck music when TTS is speaking
-	$effect(() => { scene.duckMusic(voice.speaking); });
 	// Sync presentation mode to scene (camera targets blob)
 	$effect(() => { scene.presenting = presentation.active; });
 
@@ -561,8 +559,6 @@ import McpAppViewer from "./McpAppViewer.svelte";
 					item.id = event.message_id; // promote to persisted id
 					stream = stream; // trigger reactivity
 				}
-			} else if (event.type === "music_control") {
-				scene.musicControl(event.action, event.track, event.volume);
 			} else if (event.type === "context_compacting") {
 				stream = [...stream, {
 					type: "compaction",
@@ -727,7 +723,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 	/>
 {:else}
 
-<div class="chat-space" class:chat-active={sending || agentRunning} class:chat-intro-playing={scene.mode !== "chat"} class:chat-disco={scene.musicPlaying}>
+<div class="chat-space" class:chat-active={sending || agentRunning} class:chat-intro-playing={scene.mode !== "chat"}>
 
 	<header class="chat-bar">
 		<div class="bar-left">
@@ -955,40 +951,6 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		opacity: 1;
 		animation: perimeter-breathe-active 3s ease-in-out infinite;
 	}
-
-	/* Disco mode — color-cycling perimeter glow when music plays */
-	.chat-space.chat-disco::before {
-		opacity: 1;
-		animation: disco-glow 4s linear infinite;
-	}
-	@keyframes disco-glow {
-		0% {
-			box-shadow:
-				inset 0 0 100px oklch(0.55 0.18 0 / 8%),
-				inset 0 0 200px oklch(0.50 0.14 330 / 4%);
-		}
-		25% {
-			box-shadow:
-				inset 0 0 100px oklch(0.55 0.18 90 / 8%),
-				inset 0 0 200px oklch(0.50 0.14 60 / 4%);
-		}
-		50% {
-			box-shadow:
-				inset 0 0 100px oklch(0.55 0.18 180 / 8%),
-				inset 0 0 200px oklch(0.50 0.14 150 / 4%);
-		}
-		75% {
-			box-shadow:
-				inset 0 0 100px oklch(0.55 0.18 270 / 8%),
-				inset 0 0 200px oklch(0.50 0.14 240 / 4%);
-		}
-		100% {
-			box-shadow:
-				inset 0 0 100px oklch(0.55 0.18 360 / 8%),
-				inset 0 0 200px oklch(0.50 0.14 330 / 4%);
-		}
-	}
-
 
 	/* --- bar --- */
 

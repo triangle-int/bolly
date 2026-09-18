@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { goto } from "$app/navigation";
 	import { page } from "$app/state";
-	import { deleteInstance, fetchMusicEnabled, machineHello, machineBye } from "$lib/api/client.js";
+	import { deleteInstance, machineHello, machineBye } from "$lib/api/client.js";
 	import { getInstances } from "$lib/stores/instances.svelte.js";
 	import { getPresentationState } from "$lib/stores/presentation.svelte.js";
 	import { getSceneStore } from "$lib/stores/scene.svelte.js";
@@ -27,9 +27,6 @@
 		if (!checking && !isNew) {
 			const currentSlug = slug;
 			Promise.all([
-				fetchMusicEnabled(currentSlug)
-					.then((res) => scene.setMusicEnabled(res.music_enabled))
-					.catch(() => {}),
 				voice.loadForInstance(currentSlug),
 				skinStore.loadForInstance(currentSlug),
 				machineHello(currentSlug).catch(() => {}),

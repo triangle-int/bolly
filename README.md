@@ -76,7 +76,7 @@ Connect the desktop app and your companion can see your screen, click, type, scr
 | **Files** | Read, write, edit, search, explore code |
 | **Shell** | Run commands, interactive sessions |
 | **Web** | Search, fetch pages (Anthropic native) |
-| **Media** | Watch video, listen to music (Google AI) |
+| **Media** | Watch video (Google AI) |
 | **Email** | Send & read email (SMTP/IMAP + Gmail OAuth) |
 | **Google** | Calendar events, Drive files |
 | **Memory** | Write, read, search, forget |

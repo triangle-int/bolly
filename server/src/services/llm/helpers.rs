@@ -421,22 +421,23 @@ pub fn build_multimodal_prompt(
                 }
             }
         } else if meta.mime_type.starts_with("video/") || meta.mime_type.starts_with("audio/") {
-            // Video/audio: tell the LLM about the file and how to analyze it
+            // Preserve attachment metadata; video analysis is available via watch_video.
             let kind = if meta.mime_type.starts_with("video/") { "video" } else { "audio" };
             let size_mb = bytes.len() as f64 / (1024.0 * 1024.0);
             let file_path = crate::services::uploads::get_upload_file_path(workspace_dir, instance_slug, upload_id)
                 .map(|p| p.display().to_string())
                 .unwrap_or_default();
             let mime = &meta.mime_type;
-            let tool_name = if kind == "audio" { "listen_music" } else { "watch_video" };
-            contents.push(ContentBlock::text(format!(
-                "[{kind}: {name} — {mime}, {size_mb:.1} MB]\n\
-                 local path: {file_path}\n\
-                 to analyze this {kind}, call {tool_name} with the local path above.\n\
-                 IMPORTANT: in the prompt field, include ALL context you know about this file — \
-                 filename, what the user said about it, where it's from, etc. \
-                 this context helps the model give a much better analysis."
-            )));
+            let mut description = format!(
+                "[{kind}: {name} — {mime}, {size_mb:.1} MB]\nlocal path: {file_path}"
+            );
+            if kind == "video" {
+                description.push_str("\nto analyze this video, call watch_video with the local path above.\n\
+                    IMPORTANT: in the prompt field, include ALL context you know about this file — \
+                    filename, what the user said about it, where it's from, etc. \
+                    this context helps the model give a much better analysis.");
+            }
+            contents.push(ContentBlock::text(description));
             log::info!("attached {kind}: {name} ({}, {size_mb:.1} MB)", meta.mime_type);
         } else {
             contents.push(ContentBlock::text(format!(
@@ -466,5 +467,40 @@ pub fn load_system_prompt(workspace_dir: &Path, instance_slug: &str) -> String {
         soul.content
     } else {
         DEFAULT_ONBOARDING_PROMPT.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ContentBlock, Message, build_multimodal_prompt};
+    use crate::services::uploads::{get_upload_file_path, save_upload};
+
+    #[test]
+    fn media_attachment_prompts_preserve_metadata_and_video_guidance() {
+        let workspace = std::env::temp_dir().join(format!("bolly-media-test-{}", uuid::Uuid::new_v4()));
+        for (name, mime, kind) in [
+            ("voice.mp3", "audio/mpeg", "audio"),
+            ("voice.wav", "audio/wav", "audio"),
+            ("voice.ogg", "audio/ogg", "audio"),
+            ("voice.m4a", "audio/mp4", "audio"),
+            ("clip.mp4", "video/mp4", "video"),
+        ] {
+            let upload = save_upload(&workspace, "test", name, b"media fixture").unwrap();
+            let path = get_upload_file_path(&workspace, "test", &upload.id).unwrap();
+            let message = build_multimodal_prompt(
+                &format!("Please review [attached: {name} ({})]", upload.id),
+                &workspace, "test", "", "",
+            );
+            let Message::User { content } = message else { panic!("expected user message") };
+            let ContentBlock::Text { text } = &content[0] else { panic!("expected attachment metadata") };
+            assert!(text.contains(&format!("[{kind}: {name} — {mime},")));
+            assert!(text.contains(&format!("local path: {}", path.display())));
+            assert!(!text.contains("listen_music"));
+            assert_eq!(text.contains("call watch_video"), kind == "video");
+            let ContentBlock::Text { text } = content.last().unwrap() else { panic!("expected user text") };
+            assert_eq!(text, "Please review");
+            assert_eq!(std::fs::read(&path).unwrap(), b"media fixture");
+        }
+        std::fs::remove_dir_all(workspace).unwrap();
     }
 }

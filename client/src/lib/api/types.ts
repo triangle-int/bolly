@@ -351,13 +351,6 @@ export type ServerEvent =
 			detail: string;
 	  }
 	| {
-			type: "music_control";
-			instance_slug: string;
-			action: string;
-			track?: string;
-			volume?: number;
-	  }
-	| {
 			type: "memory_recall";
 			instance_slug: string;
 			memories: { path: string; preview: string; score: number }[];

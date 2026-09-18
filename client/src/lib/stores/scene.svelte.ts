@@ -9,8 +9,6 @@
  */
 
 import { getContext, setContext } from "svelte";
-import { getAuthToken } from "$lib/api/client.js";
-import { getAudioContext } from "$lib/audio-context.js";
 import type { InstanceSummary } from "$lib/api/types.js";
 
 const SCENE_KEY = Symbol("scene");
@@ -30,16 +28,10 @@ export interface SceneStore {
 	readonly mood: string;
 	readonly thinking: boolean;
 	readonly voiceAmplitude: number;
-	readonly musicAmplitude: number;
-	readonly musicPlaying: boolean;
-	readonly musicEnabled: boolean;
 	presenting: boolean;
 	recalledMemories: {path: string; preview: string; score: number}[];
-	/** Get current frequency bins (0-255 per bin) for visualizer. Returns empty array if not playing. */
-	getMusicFrequencyData(): Uint8Array | null;
 
 	setInstances(list: InstanceSummary[]): void;
-	setMusicEnabled(v: boolean): void;
 	selectInstance(slug: string): void;
 	enterHome(): void;
 	enterOnboarding(slug: string): void;
@@ -48,14 +40,11 @@ export interface SceneStore {
 	setMood(m: string): void;
 	setThinking(v: boolean): void;
 	setVoiceAmplitude(v: number): void;
-	duckMusic(speaking: boolean): void;
 	skipIntro(): void;
-	musicControl(action: string, track?: string, volume?: number): void;
-	destroy(): void;
 	tick(): void;
 }
 
-const playedSlugs = new Set<string>();
+const introPlayedSlugs = new Set<string>();
 
 // Timing constants (seconds)
 const SELECT_DURATION = 0.7;
@@ -75,226 +64,11 @@ export function createSceneStore(): SceneStore {
 	let mood = $state("calm");
 	let thinking = $state(false);
 	let voiceAmplitude = $state(0);
-	let musicAmplitude = $state(0);
-	let musicPlaying = $state(false);
-	let musicEnabled = $state(true);
 	let presenting = $state(false);
 	let recalledMemories = $state<{path: string; preview: string; score: number}[]>([]);
 
-	// Audio analyser for custom music visualizer.
-	// Uses the shared AudioContext (one per app, from audio-context.ts).
-	let musicAnalyser: AnalyserNode | null = null;
-	let musicGainNode: GainNode | null = null;
-	let musicSourceNode: MediaElementAudioSourceNode | null = null;
-	let musicDataArray: Uint8Array<ArrayBuffer> | null = null;
-	let musicRafId: number | null = null;
-
-	function ensureMusicPipeline(): { analyser: AnalyserNode; gain: GainNode } {
-		const ac = getAudioContext();
-		if (!musicGainNode) {
-			musicGainNode = ac.createGain();
-			musicGainNode.gain.value = 1.0;
-		}
-		if (!musicAnalyser) {
-			musicAnalyser = ac.createAnalyser();
-			musicAnalyser.fftSize = 256;
-			musicAnalyser.smoothingTimeConstant = 0.8;
-			// Pipeline: source → gain → analyser → destination
-			musicGainNode.connect(musicAnalyser);
-			musicAnalyser.connect(ac.destination);
-			musicDataArray = new Uint8Array(musicAnalyser.frequencyBinCount) as Uint8Array<ArrayBuffer>;
-		}
-		return { analyser: musicAnalyser, gain: musicGainNode };
-	}
-
-	function connectMusicSource(audio: HTMLAudioElement) {
-		// Disconnect old source if any
-		if (musicSourceNode) {
-			try { musicSourceNode.disconnect(); } catch {}
-			musicSourceNode = null;
-		}
-
-		const ac = getAudioContext();
-		const { gain } = ensureMusicPipeline();
-
-		// Resume context if needed (should already be running from user gesture)
-		if (ac.state === "suspended") {
-			console.log("[music] resuming shared AudioContext");
-			ac.resume().catch(() => {});
-		}
-
-		try {
-			musicSourceNode = ac.createMediaElementSource(audio);
-			// Connect source to gain node (not directly to analyser)
-			musicSourceNode.connect(gain);
-			gain.gain.value = customAudioBaseVolume;
-			musicPlaying = true;
-			console.log("[music] source connected to shared context, state:", ac.state);
-
-			// Start amplitude tracking loop
-			if (musicRafId !== null) cancelAnimationFrame(musicRafId);
-			function updateAmplitude() {
-				if (!musicAnalyser || !musicDataArray) return;
-				musicAnalyser.getByteFrequencyData(musicDataArray);
-				let sum = 0;
-				for (let i = 0; i < musicDataArray.length; i++) {
-					sum += musicDataArray[i];
-				}
-				musicAmplitude = sum / (musicDataArray.length * 255);
-				musicRafId = requestAnimationFrame(updateAmplitude);
-			}
-			updateAmplitude();
-		} catch (e) {
-			console.warn("[music] createMediaElementSource failed:", e);
-			// Audio will play natively without visualizer
-		}
-	}
-
-	function disconnectMusicSource() {
-		if (musicRafId !== null) { cancelAnimationFrame(musicRafId); musicRafId = null; }
-		if (musicSourceNode) { try { musicSourceNode.disconnect(); } catch {} musicSourceNode = null; }
-		musicAmplitude = 0;
-		musicPlaying = false;
-	}
-
 	let selectStartTime = 0;
 	let introStartTime = 0;
-
-	// ── Audio ──
-	let introAudio: HTMLAudioElement | null = null;
-	let loopAudio: HTMLAudioElement | null = null;
-	let ambientAudio: HTMLAudioElement | null = null;
-	let customAudio: HTMLAudioElement | null = null;
-	let customAudioBaseVolume = 0.5; // Original volume before ducking
-	let isDucked = false;
-
-	// Pending audio start — retried on first user interaction if autoplay blocked
-	let pendingAudioFn: (() => void) | null = null;
-	let gestureListenerAdded = false;
-
-	function addGestureListener() {
-		if (gestureListenerAdded) return;
-		gestureListenerAdded = true;
-		const handler = () => {
-			if (pendingAudioFn) {
-				pendingAudioFn();
-				pendingAudioFn = null;
-			}
-			document.removeEventListener("click", handler, true);
-			document.removeEventListener("touchstart", handler, true);
-			document.removeEventListener("keydown", handler, true);
-			gestureListenerAdded = false;
-		};
-		document.addEventListener("click", handler, { capture: true, once: false });
-		document.addEventListener("touchstart", handler, { capture: true, once: false });
-		document.addEventListener("keydown", handler, { capture: true, once: false });
-	}
-
-	function tryPlay(audio: HTMLAudioElement): Promise<boolean> {
-		return audio.play().then(() => true).catch(() => false);
-	}
-
-	function startFullAudio() {
-		if (!musicEnabled) return;
-		if (!ambientAudio) {
-			ambientAudio = new Audio("/sounds/ambient.mp3");
-			ambientAudio.loop = true;
-			ambientAudio.volume = 0.3;
-		}
-		if (!introAudio) {
-			introAudio = new Audio("/sounds/intro.mp3");
-			introAudio.loop = false;
-			introAudio.volume = 0.5;
-		}
-		if (!loopAudio) {
-			loopAudio = new Audio("/sounds/loop.mp3");
-			loopAudio.loop = true;
-			loopAudio.volume = 0;
-		}
-
-		introAudio.onended = () => {
-			if (loopAudio) {
-				loopAudio.currentTime = 0;
-				loopAudio.play().catch(() => {});
-				fadeAudio(loopAudio, 0.5, 2000);
-			}
-		};
-
-		const doPlay = () => {
-			ambientAudio!.currentTime = 0;
-			introAudio!.currentTime = 0;
-			ambientAudio!.play().catch(() => {});
-			introAudio!.play().catch(() => {});
-		};
-
-		// Try immediately; if blocked, queue for first interaction
-		ambientAudio.currentTime = 0;
-		introAudio.currentTime = 0;
-		tryPlay(introAudio).then((ok) => {
-			if (ok) {
-				ambientAudio!.play().catch(() => {});
-			} else {
-				pendingAudioFn = doPlay;
-				addGestureListener();
-			}
-		});
-	}
-
-	function startLoopOnly() {
-		if (!musicEnabled) return;
-		if (!ambientAudio) {
-			ambientAudio = new Audio("/sounds/ambient.mp3");
-			ambientAudio.loop = true;
-			ambientAudio.volume = 0.3;
-		}
-		if (!loopAudio) {
-			loopAudio = new Audio("/sounds/loop.mp3");
-			loopAudio.loop = true;
-			loopAudio.volume = 0.5;
-		}
-
-		const doPlay = () => {
-			ambientAudio!.play().catch(() => {});
-			loopAudio!.play().catch(() => {});
-		};
-
-		tryPlay(loopAudio).then((ok) => {
-			if (ok) {
-				ambientAudio!.play().catch(() => {});
-			} else {
-				pendingAudioFn = doPlay;
-				addGestureListener();
-			}
-		});
-	}
-
-	function stopAudio() {
-		if (introAudio) { introAudio.pause(); introAudio = null; }
-		if (loopAudio) { loopAudio.pause(); loopAudio = null; }
-		if (ambientAudio) { ambientAudio.pause(); ambientAudio = null; }
-		if (customAudio) { customAudio.pause(); customAudio = null; }
-		disconnectMusicSource();
-	}
-
-	function getTrackAudio(track: string): HTMLAudioElement | null {
-		switch (track) {
-			case "ambient": return ambientAudio;
-			case "intro": return introAudio;
-			case "loop": return loopAudio;
-			case "custom": return customAudio;
-			default: return null;
-		}
-	}
-
-	function fadeAudio(audio: HTMLAudioElement, target: number, ms: number) {
-		const start = audio.volume;
-		const t0 = performance.now();
-		(function step() {
-			const p = Math.min((performance.now() - t0) / ms, 1);
-			audio.volume = start + (target - start) * p;
-			if (p < 1) requestAnimationFrame(step);
-		})();
-	}
 
 	// ── Tick — called every frame by SharedScene ──
 	function tick() {
@@ -337,29 +111,12 @@ export function createSceneStore(): SceneStore {
 		get mood() { return mood; },
 		get thinking() { return thinking; },
 		get voiceAmplitude() { return voiceAmplitude; },
-		get musicAmplitude() { return musicAmplitude; },
-		get musicPlaying() { return musicPlaying; },
-		get musicEnabled() { return musicEnabled; },
 		get presenting() { return presenting; },
 		set presenting(v) { presenting = v; },
 		get recalledMemories() { return recalledMemories; },
 		set recalledMemories(v) { recalledMemories = v; },
-		getMusicFrequencyData() {
-			if (!musicAnalyser || !musicPlaying) return null;
-			const data = new Uint8Array(musicAnalyser.frequencyBinCount);
-			musicAnalyser.getByteFrequencyData(data);
-			return data;
-		},
 
 		setInstances(list) { instances = list; },
-		setMusicEnabled(v) {
-			musicEnabled = v;
-			if (!v) {
-				stopAudio();
-			} else if (mode === "chat") {
-				startFullAudio();
-			}
-		},
 
 		selectInstance(slug: string) {
 			if (mode !== "home") return;
@@ -368,22 +125,18 @@ export function createSceneStore(): SceneStore {
 			selectStartTime = performance.now();
 			selectProgress = 0;
 			pendingSelect = slug;
-			if (!playedSlugs.has(slug)) {
-				playedSlugs.add(slug);
-				startFullAudio();
-			}
+			introPlayedSlugs.add(slug);
 		},
 
 		enterHome() {
 			if (mode === "selecting" || mode === "intro") return;
 			// Clear played so intro replays on next visit
-			playedSlugs.clear();
+			introPlayedSlugs.clear();
 			mode = "home";
 			selectedSlug = null;
 			introProgress = 0;
 			introPhase = "idle";
 			selectProgress = 0;
-			stopAudio();
 		},
 
 		enterOnboarding(slug: string) {
@@ -400,9 +153,8 @@ export function createSceneStore(): SceneStore {
 			introStartTime = performance.now();
 			introProgress = 0;
 			introPhase = "rising";
-			if (selectedSlug && !playedSlugs.has(selectedSlug)) {
-				playedSlugs.add(selectedSlug);
-				startFullAudio();
+			if (selectedSlug) {
+				introPlayedSlugs.add(selectedSlug);
 			}
 		},
 
@@ -411,136 +163,27 @@ export function createSceneStore(): SceneStore {
 			selectedSlug = slug;
 			// Skip intro on mobile — 3D animation not visible, just delays UI
 			const isMobile = typeof window !== "undefined" && window.innerWidth < 640;
-			if (isMobile || playedSlugs.has(slug)) {
-				playedSlugs.add(slug);
+			if (isMobile || introPlayedSlugs.has(slug)) {
+				introPlayedSlugs.add(slug);
 				mode = "chat";
 				introPhase = "done";
 				introProgress = 1;
-				if (!isMobile) startLoopOnly();
 			} else {
-				playedSlugs.add(slug);
+				introPlayedSlugs.add(slug);
 				mode = "intro";
 				introStartTime = performance.now();
 				introProgress = 0;
 				introPhase = "rising";
-				startFullAudio();
 			}
 		},
 
 		setMood(m) { mood = m; },
 		setThinking(v) { thinking = v; },
 		setVoiceAmplitude(v) { voiceAmplitude = v; },
-		duckMusic(speaking: boolean) {
-			if (!musicGainNode) return;
-			const ac = getAudioContext();
-			if (speaking && !isDucked) {
-				isDucked = true;
-				// Duck to 5% via GainNode — customAudio.volume doesn't work
-				// after createMediaElementSource in Chrome
-				musicGainNode.gain.cancelScheduledValues(ac.currentTime);
-				musicGainNode.gain.setValueAtTime(musicGainNode.gain.value, ac.currentTime);
-				musicGainNode.gain.linearRampToValueAtTime(0.15, ac.currentTime + 0.3);
-			} else if (!speaking && isDucked) {
-				isDucked = false;
-				musicGainNode.gain.cancelScheduledValues(ac.currentTime);
-				musicGainNode.gain.setValueAtTime(musicGainNode.gain.value, ac.currentTime);
-				musicGainNode.gain.linearRampToValueAtTime(1.0, ac.currentTime + 0.8);
-			}
-		},
-
-		musicControl(action: string, track?: string, volume?: number) {
-			if (action === "pause") {
-				stopAudio();
-				return;
-			}
-			if (action === "set_volume" && track) {
-				if (volume === undefined) return;
-				const v = Math.max(0, Math.min(1, volume));
-				const isCustom = track === "custom" || !["ambient", "intro", "loop"].includes(track);
-				if (isCustom && musicGainNode) {
-					customAudioBaseVolume = v;
-					const ac = getAudioContext();
-					musicGainNode.gain.cancelScheduledValues(ac.currentTime);
-					musicGainNode.gain.linearRampToValueAtTime(
-						isDucked ? v * 0.05 : v,
-						ac.currentTime + 0.3
-					);
-				} else {
-					const audio = getTrackAudio(track);
-					if (audio) fadeAudio(audio, v, 500);
-				}
-				return;
-			}
-			if (action === "play" && track) {
-				const vol = volume ?? 0.5;
-				const isBuiltIn = track === "ambient" || track === "intro" || track === "loop";
-				if (!isBuiltIn) {
-					// Stop all existing audio before playing custom track
-					stopAudio();
-					// Append auth token for same-origin upload URLs
-					let audioUrl = track;
-					if (track.startsWith("/api/")) {
-						const token = getAuthToken();
-						if (token) audioUrl += `${track.includes("?") ? "&" : "?"}token=${encodeURIComponent(token)}`;
-					}
-					customAudio = new Audio(audioUrl);
-					customAudio.loop = true;
-					customAudio.volume = 1.0; // volume controlled via GainNode
-					customAudioBaseVolume = vol;
-					isDucked = false;
-					console.log("[music] starting:", audioUrl);
-					// Connect to shared AudioContext for visualizer, then play.
-					// createMediaElementSource captures output — audio goes
-					// through context pipeline. Context is already running
-					// (resumed on user gesture via audio-context.ts).
-					connectMusicSource(customAudio);
-					customAudio.play().then(() => {
-						console.log("[music] playing, context state:", getAudioContext().state);
-					}).catch((e) => {
-						console.warn("[music] play() failed:", e);
-					});
-				} else {
-					// Built-in track
-					const builtIn: Record<string, () => void> = {
-						ambient: () => {
-							if (!ambientAudio) {
-								ambientAudio = new Audio("/sounds/ambient.mp3");
-								ambientAudio.loop = true;
-							}
-							ambientAudio.volume = vol;
-							ambientAudio.play().catch(() => {});
-						},
-						intro: () => {
-							if (!introAudio) {
-								introAudio = new Audio("/sounds/intro.mp3");
-								introAudio.loop = false;
-							}
-							introAudio.volume = vol;
-							introAudio.currentTime = 0;
-							introAudio.play().catch(() => {});
-						},
-						loop: () => {
-							if (!loopAudio) {
-								loopAudio = new Audio("/sounds/loop.mp3");
-								loopAudio.loop = true;
-							}
-							loopAudio.volume = vol;
-							loopAudio.play().catch(() => {});
-						},
-					};
-					builtIn[track]?.();
-				}
-			}
-		},
-
 		skipIntro() {
 			mode = "chat";
 			introPhase = "done";
 			introProgress = 1;
-		},
-
-		destroy() {
-			stopAudio();
 		},
 
 		tick,

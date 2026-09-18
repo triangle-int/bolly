@@ -55,7 +55,7 @@ pub use communication::{
     ReachOutTool, ReadEmailTool, ScheduledTask, SendEmailTool,
 };
 pub use companion::{
-    ALLOWED_MOODS, EditSoulTool, PlayMusicTool, SetVoiceTool,
+    ALLOWED_MOODS, EditSoulTool, SetVoiceTool,
     get_voice_override, load_mood_state, save_mood_state,
 };
 pub use drive::{ListDriveFilesTool, ReadDriveFileTool, UploadDriveFileTool};
@@ -69,7 +69,7 @@ pub use system::{
     RestartMachineTool, RunCommandTool, UpdateConfigTool,
 };
 pub use image::ViewImageTool;
-pub use media::{WatchVideoTool, ListenMusicTool};
+pub use media::WatchVideoTool;
 pub use computer::{ListMachinesTool, ComputerUseTool, RemoteBashTool, RemoteFilesTool};
 
 // ---------------------------------------------------------------------------
@@ -263,11 +263,6 @@ pub fn tool_summary(name: &str, args: &str) -> String {
             v["file_id"].as_str().unwrap_or("?")
         ),
         "upload_drive_file" => format!("uploading {}", v["name"].as_str().unwrap_or("?")),
-        "play_music" => {
-            let action = v["action"].as_str().unwrap_or("?");
-            let track = v["track"].as_str().unwrap_or("");
-            if track.is_empty() { format!("music {action}") } else { format!("{action} {track}") }
-        }
         "set_voice" => {
             let vid = v["voice_id"].as_str().unwrap_or("");
             if vid.is_empty() { "resetting voice to default".into() } else { format!("voice → {vid}") }
@@ -498,7 +493,6 @@ pub fn build_tools(
         wrap(Box::new(MemoryConnectTool::new(workspace_dir, instance_slug))),
         // Mood is managed by background sentiment extraction + heartbeat, not tools.
         wrap(Box::new(EditSoulTool::new(workspace_dir, instance_slug))),
-        wrap(Box::new(PlayMusicTool::new(workspace_dir, instance_slug, events.clone()))),
         wrap(Box::new(SetVoiceTool::new(workspace_dir, instance_slug))),
         wrap(Box::new(RunCommandTool::new(workspace_dir, instance_slug, chat_id, events.clone(), github_token))),
         wrap(Box::new(ClearContextTool::new(workspace_dir, instance_slug, chat_id, events.clone()))),
@@ -531,9 +525,6 @@ pub fn build_tools(
         let cfg = crate::config::load_config().ok();
         let auth_token = cfg.as_ref().map(|c| c.auth_token.as_str()).unwrap_or("");
         tools.push(wrap(Box::new(WatchVideoTool::new(
-            google_ai_key, workspace_dir, instance_slug, public_url, auth_token,
-        ))));
-        tools.push(wrap(Box::new(ListenMusicTool::new(
             google_ai_key, workspace_dir, instance_slug, public_url, auth_token,
         ))));
     }
