@@ -23,7 +23,7 @@ fn auth_html(token: &str) -> String {
 <html><head><meta charset="utf-8"><title>Authenticating...</title></head>
 <body>
 <script>
-localStorage.setItem("bolly_auth_token", {token});
+localStorage.setItem("nolune_auth_token", {token});
 window.location.replace("/");
 </script>
 <noscript>JavaScript is required.</noscript>

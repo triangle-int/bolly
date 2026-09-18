@@ -52,7 +52,7 @@
 			.replace(/-+/g, "-")
 			.replace(/^-|-$/g, "");
 		if (!slug) return;
-		localStorage.setItem("bolly:preferredName", name);
+		localStorage.setItem("nolune:preferredName", name);
 		goto(`/${slug}`);
 	}
 

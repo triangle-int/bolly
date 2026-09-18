@@ -6,7 +6,7 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 export PATH="$tmp:$PATH"
 export CALLS="$tmp/calls" COMMITS_FILE="$tmp/commits"
-export GH_REPO=triangle-int/bolly RELEASE_TAG=v1.2.3
+export GH_REPO=triangle-int/nolune RELEASE_TAG=v1.2.3
 printf 'abc123 Test change\n' > "$COMMITS_FILE"
 
 cat > "$tmp/gh" <<'MOCK'
@@ -28,10 +28,10 @@ case "$1 $2" in
       *) exit 99 ;;
     esac ;;
   'release create')
-    [[ "$*" == 'release create v1.2.3 --repo triangle-int/bolly --title Bolly v1.2.3 --notes - abc123 Test change --draft' ]]
+    [[ "$*" == 'release create v1.2.3 --repo triangle-int/nolune --title Nolune v1.2.3 --notes - abc123 Test change --draft' ]]
     [[ "$SCENARIO" == absent ]] ;;
   'api --method')
-    [[ "$*" == 'api --method PATCH repos/triangle-int/bolly/releases/123 -F draft=false -f make_latest=legacy' ]]
+    [[ "$*" == 'api --method PATCH repos/triangle-int/nolune/releases/123 -F draft=false -f make_latest=legacy' ]]
     [[ "$SCENARIO" != publish_error ]] ;;
   *) exit 99 ;;
 esac
@@ -76,8 +76,8 @@ fi
 
 run publish success success
 [[ $(cat "$CALLS") == "$(printf '%s\n' \
-  'release view v1.2.3 --repo triangle-int/bolly --json databaseId --jq .databaseId' \
-  'api --method PATCH repos/triangle-int/bolly/releases/123 -F draft=false -f make_latest=legacy')" ]]
+  'release view v1.2.3 --repo triangle-int/nolune --json databaseId --jq .databaseId' \
+  'api --method PATCH repos/triangle-int/nolune/releases/123 -F draft=false -f make_latest=legacy')" ]]
 run publish lookup_error failure
 [[ $(wc -l < "$CALLS") -eq 1 ]]
 run publish publish_error failure

@@ -109,7 +109,7 @@
 
 		const bridge = new AppBridge(
 			null,
-			{ name: "bolly", version: "1.0.0" },
+			{ name: "nolune", version: "1.0.0" },
 			{ openLinks: {} },
 			{
 				hostContext: {

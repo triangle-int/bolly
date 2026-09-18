@@ -63,7 +63,7 @@
     ></video>
     <div class="splash-brand">
       <img src="/icon.png" alt="" class="splash-logo" />
-      <span class="splash-name">bolly</span>
+      <span class="splash-name">nolune</span>
     </div>
   </div>
 {/if}
@@ -74,7 +74,7 @@
     <header class="header">
       <div class="brand">
         <img src="/icon.png" alt="" class="logo" />
-        <span class="brand-name">bolly</span>
+        <span class="brand-name">nolune</span>
       </div>
       {#if auth.connection || auth.error}
         <button class="sign-out-btn" onclick={forget} disabled={auth.loading}>Disconnect</button>
@@ -122,7 +122,7 @@
               <button class="sign-in-btn" onclick={edit} disabled={auth.loading}>Edit connection</button>
             </div>
           {:else}
-            <p class="sign-in-desc">Connect to your own Bolly server. Your connection is saved on this computer.</p>
+            <p class="sign-in-desc">Connect to your own Nolune server. Your connection is saved on this computer.</p>
             <form class="sh-form" onsubmit={(event) => { event.preventDefault(); save(); }}>
               <label for="server-url">Server URL</label>
               <input id="server-url" class="paste-input" bind:value={shUrl} placeholder="http://localhost:3000" disabled={auth.loading} required />

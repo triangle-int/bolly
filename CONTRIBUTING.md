@@ -1,4 +1,4 @@
-# Contributing to Bolly
+# Contributing to Nolune
 
 Thanks for your interest in contributing! Here's how to get started.
 
@@ -68,7 +68,7 @@ Single source of truth: `VERSION` file in repo root.
 
 ## Reporting Issues
 
-Use [GitHub Issues](https://github.com/triangle-int/bolly/issues). Include:
+Use [GitHub Issues](https://github.com/triangle-int/nolune/issues). Include:
 - Steps to reproduce
 - Expected vs actual behavior
 - Server logs if applicable

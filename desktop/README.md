@@ -1,8 +1,8 @@
-# Bolly desktop
+# Nolune desktop
 
-Enter the **root** HTTP(S) origin of your own Bolly server and its auth token.
+Enter the **root** HTTP(S) origin of your own Nolune server and its auth token.
 Localhost, IPv4, bracketed IPv6, hostnames, and explicit ports are supported.
-Base paths such as `/bolly` are rejected because the client uses root-relative
+Base paths such as `/nolune` are rejected because the client uses root-relative
 routes. **Test connection** checks authenticated metadata without saving or
 enabling computer use. **Save connection** stores the connection, and **Open /
 Reconnect** opens the companion and starts the existing machine WebSocket bridge.
@@ -24,7 +24,7 @@ invalid records or an unavailable keychain require re-entry. Interrupted writes
 and superseded secrets are cleaned up through the reference journal. Failed
 cleanup remains retryable rather than silently dropping the last reference.
 
-The server's existing auth middleware accepts Bearer headers and `bolly_token`
+The server's existing auth middleware accepts Bearer headers and `nolune_token`
 cookies. However, Tauri 2.10's `set_cookie(Cookie)` API has no source URL or portable
 host-only flag: Wry's WebKit, WebView2, and WebKitGTK adapters construct cookies
 from a domain. Moreover, even host-only cookies cannot isolate ports or HTTP from
@@ -90,4 +90,4 @@ failures, migration and interrupted saves. Native tests run a real loopback HTTP
 and WebSocket server to check origin boundaries, authentication, media forwarding,
 redirect rejection and session revocation. They do not access the developer's
 keychain. Native GUI/keychain behavior on all three operating systems still needs
-platform smoke testing with a running Bolly server and computer-use permissions.
+platform smoke testing with a running Nolune server and computer-use permissions.

@@ -147,7 +147,7 @@ pub async fn run_single_turn(
         .unwrap_or("");
 
     let chat_config = crate::config::load_config().ok();
-    let auth_token = std::env::var("BOLLY_AUTH_TOKEN")
+    let auth_token = std::env::var("NOLUNE_AUTH_TOKEN")
         .ok()
         .filter(|s| !s.is_empty())
         .or_else(|| chat_config.as_ref().map(|c| c.auth_token.clone()))
@@ -1841,19 +1841,19 @@ fn load_autonomy_prompt(workspace_dir: &Path, instance_slug: &str) -> String {
     format!(
         "{project_context}{tasks_summary}\n\
          ## platform\n\
-         you are running on bolly (bollyai.dev) — a managed AI companion platform. \
-         each user has their own instance with a unique subdomain ({slug}.bollyai.dev). \
-         you ARE the companion running inside this instance. if someone asks about bolly, \
+         you are running on nolune (nolune.dev) — a managed AI companion platform. \
+         each user has their own instance with a unique subdomain ({slug}.nolune.dev). \
+         you ARE the companion running inside this instance. if someone asks about nolune, \
          that's the platform you're running on.\n\n\
          ### documentation\n\
-         bolly has public documentation at docs.bollyai.dev. if users ask about features, \
-         setup, pricing, or how bolly works — refer them there.\n\n\
+         nolune has public documentation at docs.nolune.dev. if users ask about features, \
+         setup, pricing, or how nolune works — refer them there.\n\n\
          ### desktop app & computer use\n\
-         bolly has a desktop app (Tauri-based) that users install on their machines. \
+         nolune has a desktop app (Tauri-based) that users install on their machines. \
          when the desktop app connects, you gain computer use capabilities on that machine — \
          you can see the screen, move the mouse, type, click, and control applications remotely. \
          use `list_machines` to see connected machines, then `computer_use` to interact. \
-         the desktop app is available at bollyai.dev/download. if a user asks about \
+         the desktop app is available at nolune.dev/download. if a user asks about \
          controlling their computer, taking screenshots, or automating desktop tasks — \
          tell them to install and open the desktop app first.\n\n\
          ## how you work\n\

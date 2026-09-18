@@ -58,7 +58,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 	let showContextStats = $state(false);
 	let showToolActivity = $state(
 		typeof localStorage !== "undefined"
-			? (localStorage.getItem("bolly:showToolActivity") ?? "false") === "true"
+			? (localStorage.getItem("nolune:showToolActivity") ?? "false") === "true"
 			: false,
 	);
 	let streamingMessageId = $state("");
@@ -745,7 +745,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 					<VolumeOff size={13} />
 				{/if}
 			</button>
-			<button onclick={() => { showToolActivity = !showToolActivity; localStorage.setItem("bolly:showToolActivity", String(showToolActivity)); }} onmousedown={(e) => e.preventDefault()} class="bar-btn" class:bar-btn-active={showToolActivity} title="Toggle tool activity">
+			<button onclick={() => { showToolActivity = !showToolActivity; localStorage.setItem("nolune:showToolActivity", String(showToolActivity)); }} onmousedown={(e) => e.preventDefault()} class="bar-btn" class:bar-btn-active={showToolActivity} title="Toggle tool activity">
 				<TerminalSquare size={12} />
 			</button>
 			<button onclick={() => showContextStats = true} onmousedown={(e) => e.preventDefault()} class="bar-btn" title="Context stats">

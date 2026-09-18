@@ -7,7 +7,7 @@ use crate::services::tool::{Tool, ToolDefinition};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{openai_schema, ToolExecError};
+use super::{ToolExecError, openai_schema};
 use crate::domain::mood::MoodState;
 
 // ---------------------------------------------------------------------------

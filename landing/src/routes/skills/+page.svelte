@@ -54,10 +54,10 @@
 </script>
 
 <svelte:head>
-	<title>Skills Library — Bolly</title>
+	<title>Skills Library — Nolune</title>
 	<meta
 		name="description"
-		content="Browse community skills for Bolly. Teach your companion new abilities — from code review to creative writing."
+		content="Browse community skills for Nolune. Teach your companion new abilities — from code review to creative writing."
 	/>
 </svelte:head>
 
@@ -167,7 +167,7 @@
 							{#if selectedSkill?.id === skill.id}
 								<div class="skill-details">
 									<p class="skill-install-hint">
-										Install from the <strong>Skills</strong> tab in your Bolly instance, or browse the source:
+										Install from the <strong>Skills</strong> tab in your Nolune instance, or browse the source:
 									</p>
 									<a
 										href="https://github.com/{skill.repo}{skill.path ? `/tree/${skill.git_ref}/${skill.path}` : ''}"

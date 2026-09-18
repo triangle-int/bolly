@@ -50,7 +50,7 @@ async fn navigate(app: tauri::AppHandle, url: String, auth_token: String) -> Res
                 .map_err(|_| "Invalid companion origin")?,
         ),
     )
-    .title("Bolly")
+    .title("Nolune")
     .inner_size(1024.0, 700.0)
     .min_inner_size(480.0, 400.0)
     .incognito(true)
@@ -101,7 +101,7 @@ fn close_companion(app: &tauri::AppHandle) -> Result<(), String> {
 }
 
 /// Clear the old persistent webview profile, including remote-origin localStorage,
-/// all host/domain/path variants of bolly_token, caches and service workers.
+/// all host/domain/path variants of nolune_token, caches and service workers.
 /// Plugin settings are outside the webview profile and are migrated separately.
 #[tauri::command]
 async fn clear_legacy_browser_auth(app: tauri::AppHandle) -> Result<(), String> {
@@ -168,7 +168,7 @@ async fn validate_connection(url: &str, token: &str) -> Result<(), String> {
         .json()
         .await
         .map_err(|_| "Invalid server metadata")?;
-    if meta["app"] != "bolly" {
+    if meta["app"] != "nolune" {
         return Err("Invalid server metadata".into());
     }
     Ok(())
@@ -301,7 +301,7 @@ mod tests {
             Router,
         };
         for (status, body) in [
-            (200, r#"{"app":"bolly"}"#),
+            (200, r#"{"app":"nolune"}"#),
             (200, r#"{"app":"other"}"#),
             (401, "TOP_SECRET"),
             (302, "TOP_SECRET"),
@@ -322,7 +322,7 @@ mod tests {
             );
             let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
             let result = test_connection(origin, "TOP_SECRET".into()).await;
-            assert_eq!(result.is_ok(), status == 200 && body.contains("bolly"));
+            assert_eq!(result.is_ok(), status == 200 && body.contains("nolune"));
             assert!(!format!("{result:?}").contains("TOP_SECRET"));
             server.abort();
         }
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn server_urls_reject_paths_and_preserve_ports() {
-        assert!(connection_url("https://example.org:8443/bolly").is_err());
+        assert!(connection_url("https://example.org:8443/nolune").is_err());
         let url = connection_url("https://example.org:8443/").unwrap();
         assert_eq!(url.path(), "/");
         assert_eq!(
@@ -423,7 +423,7 @@ fn open_settings_window(app: &tauri::AppHandle) -> Result<(), String> {
         "settings",
         tauri::WebviewUrl::External(url.parse().map_err(|e: url::ParseError| e.to_string())?),
     )
-    .title("Bolly Settings")
+    .title("Nolune Settings")
     .inner_size(420.0, 480.0)
     .resizable(false)
     .center()
@@ -495,10 +495,10 @@ pub fn run() {
                 ))?;
             }
             let about = AboutMetadataBuilder::new()
-                .name(Some("Bolly"))
+                .name(Some("Nolune"))
                 .version(Some(env!("CARGO_PKG_VERSION")))
-                .website(Some("https://github.com/triangle-int/bolly"))
-                .website_label(Some("Bolly on GitHub"))
+                .website(Some("https://github.com/triangle-int/nolune"))
+                .website_label(Some("Nolune on GitHub"))
                 .comments(Some("Your AI companion"))
                 .build();
 
@@ -506,7 +506,7 @@ pub fn run() {
                 .accelerator("CmdOrCtrl+,")
                 .build(app)?;
 
-            let app_menu = SubmenuBuilder::new(app, "Bolly")
+            let app_menu = SubmenuBuilder::new(app, "Nolune")
                 .about(Some(about))
                 .separator()
                 .items(&[&settings])
@@ -551,7 +551,7 @@ pub fn run() {
             // Create main window programmatically so we can attach on_navigation
             let nav_handle = app.handle().clone();
             WebviewWindowBuilder::new(app, "main", tauri::WebviewUrl::App("index.html".into()))
-                .title("Bolly")
+                .title("Nolune")
                 .inner_size(1024.0, 700.0)
                 .min_inner_size(480.0, 400.0)
                 .center()

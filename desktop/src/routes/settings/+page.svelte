@@ -66,7 +66,7 @@
     <section class="section">
       <h2 class="section-title">Permissions</h2>
       <p class="section-desc">
-        Bolly needs these macOS permissions to control your computer when you ask it to.
+        Nolune needs these macOS permissions to control your computer when you ask it to.
       </p>
 
       {#if permissions}
@@ -127,7 +127,7 @@
     <section class="section">
       <h2 class="section-title">Features</h2>
       <p class="section-desc">
-        Control what Bolly can do on this computer.
+        Control what Nolune can do on this computer.
       </p>
 
       <div class="perm-list">

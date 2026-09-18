@@ -45,7 +45,8 @@ impl Tool for ListMachinesTool {
         let machines = self.registry.list().await;
         if machines.is_empty() {
             return Ok(
-                "No machines connected. The user needs to open the Bolly desktop app first.".into(),
+                "No machines connected. The user needs to open the Nolune desktop app first."
+                    .into(),
             );
         }
         let info: Vec<serde_json::Value> = machines

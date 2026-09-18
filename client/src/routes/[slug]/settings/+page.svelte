@@ -729,7 +729,7 @@
 					{/if}
 				</div>
 				{#if serverNeedsRestart}
-					<p class="setting-hint setting-warning">restart bolly to apply port change</p>
+					<p class="setting-hint setting-warning">restart nolune to apply port change</p>
 				{/if}
 			</div>
 

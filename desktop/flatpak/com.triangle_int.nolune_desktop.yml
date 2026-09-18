@@ -1,0 +1,50 @@
+id: com.triangle_int.nolune_desktop
+
+runtime: org.gnome.Platform
+runtime-version: '46'
+sdk: org.gnome.Sdk
+
+command: nolune-desktop
+finish-args:
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  - --share=ipc
+  - --share=network
+  - --talk-name=org.kde.StatusNotifierWatcher
+  - --filesystem=xdg-run/tray-icon:create
+  # OS credential store
+  - --talk-name=org.freedesktop.secrets
+  # Accessibility (for computer use)
+  - --talk-name=org.a11y.Bus
+  # Single instance window focus
+  - --talk-name=org.com_triangle_int_nolune_desktop.SingleInstance
+  - --own-name=org.com_triangle_int_nolune_desktop.SingleInstance
+
+modules:
+  - name: binary
+    buildsystem: simple
+
+    sources:
+      - type: file
+        path: flatpak.metainfo.xml
+      # Update URL and sha256 for each release
+      - type: file
+        url: https://github.com/triangle-int/nolune/releases/download/desktop-v0.1.0/nolune-desktop_0.1.0_amd64.deb
+        sha256: PLACEHOLDER_SHA256
+        only-arches: [x86_64]
+
+    build-commands:
+      - set -e
+      - mkdir deb-extract
+      - ar -x *.deb --output deb-extract
+      - tar -C deb-extract -xf deb-extract/data.tar.gz
+      - install -Dm755 deb-extract/usr/bin/nolune-desktop /app/bin/nolune-desktop
+      - mkdir -p /app/lib/nolune-desktop
+      - cp -r deb-extract/usr/lib/nolune-desktop/. /app/lib/nolune-desktop
+      - find /app/lib/nolune-desktop -type f -exec chmod 644 {} \;
+      - sed -i 's/^Icon=.*/Icon=com.triangle_int.nolune_desktop/' deb-extract/usr/share/applications/nolune-desktop.desktop
+      - install -Dm644 deb-extract/usr/share/applications/nolune-desktop.desktop /app/share/applications/com.triangle_int.nolune_desktop.desktop
+      - install -Dm644 deb-extract/usr/share/icons/hicolor/128x128/apps/nolune-desktop.png /app/share/icons/hicolor/128x128/apps/com.triangle_int.nolune_desktop.png
+      - install -Dm644 deb-extract/usr/share/icons/hicolor/32x32/apps/nolune-desktop.png /app/share/icons/hicolor/32x32/apps/com.triangle_int.nolune_desktop.png
+      - install -Dm644 flatpak.metainfo.xml /app/share/metainfo/com.triangle_int.nolune_desktop.metainfo.xml

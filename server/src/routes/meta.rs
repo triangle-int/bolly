@@ -16,7 +16,7 @@ async fn server_meta(State(state): State<AppState>) -> Json<ServerMetaResponse> 
     let cfg = state.config.read().await;
 
     Json(ServerMetaResponse {
-        app: "bolly",
+        app: "nolune",
         version: env!("CARGO_PKG_VERSION"),
         commit: option_env!("GIT_HASH").unwrap_or("dev"),
         port: cfg.port,

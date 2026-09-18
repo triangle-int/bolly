@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="landing/static/assets/plan-companion.png" alt="Bolly" width="200" />
+  <img src="landing/static/assets/plan-companion.png" alt="Nolune" width="200" />
 </p>
 
-<h1 align="center">Bolly</h1>
+<h1 align="center">Nolune</h1>
 
 <p align="center">
   <strong>Your AI, with a computer of its own.</strong><br>
@@ -10,8 +10,8 @@
 </p>
 
 <p align="center">
-  <a href="https://bollyai.dev">Website</a> &nbsp;&bull;&nbsp;
-  <a href="https://github.com/triangle-int/bolly/releases">Download</a>
+  <a href="https://nolune.dev">Website</a> &nbsp;&bull;&nbsp;
+  <a href="https://github.com/triangle-int/nolune/releases">Download</a>
 </p>
 
 <p align="center">
@@ -23,61 +23,61 @@
 
 <br>
 
-Bolly is an open-source, self-hosted AI companion with a persistent identity, long-term memory, and the ability to use real computers.
+Nolune is an open-source, self-hosted AI companion with a persistent identity, long-term memory, and the ability to use real computers.
 
-Run Bolly's always-on brain on a Mac mini, home server, or spare computer. Then connect the desktop app on your other machines so Bolly can work with their screens, apps, files, and terminals from one interface.
+Run Nolune's always-on brain on a Mac mini, home server, or spare computer. Then connect the desktop app on your other machines so Nolune can work with their screens, apps, files, and terminals from one interface.
 
-Unlike a faceless agent dashboard, Bolly has a voice, personality, mood, and animated presence you can make your own. Your companion and its memories stay on hardware you control.
+Unlike a faceless agent dashboard, Nolune has a voice, personality, mood, and animated presence you can make your own. Your companion and its memories stay on hardware you control.
 
 <br>
 
 ## How it works
 
-### 1. Give Bolly a home
+### 1. Give Nolune a home
 
-Install the Bolly server on an always-on macOS or Linux machine. It keeps your companion running, stores its memory, and coordinates its work.
+Install the Nolune server on an always-on macOS or Linux machine. It keeps your companion running, stores its memory, and coordinates its work.
 
 ```bash
-curl -fsSL https://bollyai.dev/install.sh | bash
+curl -fsSL https://nolune.dev/install.sh | bash
 ```
 
 Open `http://localhost:26559` and follow the onboarding.
 
 ### 2. Connect your computers
 
-Install the desktop app on the computers where you want Bolly to act. Each connected machine becomes another place where your companion can see the screen, use apps, work with files, and run commands.
+Install the desktop app on the computers where you want Nolune to act. Each connected machine becomes another place where your companion can see the screen, use apps, work with files, and run commands.
 
-For example, Bolly can live on a Mac mini at home while you talk to it through the desktop app on your MacBook.
+For example, Nolune can live on a Mac mini at home while you talk to it through the desktop app on your MacBook.
 
 ### 3. Ask it to do the work
 
-Talk to Bolly normally. It can research something on the web, organize files, work inside an app, run a command on a connected machine, or continue a task while you are away.
+Talk to Nolune normally. It can research something on the web, organize files, work inside an app, run a command on a connected machine, or continue a task while you are away.
 
 Computer-use actions appear through a visible desktop overlay. You choose which machines to connect and grant the operating-system permissions they need.
 
 <br>
 
-## Why Bolly
+## Why Nolune
 
 ### A companion, not a control panel
 
-Bolly is designed around one persistent character rather than a collection of disposable chats. Its personality lives in `soul.md`, its mood changes over time, and its animated skin gives it a recognizable presence.
+Nolune is designed around one persistent character rather than a collection of disposable chats. Its personality lives in `soul.md`, its mood changes over time, and its animated skin gives it a recognizable presence.
 
 ### One mind across multiple computers
 
-The server holds Bolly's identity and memory. Connected desktop apps give it eyes and hands on other machines. You can keep the server somewhere reliable and interact with the same companion from wherever you work.
+The server holds Nolune's identity and memory. Connected desktop apps give it eyes and hands on other machines. You can keep the server somewhere reliable and interact with the same companion from wherever you work.
 
 ### Memory you can inspect
 
-Bolly stores memories as ordinary files organized by topic. You can read them, edit them, back them up, or remove them. Keyword and semantic retrieval bring relevant memories back into later conversations.
+Nolune stores memories as ordinary files organized by topic. You can read them, edit them, back them up, or remove them. Keyword and semantic retrieval bring relevant memories back into later conversations.
 
 ### Proactive when you want it to be
 
-Heartbeats and schedules let Bolly check in, follow recurring routines, and start useful work without waiting for a new message every time.
+Heartbeats and schedules let Nolune check in, follow recurring routines, and start useful work without waiting for a new message every time.
 
 ### Yours from end to end
 
-Bolly is self-hosted and BYOK. There is no required Bolly cloud account, and Bolly does not impose its own usage limits. Your model provider's pricing and limits still apply.
+Nolune is self-hosted and BYOK. There is no required Nolune cloud account, and Nolune does not impose its own usage limits. Your model provider's pricing and limits still apply.
 
 <br>
 
@@ -86,9 +86,9 @@ Bolly is self-hosted and BYOK. There is no required Bolly cloud account, and Bol
 <table>
 <tr>
 <td align="center" width="50%">
-<img src="landing/static/assets/plan-companion.png" alt="Bolly skin" width="280" />
+<img src="landing/static/assets/plan-companion.png" alt="Nolune skin" width="280" />
 <br><br>
-<strong>Bolly</strong> — a warm, golden presence
+<strong>Nolune</strong> — a warm, golden presence
 </td>
 <td align="center" width="50%">
 <img src="client/static/skins/mint/character.png" alt="Minty skin" width="280" />
@@ -109,7 +109,7 @@ Skins change how your companion looks and feels without replacing its memory or 
 - **Persistent memory** — Remember people, preferences, projects, and shared moments across conversations.
 - **Voice** — Speak through optional text-to-speech and voice mode.
 - **Web and communication** — Search the web, work with email, and use installed integrations.
-- **Skills and MCP** — Add new workflows and connect external tools without changing Bolly's core.
+- **Skills and MCP** — Add new workflows and connect external tools without changing Nolune's core.
 - **Schedules and heartbeats** — Run recurring routines and initiate conversations proactively.
 
 <br>
@@ -118,19 +118,19 @@ Skins change how your companion looks and feels without replacing its memory or 
 
 ### Server
 
-The one-line installer sets up the native Bolly server and service on macOS or Linux:
+The one-line installer sets up the native Nolune server and service on macOS or Linux:
 
 ```bash
-curl -fsSL https://bollyai.dev/install.sh | bash
+curl -fsSL https://nolune.dev/install.sh | bash
 ```
 
 When installation finishes, open `http://localhost:26559` and complete onboarding.
 
 ### Desktop app
 
-Download the desktop app from [GitHub Releases](https://github.com/triangle-int/bolly/releases). Builds are available for macOS, Windows, and Linux.
+Download the desktop app from [GitHub Releases](https://github.com/triangle-int/nolune/releases). Builds are available for macOS, Windows, and Linux.
 
-Connect it to your self-hosted Bolly server to use the companion interface and enable computer use on that machine.
+Connect it to your self-hosted Nolune server to use the companion interface and enable computer use on that machine.
 
 The release workflow runs on `v*` tags; manual runs must select a `v*` tag. It publishes server binaries and macOS, Windows, and Linux desktop artifacts. Nothing in this workflow provisions or updates running servers.
 
@@ -157,10 +157,10 @@ landing/    SvelteKit — public website and documentation
 
 ### Data layout
 
-Everything important is stored as files under `~/.bolly`:
+Everything important is stored as files under `~/.nolune`:
 
 ```text
-~/.bolly/
+~/.nolune/
 ├── config.toml
 └── instances/
     └── {slug}/
@@ -178,13 +178,13 @@ Everything important is stored as files under `~/.bolly`:
 
 ## Configuration
 
-Most settings are available through the interface. Advanced configuration lives at `~/.bolly/config.toml`.
+Most settings are available through the interface. Advanced configuration lives at `~/.nolune/config.toml`.
 
 | Environment variable | Description |
 |----------------------|-------------|
-| `BOLLY_HOME` | Data directory, defaults to `~/.bolly` |
-| `BOLLY_AUTH_TOKEN` | Authentication token override |
-| `BOLLY_PUBLIC_URL` | Public URL for the server |
+| `NOLUNE_HOME` | Data directory, defaults to `~/.nolune` |
+| `NOLUNE_AUTH_TOKEN` | Authentication token override |
+| `NOLUNE_PUBLIC_URL` | Public URL for the server |
 | `ANTHROPIC_API_KEY` | Anthropic API key override |
 | `OPENAI_API_KEY` | OpenAI API key override |
 | `RUST_LOG` | Logging level, defaults to `info` |
@@ -193,27 +193,29 @@ Most settings are available through the interface. Advanced configuration lives 
 
 ## Updates
 
-For one-line installations, Bolly checks for updates automatically. Apply an update through Settings or run:
+For one-line installations, Nolune checks for updates automatically. Apply an update through Settings or run:
 
 ```bash
-~/.bolly/bin/update
+~/.nolune/bin/update
 ```
 
 ### Uninstall
 
 ```bash
-curl -fsSL https://bollyai.dev/uninstall.sh | bash
+curl -fsSL https://nolune.dev/uninstall.sh | bash
 ```
 
 Keep your data while removing the server:
 
 ```bash
-KEEP_DATA=1 curl -fsSL https://bollyai.dev/uninstall.sh | bash
+KEEP_DATA=1 curl -fsSL https://nolune.dev/uninstall.sh | bash
 ```
 
 <br>
 
 ## Development
+
+See the [Nolune launch cutover checklist](docs/nolune-cutover.md) for repository, domain, and release setup.
 
 ```bash
 # Server
@@ -244,7 +246,7 @@ MIT — see [LICENSE](LICENSE).
 <br>
 
 <p align="center">
-  <img src="client/src/lib/assets/favicon.svg" alt="Bolly" width="32" />
+  <img src="client/src/lib/assets/favicon.svg" alt="Nolune" width="32" />
   <br><br>
   <sub>Built by <a href="https://triangleint.com">Triangle Interactive LLC</a></sub>
 </p>
