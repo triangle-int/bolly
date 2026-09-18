@@ -118,6 +118,17 @@ assert_contains() {
   fi
 }
 
+wait_for_call() {
+  local file=$1 expected=$2
+  for _ in $(seq 1 100); do
+    grep -Fq -- "$expected" "$file" && return 0
+    /bin/sleep 0.02
+  done
+  printf 'FAIL: timed out waiting for call: %s\n--- calls ---\n' "$expected" >&2
+  cat "$file" >&2
+  exit 1
+}
+
 assert_absent() {
   local file=$1 unexpected=$2
   if grep -Fq -- "$unexpected" "$file"; then
@@ -225,8 +236,7 @@ assert_contains "$tmp/linux/calls" 'systemctl --user enable bolly'
 # Linux without systemd uses the explicit direct-process fallback.
 run_installer linux-fallback Linux x86_64 1 '' 501 0
 assert_status linux-fallback 0
-/bin/sleep 0.1
-assert_contains "$tmp/linux-fallback/calls" 'direct binary start'
+wait_for_call "$tmp/linux-fallback/calls" 'direct binary start'
 
 # A process that ignores SIGTERM blocks service startup and fails closed.
 run_installer stubborn Darwin arm64 1 stubborn
