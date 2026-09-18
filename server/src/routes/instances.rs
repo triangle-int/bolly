@@ -631,21 +631,10 @@ async fn search_memory(
     Path(instance_slug): Path<String>,
     axum::extract::Query(params): axum::extract::Query<SearchQuery>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let google_ai_key = state.config.read().await.llm.tokens.google_ai.clone();
-
-    let query_vec = crate::services::embedding::embed_text(
-        &google_ai_key,
-        &params.q,
-        crate::services::embedding::TaskType::RetrievalQuery,
-    )
-    .await
-    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
     let results = state
         .vector_store
-        .search(&instance_slug, query_vec, params.limit)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .search_text(&instance_slug, &params.q, params.limit)
+        .await;
 
     let memory_dir = state
         .workspace_dir
@@ -749,8 +738,6 @@ async fn reindex_memory(
     State(state): State<AppState>,
     Path(instance_slug): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    let google_ai_key = state.config.read().await.llm.tokens.google_ai.clone();
-
     // Reset collection
     state
         .vector_store
@@ -766,7 +753,7 @@ async fn reindex_memory(
     let ws = state.workspace_dir.clone();
     let slug = instance_slug.clone();
     tokio::spawn(async move {
-        match vs.backfill_text_memories(&ws, &slug, &google_ai_key).await {
+        match vs.backfill_text_memories(&ws, &slug).await {
             Ok(count) => log::info!("[reindex] {slug}: indexed {count} chunks"),
             Err(e) => log::warn!("[reindex] {slug}: failed: {e}"),
         }

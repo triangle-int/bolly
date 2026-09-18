@@ -53,7 +53,7 @@ pub mod system;
 pub use calendar::{CreateEventTool, ListEventsTool};
 pub use communication::{ReachOutTool, ReadEmailTool, ScheduledTask, SendEmailTool};
 pub use companion::{
-    get_voice_override, load_mood_state, save_mood_state, EditSoulTool, SetVoiceTool, ALLOWED_MOODS,
+    ALLOWED_MOODS, EditSoulTool, SetVoiceTool, get_voice_override, load_mood_state, save_mood_state,
 };
 pub use computer::{ComputerUseTool, ListMachinesTool, RemoteBashTool, RemoteFilesTool};
 pub use drive::{ListDriveFilesTool, ReadDriveFileTool, UploadDriveFileTool};
@@ -500,7 +500,6 @@ pub fn build_tools(
             workspace_dir,
             instance_slug,
             vector_store.clone(),
-            google_ai_key,
         ))),
         wrap(Box::new(MemoryReadTool::new(
             workspace_dir,
@@ -512,13 +511,11 @@ pub fn build_tools(
             workspace_dir,
             instance_slug,
             vector_store.clone(),
-            google_ai_key,
         ))),
         wrap(Box::new(MemorySearchTool::new(
             workspace_dir,
             instance_slug,
             vector_store.clone(),
-            google_ai_key,
             public_url,
         ))),
         wrap(Box::new(MemoryConnectTool::new(
@@ -640,7 +637,6 @@ pub fn build_tools(
             &api_key,
             events.clone(),
             vector_store.clone(),
-            google_ai_key,
         ))));
     }
 

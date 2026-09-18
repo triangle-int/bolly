@@ -674,7 +674,6 @@ pub async fn extract_and_store(
     recent_messages: &[ChatMessage],
     llm: &LlmBackend,
     vector_store: &super::vector::VectorStore,
-    google_ai_key: &str,
 ) -> anyhow::Result<()> {
     let dir = memory_dir(workspace_dir, instance_slug);
     std::fs::create_dir_all(&dir)?;
@@ -873,14 +872,7 @@ only connect memories that are meaningfully related. don't over-connect."#
                 let stamped = stamp_content(&op.content, existing.as_deref());
                 std::fs::write(&full_path, &stamped)?;
                 log::info!("memory: wrote {clean_path} for {instance_slug}");
-                embed_memory_file(
-                    vector_store,
-                    google_ai_key,
-                    instance_slug,
-                    &clean_path,
-                    &stamped,
-                )
-                .await;
+                embed_memory_file(vector_store, instance_slug, &clean_path, &stamped).await;
             }
             "append" => {
                 if op.content.trim().is_empty() {
@@ -900,14 +892,7 @@ only connect memories that are meaningfully related. don't over-connect."#
                 let stamped = stamp_content(&new_body, Some(&existing));
                 std::fs::write(&full_path, &stamped)?;
                 log::info!("memory: appended to {clean_path} for {instance_slug}");
-                embed_memory_file(
-                    vector_store,
-                    google_ai_key,
-                    instance_slug,
-                    &clean_path,
-                    &stamped,
-                )
-                .await;
+                embed_memory_file(vector_store, instance_slug, &clean_path, &stamped).await;
             }
             "delete" => {
                 if full_path.exists() {
@@ -958,7 +943,6 @@ only connect memories that are meaningfully related. don't over-connect."#
                     Some(s) => s,
                     None => continue,
                 };
-                let mime_type = meta["mime_type"].as_str().unwrap_or("image/jpeg");
 
                 let src = uploads_dir.join(stored_name);
                 if let Some(parent) = full_path.parent() {
@@ -970,39 +954,9 @@ only connect memories that are meaningfully related. don't over-connect."#
                 }
                 log::info!("memory: saved image {clean_path} for {instance_slug}");
 
-                // Embed the image
-                let desc = if op.description.is_empty() {
-                    &clean_path
-                } else {
-                    &op.description
-                };
-                if let Ok(bytes) = std::fs::read(&full_path) {
-                    if bytes.len() < 20 * 1024 * 1024 {
-                        if let Ok(vec) = super::embedding::embed_text_and_image(
-                            google_ai_key,
-                            desc,
-                            &bytes,
-                            mime_type,
-                        )
-                        .await
-                        {
-                            if let Err(e) = vector_store
-                                .upsert_media(
-                                    instance_slug,
-                                    &clean_path,
-                                    "media_image",
-                                    mime_type,
-                                    &clean_path,
-                                    desc,
-                                    vec,
-                                )
-                                .await
-                            {
-                                log::warn!("memory: image vector upsert failed: {e}");
-                            }
-                        }
-                    }
-                }
+                log::info!(
+                    "memory: raw image saved; semantic indexing skipped until descriptions/transcripts are supported"
+                );
             }
             _ => {
                 log::warn!("memory: unknown action '{}' for {instance_slug}", op.action);
@@ -1016,33 +970,12 @@ only connect memories that are meaningfully related. don't over-connect."#
 /// Embed a memory file into the vector store (background-safe, logs errors).
 pub async fn embed_memory_file(
     vector_store: &super::vector::VectorStore,
-    google_ai_key: &str,
     instance_slug: &str,
     path: &str,
     content: &str,
 ) {
-    use super::{embedding, vector};
-
-    let chunks = vector::chunk_text(content);
-    let mut chunk_vectors = Vec::new();
-
-    for chunk in &chunks {
-        match embedding::embed_text(google_ai_key, chunk, embedding::TaskType::RetrievalDocument)
-            .await
-        {
-            Ok(vec) => chunk_vectors.push((chunk.clone(), vec)),
-            Err(e) => {
-                log::warn!("[memory] embed error for {path}: {e}");
-                return;
-            }
-        }
-    }
-
-    if let Err(e) = vector_store
-        .upsert_text_memory(instance_slug, path, chunk_vectors)
-        .await
-    {
-        log::warn!("[memory] vector upsert failed for {path}: {e}");
+    if let Err(error) = vector_store.index_text(instance_slug, path, content).await {
+        log::warn!("[memory] semantic indexing unavailable; memory saved: {error}");
     }
 }
 
@@ -1110,14 +1043,15 @@ fn sanitize_media_path(path: &str) -> String {
     }
 }
 
-/// Remove memory files matching a query. Returns the number removed.
-pub fn forget_memories(workspace_dir: &Path, instance_slug: &str, query: &str) -> usize {
+/// Remove memory files matching a query. Returns their relative paths so
+/// derived search indexes can delete exactly the same records.
+pub fn forget_memories(workspace_dir: &Path, instance_slug: &str, query: &str) -> Vec<String> {
     let dir = memory_dir(workspace_dir, instance_slug);
     let entries = scan_library(workspace_dir, instance_slug);
     let query_lower = query.to_lowercase();
     let query_words: Vec<&str> = query_lower.split_whitespace().collect();
 
-    let mut removed = 0;
+    let mut removed = Vec::new();
 
     for entry in entries {
         let full_path = dir.join(&entry.path);
@@ -1126,7 +1060,7 @@ pub fn forget_memories(workspace_dir: &Path, instance_slug: &str, query: &str) -
 
         if query_words.iter().any(|w| combined.contains(*w)) {
             if std::fs::remove_file(&full_path).is_ok() {
-                removed += 1;
+                removed.push(entry.path.clone());
                 if let Some(parent) = full_path.parent() {
                     let _ = cleanup_empty_dirs(parent, &dir);
                 }
@@ -1151,7 +1085,8 @@ struct MemoryOp {
     /// Upload ID for save_image action.
     #[serde(default)]
     upload_id: String,
-    /// Description for save_image action.
+    /// Reserved for media descriptions; raw-media semantic indexing is disabled.
+    #[allow(dead_code)]
     #[serde(default)]
     description: String,
     /// Source path for connect action.

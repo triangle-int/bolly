@@ -177,7 +177,26 @@ export function updateLlmConfig(req: {
 	});
 }
 
+export interface EmbeddingStatus {
+	version: number;
+	enabled: boolean;
+	provider: string;
+	model: string;
+	dimensions: number;
+	base_url: string | null;
+	authentication: "OpenAI bearer key" | "none";
+	configured: boolean;
+	status: "available" | "unavailable" | "unverified";
+	reason: string | null;
+	fallback: "bm25";
+	changes_require_restart: boolean;
+	update_semantics: "full_replacement";
+	needs_restart: boolean;
+	pending: Omit<EmbeddingStatus, "pending" | "needs_restart"> | null;
+}
+
 export function fetchConfigStatus(): Promise<{
+	embedding?: EmbeddingStatus;
 	llm_configured: boolean;
 	provider?: string;
 	setup_required?: string | null;

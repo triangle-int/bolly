@@ -15,7 +15,7 @@ tokio = { version = "1.0", features = ["full"] }
 env_logger = "0.10"
 log = "0.4"
 rmcp = { version = "1.2", features = ["client", "transport-streamable-http-client-reqwest", "transport-child-process"] }
-reqwest = { version = "0.13", features = ["json", "query", "multipart"] }
+reqwest = { version = "0.13", features = ["json", "query", "multipart", "stream"] }
 dirs = "6.0"
 toml = "1.0"
 uuid = { version = "1.0", features = ["v4", "v5"] }

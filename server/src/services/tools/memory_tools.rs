@@ -20,16 +20,10 @@ pub struct MemoryWriteTool {
     uploads_dir: PathBuf,
     instance_slug: String,
     vector_store: Arc<VectorStore>,
-    google_ai_key: String,
 }
 
 impl MemoryWriteTool {
-    pub fn new(
-        workspace_dir: &Path,
-        instance_slug: &str,
-        vector_store: Arc<VectorStore>,
-        google_ai_key: &str,
-    ) -> Self {
+    pub fn new(workspace_dir: &Path, instance_slug: &str, vector_store: Arc<VectorStore>) -> Self {
         Self {
             memory_dir: workspace_dir
                 .join("instances")
@@ -41,7 +35,6 @@ impl MemoryWriteTool {
                 .join("uploads"),
             instance_slug: instance_slug.to_string(),
             vector_store,
-            google_ai_key: google_ai_key.to_string(),
         }
     }
 }
@@ -116,7 +109,6 @@ impl Tool for MemoryWriteTool {
             let stored_name = meta["stored_name"]
                 .as_str()
                 .ok_or_else(|| ToolExecError("missing stored_name".into()))?;
-            let mime_type = meta["mime_type"].as_str().unwrap_or("image/jpeg");
 
             let src = self.uploads_dir.join(stored_name);
             let dst = self.memory_dir.join(&clean_path);
@@ -126,66 +118,9 @@ impl Tool for MemoryWriteTool {
             }
             fs::copy(&src, &dst).map_err(|e| ToolExecError(e.to_string()))?;
 
-            // Embed file into vector store
-            if let Ok(bytes) = fs::read(&dst) {
-                if bytes.len() < 20 * 1024 * 1024 {
-                    let is_image = mime_type.starts_with("image/");
-                    let source_type = if is_image {
-                        "media_image"
-                    } else if mime_type.starts_with("video/") {
-                        "media_video"
-                    } else if mime_type.starts_with("audio/") {
-                        "media_audio"
-                    } else {
-                        "media_document"
-                    };
-
-                    let desc = if args.content.is_empty() {
-                        clean_path.clone()
-                    } else {
-                        args.content.clone()
-                    };
-
-                    // Embed with text description so text queries can find images
-                    let embed_result = if is_image {
-                        crate::services::embedding::embed_text_and_image(
-                            &self.google_ai_key,
-                            &desc,
-                            &bytes,
-                            mime_type,
-                        )
-                        .await
-                    } else {
-                        crate::services::embedding::embed_media(
-                            &self.google_ai_key,
-                            &bytes,
-                            mime_type,
-                        )
-                        .await
-                    };
-
-                    match embed_result {
-                        Ok(vec) => {
-                            if let Err(e) = self
-                                .vector_store
-                                .upsert_media(
-                                    &self.instance_slug,
-                                    &clean_path,
-                                    source_type,
-                                    mime_type,
-                                    &clean_path,
-                                    &desc,
-                                    vec,
-                                )
-                                .await
-                            {
-                                log::warn!("[memory_write] vector upsert failed: {e}");
-                            }
-                        }
-                        Err(e) => log::warn!("[memory_write] embed failed: {e}"),
-                    }
-                }
-            }
+            log::info!(
+                "[memory_write] raw media saved; semantic indexing skipped until descriptions/transcripts are supported"
+            );
 
             // If content provided, save it as a description sidecar
             if !args.content.is_empty() {
@@ -194,7 +129,6 @@ impl Tool for MemoryWriteTool {
                 let _ = fs::write(&desc_full, &args.content);
                 embed_memory_to_vector(
                     &self.vector_store,
-                    &self.google_ai_key,
                     &self.instance_slug,
                     &desc_path,
                     &args.content,
@@ -240,7 +174,6 @@ impl Tool for MemoryWriteTool {
 
         embed_memory_to_vector(
             &self.vector_store,
-            &self.google_ai_key,
             &self.instance_slug,
             &clean_path,
             &final_content,
@@ -450,17 +383,10 @@ pub struct MemoryForgetTool {
     memory_dir: PathBuf,
     instance_slug: String,
     vector_store: Arc<VectorStore>,
-    #[allow(dead_code)]
-    google_ai_key: String,
 }
 
 impl MemoryForgetTool {
-    pub fn new(
-        workspace_dir: &Path,
-        instance_slug: &str,
-        vector_store: Arc<VectorStore>,
-        google_ai_key: &str,
-    ) -> Self {
+    pub fn new(workspace_dir: &Path, instance_slug: &str, vector_store: Arc<VectorStore>) -> Self {
         Self {
             memory_dir: workspace_dir
                 .join("instances")
@@ -468,7 +394,6 @@ impl MemoryForgetTool {
                 .join("memory"),
             instance_slug: instance_slug.to_string(),
             vector_store,
-            google_ai_key: google_ai_key.to_string(),
         }
     }
 }
@@ -536,13 +461,23 @@ impl Tool for MemoryForgetTool {
             .and_then(|s| s.to_str())
             .unwrap_or("");
 
-        let removed =
+        let removed_paths =
             crate::services::memory::forget_memories(workspace_dir, instance_slug, target);
-        if removed == 0 {
+        if removed_paths.is_empty() {
             Ok(format!("no memories matched \"{target}\""))
         } else {
+            for path in &removed_paths {
+                if let Err(error) = self
+                    .vector_store
+                    .delete_by_path(&self.instance_slug, path)
+                    .await
+                {
+                    log::warn!("[memory_forget] derived index delete failed for {path}: {error}");
+                }
+            }
             Ok(format!(
-                "deleted {removed} memory file(s) matching \"{target}\""
+                "deleted {} memory file(s) matching \"{target}\"",
+                removed_paths.len()
             ))
         }
     }
@@ -555,7 +490,6 @@ impl Tool for MemoryForgetTool {
 pub struct MemorySearchTool {
     instance_slug: String,
     vector_store: Arc<VectorStore>,
-    google_ai_key: String,
     public_url: String,
     auth_token: String,
 }
@@ -565,14 +499,12 @@ impl MemorySearchTool {
         _workspace_dir: &Path,
         instance_slug: &str,
         vector_store: Arc<VectorStore>,
-        google_ai_key: &str,
         public_url: &str,
     ) -> Self {
         let auth_token = std::env::var("BOLLY_AUTH_TOKEN").unwrap_or_default();
         Self {
             instance_slug: instance_slug.to_string(),
             vector_store,
-            google_ai_key: google_ai_key.to_string(),
             public_url: public_url.to_string(),
             auth_token,
         }
@@ -613,19 +545,10 @@ impl Tool for MemorySearchTool {
         }
         let limit = args.limit.unwrap_or(5).min(20);
 
-        let query_vec = crate::services::embedding::embed_text(
-            &self.google_ai_key,
-            query,
-            crate::services::embedding::TaskType::RetrievalQuery,
-        )
-        .await
-        .map_err(|e| ToolExecError(format!("embed query failed: {e}")))?;
-
         let results = self
             .vector_store
-            .search(&self.instance_slug, query_vec, limit)
-            .await
-            .map_err(|e| ToolExecError(format!("vector search failed: {e}")))?;
+            .search_text(&self.instance_slug, query, limit)
+            .await;
 
         if results.is_empty() {
             return Ok(format!("no memories matched \"{query}\""));
@@ -886,32 +809,112 @@ impl Tool for MemoryConnectTool {
 /// Embed a memory file into the vector store.
 async fn embed_memory_to_vector(
     vector_store: &VectorStore,
-    google_ai_key: &str,
     instance_slug: &str,
     path: &str,
     content: &str,
 ) {
-    use crate::services::{embedding, vector};
+    if let Err(error) = vector_store.index_text(instance_slug, path, content).await {
+        log::warn!("[memory_tool] semantic indexing unavailable; memory saved: {error}");
+    }
+}
 
-    let chunks = vector::chunk_text(content);
-    let mut chunk_vectors = Vec::new();
+#[cfg(test)]
+mod embedding_fallback_tests {
+    use super::*;
 
-    for chunk in &chunks {
-        match embedding::embed_text(google_ai_key, chunk, embedding::TaskType::RetrievalDocument)
+    #[tokio::test]
+    async fn missing_key_keeps_memory_write_and_search_tools_functional() {
+        let workspace = tempfile::tempdir().unwrap();
+        let store = Arc::new(VectorStore::connect(workspace.path()).await);
+        // The default embedding backend is absent; BM25 still sees live writes.
+        assert_eq!(store.embedding_status()["status"], "unavailable");
+        let writer = MemoryWriteTool::new(workspace.path(), "one", store.clone());
+        let saved = writer
+            .call(MemoryWriteArgs {
+                path: "preferences.md".into(),
+                content: "Favorite constellation is Orion".into(),
+                mode: "write".into(),
+                upload_id: None,
+            })
             .await
-        {
-            Ok(vec) => chunk_vectors.push((chunk.clone(), vec)),
-            Err(e) => {
-                log::warn!("[memory_tool] embed error for {path}: {e}");
-                return;
-            }
-        }
+            .unwrap();
+        assert!(saved.contains("wrote"));
+        assert!(
+            fs::read_to_string(workspace.path().join("instances/one/memory/preferences.md"))
+                .unwrap()
+                .contains("Orion")
+        );
+        let hits = store.search_text("one", "Orion", 5).await;
+        assert_eq!(hits[0].path, "preferences.md");
+        let search = MemorySearchTool::new(workspace.path(), "one", store, "");
+        assert!(
+            search
+                .call(MemorySearchArgs {
+                    query: "Orion".into(),
+                    limit: None
+                })
+                .await
+                .unwrap()
+                .contains("Orion")
+        );
     }
 
-    if let Err(e) = vector_store
-        .upsert_text_memory(instance_slug, path, chunk_vectors)
-        .await
-    {
-        log::warn!("[memory_tool] vector upsert failed for {path}: {e}");
+    #[tokio::test]
+    async fn query_forget_removes_files_vector_records_and_cached_bm25_hits() {
+        let workspace = tempfile::tempdir().unwrap();
+        let memory = workspace.path().join("instances/one/memory");
+        fs::create_dir_all(&memory).unwrap();
+        fs::write(memory.join("stars.md"), "Orion nebula").unwrap();
+        let store = Arc::new(VectorStore::connect(workspace.path()).await);
+        let mut vector = vec![0.; 768];
+        vector[0] = 1.;
+        store
+            .upsert_text_memory("one", "stars.md", vec![("Orion nebula".into(), vector)])
+            .await
+            .unwrap();
+        assert_eq!(store.search_text("one", "Orion", 5).await.len(), 1);
+
+        let forget = MemoryForgetTool::new(workspace.path(), "one", store.clone());
+        let result = forget
+            .call(MemoryForgetArgs {
+                target: "Orion".into(),
+            })
+            .await
+            .unwrap();
+        assert!(result.contains("deleted 1"));
+        assert!(!memory.join("stars.md").exists());
+        assert!(store.search_text("one", "Orion", 5).await.is_empty());
+        assert!(store.list_all("one", 10).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn provider_outage_keeps_live_writes_and_bm25_functional() {
+        use crate::services::embedding::tests::MockServer;
+        for status in [401, 503] {
+            let mock = MockServer::new(vec![
+                (status, serde_json::json!({"error":"mock-secret"}));
+                3
+            ])
+            .await;
+            let workspace = tempfile::tempdir().unwrap();
+            let store =
+                Arc::new(VectorStore::connect_with_config(workspace.path(), &mock.config).await);
+            let writer = MemoryWriteTool::new(workspace.path(), "one", store.clone());
+            writer
+                .call(MemoryWriteArgs {
+                    path: "star.md".into(),
+                    content: "Orion nebula".into(),
+                    mode: "write".into(),
+                    upload_id: None,
+                })
+                .await
+                .unwrap();
+            assert_eq!(store.embedding_status()["status"], "unavailable");
+            assert_eq!(
+                store.search_text("one", "Orion", 5).await[0].path,
+                "star.md"
+            );
+            assert!(store.list_all("one", 10).await.unwrap().is_empty());
+        }
     }
 }

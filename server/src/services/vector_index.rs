@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-const FORMAT_VERSION: u32 = 1;
+const FORMAT_VERSION: u32 = 2;
 const MAGIC: &[u8; 8] = b"BOLLYVIX";
 const HEADER_BYTES: usize = MAGIC.len() + 8 + 32;
 const MAX_INDEX_FILE_BYTES: usize = 128 * 1024 * 1024;
@@ -41,6 +41,8 @@ struct Index {
     #[serde(deserialize_with = "deserialize_bounded_metadata")]
     model: String,
     dimensions: u32,
+    #[serde(deserialize_with = "deserialize_bounded_metadata")]
+    endpoint_fingerprint: String,
     #[serde(deserialize_with = "deserialize_bounded_records")]
     records: Vec<Record>,
     backfilled: bool,
@@ -53,6 +55,7 @@ impl Index {
             provider: provider.into(),
             model: model.into(),
             dimensions,
+            endpoint_fingerprint: String::new(),
             records: Vec::new(),
             backfilled: false,
         }
@@ -114,7 +117,10 @@ impl Index {
         {
             return Err("incompatible vector index metadata".into());
         }
-        if self.provider.len() > MAX_METADATA_BYTES || self.model.len() > MAX_METADATA_BYTES {
+        if self.provider.len() > MAX_METADATA_BYTES
+            || self.model.len() > MAX_METADATA_BYTES
+            || self.endpoint_fingerprint.len() > MAX_METADATA_BYTES
+        {
             return Err("vector index metadata is too large".into());
         }
         if self.dimensions == 0 || self.dimensions as usize > MAX_VECTOR_DIMENSIONS {
@@ -386,7 +392,7 @@ impl SlugState {
 }
 
 type Indexes = Mutex<BTreeMap<String, Arc<SlugState>>>;
-type RegistryKey = (PathBuf, String, String, u32);
+type RegistryKey = (PathBuf, String, String, u32, String);
 static STORES: OnceLock<Mutex<BTreeMap<RegistryKey, Weak<Indexes>>>> = OnceLock::new();
 
 pub(super) struct Store {
@@ -395,12 +401,24 @@ pub(super) struct Store {
     model: String,
     dimensions: u32,
     indexes: Arc<Indexes>,
+    endpoint: String,
     #[cfg(test)]
     fail_before_rename: std::sync::atomic::AtomicBool,
 }
 
 impl Store {
+    #[cfg(test)]
     pub fn new(workspace: &Path, provider: &str, model: &str, dimensions: u32) -> Self {
+        Self::with_endpoint(workspace, provider, model, dimensions, "")
+    }
+
+    pub fn with_endpoint(
+        workspace: &Path,
+        provider: &str,
+        model: &str,
+        dimensions: u32,
+        endpoint: &str,
+    ) -> Self {
         let workspace = workspace.canonicalize().unwrap_or_else(|_| {
             std::path::absolute(workspace).unwrap_or_else(|_| workspace.into())
         });
@@ -410,6 +428,7 @@ impl Store {
             provider.to_owned(),
             model.to_owned(),
             dimensions,
+            endpoint.to_owned(),
         );
         let mut registry = STORES
             .get_or_init(Mutex::default)
@@ -430,6 +449,7 @@ impl Store {
             model: model.into(),
             dimensions,
             indexes,
+            endpoint: endpoint.to_owned(),
             #[cfg(test)]
             fail_before_rename: std::sync::atomic::AtomicBool::new(false),
         }
@@ -450,12 +470,27 @@ impl Store {
         self.slug_state(slug).mutation.clone()
     }
 
-    // Hash the complete slug; no slug bytes ever become path components.
+    // One file per companion. A restart with different metadata replaces the cache,
+    // including when returning to a configuration used before intervening writes.
     fn index_path(&self, slug: &str) -> PathBuf {
         self.root.join(format!(
             "{}.bin",
             uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, slug.as_bytes())
         ))
+    }
+
+    fn endpoint_fingerprint(&self) -> String {
+        if self.endpoint.is_empty() {
+            String::new()
+        } else {
+            format!("{:x}", Sha256::digest(self.endpoint.as_bytes()))
+        }
+    }
+
+    fn empty_index(&self) -> Index {
+        let mut index = Index::empty(&self.provider, &self.model, self.dimensions);
+        index.endpoint_fingerprint = self.endpoint_fingerprint();
+        index
     }
 
     fn load(&self, slug: &str) -> Result<Index, String> {
@@ -465,7 +500,7 @@ impl Store {
         let file = match std::fs::File::open(&path) {
             Ok(file) => file,
             Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-                return Ok(Index::empty(&self.provider, &self.model, self.dimensions));
+                return Ok(self.empty_index());
             }
             Err(error) => return Err(error.to_string()),
         };
@@ -480,7 +515,15 @@ impl Store {
             if bytes.len() > MAX_INDEX_FILE_BYTES {
                 Err("vector index file grew beyond the size limit".into())
             } else {
-                Index::decode(&bytes, &self.provider, &self.model, self.dimensions)
+                Index::decode(&bytes, &self.provider, &self.model, self.dimensions).and_then(
+                    |index| {
+                        if index.endpoint_fingerprint != self.endpoint_fingerprint() {
+                            Err("incompatible embedding endpoint".into())
+                        } else {
+                            Ok(index)
+                        }
+                    },
+                )
             }
         };
         match decoded {
@@ -490,7 +533,7 @@ impl Store {
                     "[vector] rebuilding invalid cache {}: {error}",
                     path.display()
                 );
-                Ok(Index::empty(&self.provider, &self.model, self.dimensions))
+                Ok(self.empty_index())
             }
         }
     }
@@ -604,13 +647,23 @@ impl Store {
         })
     }
 
+    /// A saved document whose embedding failed must not leave stale results or
+    /// suppress the next startup backfill. Other documents remain committed.
+    pub fn invalidate_path(&self, slug: &str, path: &str) -> Result<(), String> {
+        self.mutate(slug, |index| {
+            index.records.retain(|record| record.path != path);
+            index.backfilled = false;
+            Ok(())
+        })
+    }
+
     pub fn delete(&self, slug: &str, path: &str) -> Result<(), String> {
         self.replace(slug, path, Vec::new())
     }
 
     pub fn reset(&self, slug: &str) -> Result<(), String> {
         self.mutate(slug, |index| {
-            *index = Index::empty(&self.provider, &self.model, self.dimensions);
+            *index = self.empty_index();
             Ok(())
         })
     }
@@ -627,14 +680,19 @@ impl Store {
         })
     }
 
-    pub fn commit_backfill(&self, slug: &str, mut records: Vec<Record>) -> Result<(), String> {
+    pub fn commit_backfill(
+        &self,
+        slug: &str,
+        mut records: Vec<Record>,
+        complete: bool,
+    ) -> Result<(), String> {
         for record in &records {
             validate_vector(&record.vector, self.dimensions)?;
         }
         sort_records(&mut records);
         self.mutate(slug, |index| {
             index.records = records;
-            index.backfilled = true;
+            index.backfilled = complete;
             Ok(())
         })
     }
@@ -674,37 +732,29 @@ mod tests {
 
     #[test]
     fn format_roundtrip() {
-        let index = Index::empty("google", "gemini-embedding-2-preview", 3);
+        let index = Index::empty("test-provider", "test-model", 3);
         let bytes = index.encode().unwrap();
-        let decoded = Index::decode(&bytes, "google", "gemini-embedding-2-preview", 3).unwrap();
-        assert_eq!(decoded.version, 1);
-        assert_eq!(decoded.provider, "google");
-        assert_eq!(decoded.model, "gemini-embedding-2-preview");
+        let decoded = Index::decode(&bytes, "test-provider", "test-model", 3).unwrap();
+        assert_eq!(decoded.version, FORMAT_VERSION);
+        assert_eq!(decoded.provider, "test-provider");
+        assert_eq!(decoded.model, "test-model");
         assert_eq!(decoded.dimensions, 3);
         assert!(decoded.records.is_empty());
     }
 
     #[test]
     fn envelope_rejects_checksum_corruption_truncation_and_trailing_bytes() {
-        let index = Index::empty("google", "gemini-embedding-2-preview", 3);
+        let index = Index::empty("test-provider", "test-model", 3);
         let good = index.encode().unwrap();
 
         let mut corrupt = good.clone();
         *corrupt.last_mut().unwrap() ^= 1;
-        assert!(Index::decode(&corrupt, "google", "gemini-embedding-2-preview", 3).is_err());
-        assert!(
-            Index::decode(
-                &good[..good.len() - 1],
-                "google",
-                "gemini-embedding-2-preview",
-                3
-            )
-            .is_err()
-        );
+        assert!(Index::decode(&corrupt, "test-provider", "test-model", 3).is_err());
+        assert!(Index::decode(&good[..good.len() - 1], "test-provider", "test-model", 3).is_err());
 
         let mut trailing = good;
         trailing.push(0);
-        assert!(Index::decode(&trailing, "google", "gemini-embedding-2-preview", 3).is_err());
+        assert!(Index::decode(&trailing, "test-provider", "test-model", 3).is_err());
     }
 
     #[test]
@@ -1154,14 +1204,14 @@ mod store_tests {
 
         assert!(
             store
-                .commit_backfill("slug", vec![record("bad", vec![f32::NAN, 0.])])
+                .commit_backfill("slug", vec![record("bad", vec![f32::NAN, 0.])], true)
                 .is_err()
         );
         assert_eq!(store.list("slug", 10).unwrap()[0].path, "old");
         assert!(store.needs_backfill("slug").unwrap());
 
         store
-            .commit_backfill("slug", vec![record("current", vec![0., 1.])])
+            .commit_backfill("slug", vec![record("current", vec![0., 1.])], true)
             .unwrap();
         let records = store.list("slug", 10).unwrap();
         assert_eq!(

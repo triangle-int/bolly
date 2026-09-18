@@ -556,7 +556,6 @@ fn build_agent_tools_for(
             workspace_dir,
             slug,
             vector_store.clone(),
-            google_ai_key,
         )));
         raw_tools.push(Box::new(MemoryReadTool::new(
             workspace_dir,
@@ -568,13 +567,11 @@ fn build_agent_tools_for(
             workspace_dir,
             slug,
             vector_store.clone(),
-            google_ai_key,
         )));
         raw_tools.push(Box::new(MemorySearchTool::new(
             workspace_dir,
             slug,
             vector_store.clone(),
-            google_ai_key,
             &public_url,
         )));
         raw_tools.push(Box::new(MemoryConnectTool::new(workspace_dir, slug)));
