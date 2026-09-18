@@ -76,11 +76,11 @@
 
 <nav class:scrolled aria-label="Primary navigation">
 	<div class="inner">
-		<a href="/" class="brand" aria-label="Bolly home"><img src={favicon} alt="" /><span>bolly</span></a>
+		<a href="/" class="brand" aria-label="Nolune home"><img src={favicon} alt="" /><span>nolune</span></a>
 		<div class="links">
 			<a href="#how">How it works</a><a href="#computer-use">Computer use</a><a href="#companion">Companion</a><a href="#install">Install</a>
-			<a href="https://github.com/triangle-int/bolly" target="_blank" rel="noopener">GitHub ↗</a>
-			<a class="install" href="#install">Install Bolly</a>
+			<a href="https://github.com/triangle-int/nolune" target="_blank" rel="noopener">GitHub ↗</a>
+			<a class="install" href="#install">Install Nolune</a>
 		</div>
 		<button bind:this={toggleButton} class="toggle" onclick={toggleMenu} aria-expanded={mobileOpen} aria-controls="mobile-menu" aria-label={mobileOpen ? 'Close menu' : 'Open menu'}>
 			<span></span><span></span>
@@ -91,8 +91,8 @@
 	<button class="backdrop" onclick={close} aria-label="Close menu"></button>
 	<div bind:this={mobileMenu} class="mobile" id="mobile-menu" role="dialog" aria-modal="true" aria-label="Navigation menu" tabindex="-1">
 		<a href="#how" onclick={close}>How it works</a><a href="#computer-use" onclick={close}>Computer use</a><a href="#companion" onclick={close}>Companion</a><a href="#install" onclick={close}>Install</a>
-		<a href="https://github.com/triangle-int/bolly" target="_blank" rel="noopener">GitHub ↗</a>
-		<a class="install" href="#install" onclick={close}>Install Bolly</a>
+		<a href="https://github.com/triangle-int/nolune" target="_blank" rel="noopener">GitHub ↗</a>
+		<a class="install" href="#install" onclick={close}>Install Nolune</a>
 	</div>
 {/if}
 

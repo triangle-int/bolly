@@ -58,7 +58,7 @@ pub async fn auth_middleware(
             .map(|s| s.to_string())
     });
 
-    // Check bolly_token cookie (for PWA standalone mode where localStorage is isolated)
+    // Check nolune_token cookie (for PWA standalone mode where localStorage is isolated)
     let cookie_token = request
         .headers()
         .get("cookie")
@@ -66,7 +66,7 @@ pub async fn auth_middleware(
         .and_then(|cookies| {
             cookies.split(';').find_map(|c| {
                 let c = c.trim();
-                c.strip_prefix("bolly_token=").map(percent_decode)
+                c.strip_prefix("nolune_token=").map(percent_decode)
             })
         });
 

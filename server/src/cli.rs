@@ -4,12 +4,12 @@ use clap::{Parser, Subcommand};
 
 use crate::config;
 
-const PLIST_LABEL: &str = "dev.bollyai.bolly";
+const PLIST_LABEL: &str = "dev.nolune.nolune";
 
 #[derive(Parser)]
 #[command(
-    name = "bolly",
-    about = "Bolly — AI companion",
+    name = "nolune",
+    about = "Nolune — AI companion",
     version = env!("CARGO_PKG_VERSION"),
 )]
 pub struct Cli {
@@ -19,11 +19,11 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum CliCommand {
-    /// Start the Bolly background service
+    /// Start the Nolune background service
     Start,
-    /// Stop the Bolly background service
+    /// Stop the Nolune background service
     Stop,
-    /// Restart the Bolly background service
+    /// Restart the Nolune background service
     Restart,
     /// Show service status
     Status,
@@ -44,7 +44,7 @@ pub fn run(cmd: CliCommand) -> i32 {
         CliCommand::Status => svc_status(),
         CliCommand::Logs => svc_logs(),
         CliCommand::Version => {
-            println!("bolly {}", env!("CARGO_PKG_VERSION"));
+            println!("nolune {}", env!("CARGO_PKG_VERSION"));
             0
         }
     }
@@ -74,7 +74,7 @@ fn uid() -> String {
 fn svc_start() -> i32 {
     let plist = plist_path();
     if !std::path::Path::new(&plist).exists() {
-        eprintln!("plist not found at {plist} — was Bolly installed with the install script?");
+        eprintln!("plist not found at {plist} — was Nolune installed with the install script?");
         return 1;
     }
     let domain = format!("gui/{}", uid());
@@ -83,13 +83,13 @@ fn svc_start() -> i32 {
         .status();
     match status {
         Ok(s) if s.success() => {
-            println!("Bolly service started.");
+            println!("Nolune service started.");
             0
         }
         Ok(s) => {
             // exit code 37 = already loaded
             if s.code() == Some(37) {
-                println!("Bolly service is already running.");
+                println!("Nolune service is already running.");
                 0
             } else {
                 eprintln!(
@@ -114,12 +114,12 @@ fn svc_stop() -> i32 {
         .status();
     match status {
         Ok(s) if s.success() => {
-            println!("Bolly service stopped.");
+            println!("Nolune service stopped.");
             0
         }
         Ok(s) => {
             if s.code() == Some(3) {
-                println!("Bolly service is not running.");
+                println!("Nolune service is not running.");
                 0
             } else {
                 eprintln!(
@@ -154,9 +154,9 @@ fn svc_status() -> i32 {
                     .find(|l| l.trim().starts_with("pid ="))
                     .map(|l| l.trim().trim_start_matches("pid = "))
                     .unwrap_or("-");
-                println!("Bolly is running (pid {pid}, state: {state})");
+                println!("Nolune is running (pid {pid}, state: {state})");
             } else {
-                println!("Bolly is not running.");
+                println!("Nolune is not running.");
             }
             0
         }
@@ -169,7 +169,7 @@ fn svc_status() -> i32 {
 
 #[cfg(target_os = "macos")]
 fn svc_logs() -> i32 {
-    let log_path = config::workspace_root().join("bolly.log");
+    let log_path = config::workspace_root().join("nolune.log");
     if !log_path.exists() {
         eprintln!("log file not found at {}", log_path.display());
         return 1;
@@ -190,26 +190,26 @@ fn svc_logs() -> i32 {
 
 #[cfg(target_os = "linux")]
 fn svc_start() -> i32 {
-    run_systemctl(&["start", "bolly"], "started")
+    run_systemctl(&["start", "nolune"], "started")
 }
 
 #[cfg(target_os = "linux")]
 fn svc_stop() -> i32 {
-    run_systemctl(&["stop", "bolly"], "stopped")
+    run_systemctl(&["stop", "nolune"], "stopped")
 }
 
 #[cfg(target_os = "linux")]
 fn svc_status() -> i32 {
     let output = Command::new("systemctl")
-        .args(["is-active", "bolly"])
+        .args(["is-active", "nolune"])
         .output();
     match output {
         Ok(out) => {
             let state = String::from_utf8_lossy(&out.stdout).trim().to_string();
             if state == "active" {
-                println!("Bolly is running.");
+                println!("Nolune is running.");
             } else {
-                println!("Bolly is not running ({state}).");
+                println!("Nolune is not running ({state}).");
             }
             0
         }
@@ -223,7 +223,7 @@ fn svc_status() -> i32 {
 #[cfg(target_os = "linux")]
 fn svc_logs() -> i32 {
     let status = Command::new("journalctl")
-        .args(["-u", "bolly", "-f", "--no-pager"])
+        .args(["-u", "nolune", "-f", "--no-pager"])
         .status();
     match status {
         Ok(_) => 0,
@@ -240,14 +240,14 @@ fn run_systemctl(args: &[&str], verb: &str) -> i32 {
     let user = Command::new("systemctl").arg("--user").args(args).status();
     if let Ok(s) = user {
         if s.success() {
-            println!("Bolly service {verb}.");
+            println!("Nolune service {verb}.");
             return 0;
         }
     }
     let system = Command::new("sudo").arg("systemctl").args(args).status();
     match system {
         Ok(s) if s.success() => {
-            println!("Bolly service {verb}.");
+            println!("Nolune service {verb}.");
             0
         }
         Ok(s) => {

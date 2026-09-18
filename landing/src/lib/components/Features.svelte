@@ -3,17 +3,17 @@
 	const traits = [
 		{ mark: 'MEM', title: 'Inspectable memory', text: 'Memories are ordinary files you can read, edit, back up, or remove.' },
 		{ mark: 'VOX', title: 'A voice and a mood', text: 'Voice, changing moods, and animated skins make the same identity feel present.' },
-		{ mark: 'HB', title: 'Proactive, by choice', text: 'Heartbeats and schedules let Bolly check in and follow routines you define.' }
+		{ mark: 'HB', title: 'Proactive, by choice', text: 'Heartbeats and schedules let Nolune check in and follow routines you define.' }
 	];
 </script>
 <section id="companion" class="companion">
 	<div class="section-shell">
-		<div class="intro"><Reveal><p class="eyebrow">More than remote control</p><h2 class="section-title">The computer is capable.<br /><span>The companion is continuous.</span></h2></Reveal><Reveal delay={100}><p class="section-copy">Bolly is one recognizable presence across every conversation and connected computer — not a drawer full of disposable agent threads.</p></Reveal></div>
+		<div class="intro"><Reveal><p class="eyebrow">More than remote control</p><h2 class="section-title">The computer is capable.<br /><span>The companion is continuous.</span></h2></Reveal><Reveal delay={100}><p class="section-copy">Nolune is one recognizable presence across every conversation and connected computer — not a drawer full of disposable agent threads.</p></Reveal></div>
 		<div class="identity">
-			<Reveal><div class="portrait"><img src="/assets/plan-companion.png" alt="Bolly's warm amber companion skin" /><div class="portrait-meta"><span>IDENTITY / BOLLY</span><b>calm · curious · present</b></div></div></Reveal>
+			<Reveal><div class="portrait"><img src="/assets/plan-companion.png" alt="Nolune's warm amber companion skin" /><div class="portrait-meta"><span>IDENTITY / NOLUNE</span><b>calm · curious · present</b></div></div></Reveal>
 			<div class="trait-list">{#each traits as trait, i}<Reveal delay={i * 90}><article><span>{trait.mark}</span><div><h3>{trait.title}</h3><p>{trait.text}</p></div></article></Reveal>{/each}</div>
 		</div>
-		<p class="skin-note"><i></i> Skins change Bolly’s expression, not its memory or identity. Deeper customization is planned.</p>
+		<p class="skin-note"><i></i> Skins change Nolune’s expression, not its memory or identity. Deeper customization is planned.</p>
 	</div>
 </section>
 <style>

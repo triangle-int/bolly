@@ -39,7 +39,7 @@ case "$*" in
 printf 'direct binary start\n' >> "${MOCK_CALLS:?}"
 BIN
     ;;
-  *'-fsSIL '*) printf 'location: https://github.com/triangle-int/bolly/releases/download/v0.33.0/artifact\r\n' ;;
+  *'-fsSIL '*) printf 'location: https://github.com/triangle-int/nolune/releases/download/v0.33.0/artifact\r\n' ;;
   *'/healthz'*) [[ "${MOCK_HEALTHY:-1}" = 1 ]] ;;
   *'/api/health'*) exit 42 ;;
   *) ;;
@@ -77,12 +77,12 @@ MOCK
 cat > "$mock_bin/ps" <<'MOCK'
 #!/usr/bin/env bash
 printf 'ps %s\n' "$*" >> "$MOCK_CALLS"
-printf '999997 /usr/bin/helper %s\n' "${BOLLY_DIR:?}/bin/bolly"
-printf '999996 %s --helper\n' "${BOLLY_DIR:?}/bin/bolly"
+printf '999997 /usr/bin/helper %s\n' "${NOLUNE_DIR:?}/bin/nolune"
+printf '999996 %s --helper\n' "${NOLUNE_DIR:?}/bin/nolune"
 if [[ -n "${MOCK_OLD_PID:-}" ]] && kill -0 "$MOCK_OLD_PID" 2>/dev/null; then
   state=$(/bin/ps -p "$MOCK_OLD_PID" -o stat= 2>/dev/null || true)
   if [[ "$state" != *Z* ]]; then
-    printf '%s %s\n' "$MOCK_OLD_PID" "${BOLLY_DIR:?}/bin/bolly"
+    printf '%s %s\n' "$MOCK_OLD_PID" "${NOLUNE_DIR:?}/bin/nolune"
   fi
 fi
 MOCK
@@ -168,9 +168,9 @@ run_installer() {
   mkdir -p "$home"
   : > "$calls"
   set +e
-  HOME="$home" BOLLY_DIR="$data" SHELL=/bin/bash \
+  HOME="$home" NOLUNE_DIR="$data" SHELL=/bin/bash \
     MOCK_OS="$os" MOCK_ARCH="$arch" MOCK_HEALTHY="$healthy" MOCK_OLD_PID="$old_pid" MOCK_UID="$uid" MOCK_CALLS="$calls" \
-    BOLLY_SYSTEMD_SYSTEM_DIR="$tmp/$name/systemd-system" \
+    NOLUNE_SYSTEMD_SYSTEM_DIR="$tmp/$name/systemd-system" \
     PATH="$selected_path" \
     bash "$root/scripts/install.sh" > "$tmp/$name/output" 2>&1
   status=$?
@@ -182,15 +182,15 @@ run_installer() {
 run_installer macos Darwin arm64 1 spawn
 assert_status macos 0
 assert_contains "$tmp/macos/calls" 'launchctl bootstrap gui/501 '
-assert_contains "$tmp/macos/calls" 'launchctl kickstart -k gui/501/dev.bollyai.bolly'
-assert_contains "$tmp/macos/calls" 'launchctl print gui/501/dev.bollyai.bolly'
+assert_contains "$tmp/macos/calls" 'launchctl kickstart -k gui/501/dev.nolune.nolune'
+assert_contains "$tmp/macos/calls" 'launchctl print gui/501/dev.nolune.nolune'
 old_pid=$(cat "$tmp/macos-old-pid")
 old_state=$(/bin/ps -p "$old_pid" -o stat= 2>/dev/null || true)
 if kill -0 "$old_pid" 2>/dev/null && [[ "$old_state" != *Z* ]]; then
-  echo 'FAIL: installer left the exact old Bolly process running' >&2
+  echo 'FAIL: installer left the exact old Nolune process running' >&2
   exit 1
 fi
-if ! grep -Fq "stopping unmanaged bolly process (PID: $old_pid)" "$tmp/macos/output"; then
+if ! grep -Fq "stopping unmanaged nolune process (PID: $old_pid)" "$tmp/macos/output"; then
   echo 'FAIL: installer did not stop the unmanaged prior process' >&2
   exit 1
 fi
@@ -203,6 +203,14 @@ if grep -Eq 'auth token:|/auth\?token=' "$tmp/macos/output"; then
   exit 1
 fi
 
+# Fresh installs and their generated updater use the Nolune distribution contract.
+assert_contains "$tmp/macos/calls" 'https://github.com/triangle-int/nolune/releases/latest/download/nolune-server-aarch64-apple-darwin'
+assert_contains "$tmp/macos/home/Library/LaunchAgents/dev.nolune.nolune.plist" '<key>NOLUNE_HOME</key>'
+assert_contains "$tmp/macos/data/bin/update" 'nolune-server-'
+bash -n "$tmp/macos/data/bin/update"
+MOCK_CALLS="$tmp/macos/calls" PATH="$mock_bin:$PATH" bash "$tmp/macos/data/bin/update" > "$tmp/macos/update-output"
+assert_contains "$tmp/macos/update-output" 'already at v0.33.0'
+
 # Re-running the macOS installer against the same home/data remains idempotent.
 run_installer macos Darwin arm64 1
 assert_status macos 0
@@ -213,25 +221,25 @@ assert_contains "$tmp/macos/calls" '/healthz'
 run_installer linux-root Linux x86_64 1 '' 0
 assert_status linux-root 0
 assert_contains "$tmp/linux-root/calls" 'systemctl daemon-reload'
-assert_contains "$tmp/linux-root/calls" 'systemctl enable bolly'
-assert_contains "$tmp/linux-root/calls" 'systemctl restart bolly'
-assert_contains "$tmp/linux-root/calls" 'systemctl is-active --quiet bolly'
-[[ -f "$tmp/linux-root/systemd-system/bolly.service" ]]
+assert_contains "$tmp/linux-root/calls" 'systemctl enable nolune'
+assert_contains "$tmp/linux-root/calls" 'systemctl restart nolune'
+assert_contains "$tmp/linux-root/calls" 'systemctl is-active --quiet nolune'
+[[ -f "$tmp/linux-root/systemd-system/nolune.service" ]]
 
 # Non-root Linux uses and verifies the user systemd service.
 run_installer linux Linux x86_64 1
 assert_status linux 0
 assert_contains "$tmp/linux/calls" 'systemctl --user daemon-reload'
-assert_contains "$tmp/linux/calls" 'systemctl --user enable bolly'
-assert_contains "$tmp/linux/calls" 'systemctl --user restart bolly'
-assert_contains "$tmp/linux/calls" 'systemctl --user is-active --quiet bolly'
+assert_contains "$tmp/linux/calls" 'systemctl --user enable nolune'
+assert_contains "$tmp/linux/calls" 'systemctl --user restart nolune'
+assert_contains "$tmp/linux/calls" 'systemctl --user is-active --quiet nolune'
 assert_contains "$tmp/linux/calls" '/healthz'
 assert_absent "$tmp/linux/calls" 'direct binary start'
 
 # Re-running Linux against the same home/data remains idempotent.
 run_installer linux Linux x86_64 1
 assert_status linux 0
-assert_contains "$tmp/linux/calls" 'systemctl --user enable bolly'
+assert_contains "$tmp/linux/calls" 'systemctl --user enable nolune'
 
 # Linux without systemd uses the explicit direct-process fallback.
 run_installer linux-fallback Linux x86_64 1 '' 501 0
@@ -242,7 +250,7 @@ wait_for_call "$tmp/linux-fallback/calls" 'direct binary start'
 run_installer stubborn Darwin arm64 1 stubborn
 [[ $(cat "$tmp/stubborn/status") -ne 0 ]]
 assert_absent "$tmp/stubborn/calls" 'launchctl bootstrap gui/501 '
-if ! grep -Fq 'could not stop the existing Bolly process' "$tmp/stubborn/output"; then
+if ! grep -Fq 'could not stop the existing Nolune process' "$tmp/stubborn/output"; then
   echo 'FAIL: stubborn prior process did not produce a clear failure' >&2
   exit 1
 fi

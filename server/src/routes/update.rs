@@ -100,13 +100,10 @@ async fn check_update(State(state): State<AppState>) -> Json<UpdateCheck> {
 }
 
 async fn apply_update(State(state): State<AppState>) -> Json<serde_json::Value> {
-    // Find update script — check multiple locations
-    let bolly_home = std::env::var("BOLLY_HOME")
+    // Find the update script in the configured installation directory
+    let nolune_home = std::env::var("NOLUNE_HOME")
         .unwrap_or_else(|_| state.workspace_dir.to_string_lossy().to_string());
-    let candidates = [
-        format!("{bolly_home}/bin/update"), // self-hosted install (new)
-        "/opt/bolly/bin/update".into(),     // legacy bare-metal
-    ];
+    let candidates = [format!("{nolune_home}/bin/update")];
 
     let script = candidates
         .iter()
@@ -125,12 +122,12 @@ async fn apply_update(State(state): State<AppState>) -> Json<serde_json::Value> 
 
     log::info!("[update] applying update via {}", script.display());
 
-    let bolly_home_clone = bolly_home.clone();
+    let nolune_home_clone = nolune_home.clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
 
         // Read version before update to detect actual changes
-        let version_file = std::path::Path::new(&bolly_home_clone).join("bin/.version");
+        let version_file = std::path::Path::new(&nolune_home_clone).join("bin/.version");
         let version_before = std::fs::read_to_string(&version_file)
             .unwrap_or_default()
             .trim()
@@ -220,7 +217,7 @@ struct ReleaseInfo {
 }
 
 async fn fetch_release_info(channel: &str) -> Option<ReleaseInfo> {
-    let repo = "triangle-int/bolly";
+    let repo = "triangle-int/nolune";
 
     // Check cache
     {
@@ -246,7 +243,7 @@ async fn fetch_release_info(channel: &str) -> Option<ReleaseInfo> {
     let client = reqwest::Client::new();
     let resp = client
         .get(&url)
-        .header("User-Agent", "bolly-update")
+        .header("User-Agent", "nolune-update")
         .send()
         .await
         .ok()?;
@@ -284,7 +281,7 @@ struct Changelog {
 
 async fn get_changelog(State(state): State<AppState>) -> Json<Vec<Changelog>> {
     let channel = get_channel_value(&state.workspace_dir);
-    let repo = "triangle-int/bolly";
+    let repo = "triangle-int/nolune";
 
     // Check cache
     let cached = CHANGELOG_CACHE.lock().ok().and_then(|cache| {
@@ -304,7 +301,7 @@ async fn get_changelog(State(state): State<AppState>) -> Json<Vec<Changelog>> {
         let client = reqwest::Client::new();
         let resp = match client
             .get(&url)
-            .header("User-Agent", "bolly-update")
+            .header("User-Agent", "nolune-update")
             .send()
             .await
         {

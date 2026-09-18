@@ -677,13 +677,13 @@ impl Default for LlmTokens {
 }
 
 pub fn workspace_root() -> PathBuf {
-    if let Some(path) = env::var_os("BOLLY_HOME") {
+    if let Some(path) = env::var_os("NOLUNE_HOME") {
         return PathBuf::from(path);
     }
 
     dirs::home_dir()
         .expect("failed to resolve home directory")
-        .join(".bolly")
+        .join(".nolune")
 }
 
 pub fn config_path() -> PathBuf {
@@ -719,7 +719,7 @@ pub fn load_config() -> anyhow::Result<Config> {
     ensure_workspace_layout(&workspace_root())?;
 
     // Allow env var overrides for managed hosting
-    if let Ok(token) = env::var("BOLLY_AUTH_TOKEN") {
+    if let Ok(token) = env::var("NOLUNE_AUTH_TOKEN") {
         if !token.is_empty() {
             config.auth_token = token;
         }
@@ -730,7 +730,7 @@ pub fn load_config() -> anyhow::Result<Config> {
             config.landing_url = url;
         }
     }
-    if let Ok(url) = env::var("BOLLY_PUBLIC_URL") {
+    if let Ok(url) = env::var("NOLUNE_PUBLIC_URL") {
         if !url.is_empty() {
             config.public_url = url;
         }
@@ -781,7 +781,7 @@ pub fn load_config() -> anyhow::Result<Config> {
         }
     }
 
-    if let Ok(mode) = env::var("BOLLY_MODEL_MODE") {
+    if let Ok(mode) = env::var("NOLUNE_MODEL_MODE") {
         match mode.to_lowercase().as_str() {
             "auto" => config.llm.model_mode = ModelMode::Auto,
             "fast" => config.llm.model_mode = ModelMode::Fast,

@@ -559,7 +559,7 @@ mod tests {
     #[test]
     fn media_attachment_prompts_preserve_metadata_and_video_guidance() {
         let workspace =
-            std::env::temp_dir().join(format!("bolly-media-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("nolune-media-test-{}", uuid::Uuid::new_v4()));
         for (name, mime, kind) in [
             ("voice.mp3", "audio/mpeg", "audio"),
             ("voice.wav", "audio/wav", "audio"),

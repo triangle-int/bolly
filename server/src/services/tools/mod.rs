@@ -155,9 +155,9 @@ fn secret_values() -> &'static Vec<String> {
             "OPENROUTER_API_KEY",
             "BRAVE_SEARCH_API_KEY",
             "DATABASE_URL",
-            // Note: BOLLY_AUTH_TOKEN excluded — it's used in image/document URLs
+            // Note: NOLUNE_AUTH_TOKEN excluded — it's used in image/document URLs
             // that Anthropic needs to fetch. Redacting it breaks content blocks.
-            "BOLLY_RELEASE_TOKEN",
+            "NOLUNE_RELEASE_TOKEN",
             "STRIPE_SECRET_KEY",
             "GITHUB_TOKEN",
             "GOOGLE_CLIENT_SECRET",

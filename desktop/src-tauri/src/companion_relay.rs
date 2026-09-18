@@ -127,7 +127,7 @@ pub async fn start(upstream: url::Url, token: String) -> Result<Relay, String> {
             .map_err(|_| "Could not start companion relay")?
     );
     let session = uuid::Uuid::new_v4().to_string();
-    let cookie_name = format!("bolly_relay_{}", uuid::Uuid::new_v4().simple());
+    let cookie_name = format!("nolune_relay_{}", uuid::Uuid::new_v4().simple());
     let token = Arc::new(Mutex::new(Some(token)));
     let (stop, stopped) = watch::channel(false);
     let state = RelayState {
@@ -159,10 +159,10 @@ pub async fn start(upstream: url::Url, token: String) -> Result<Relay, String> {
     let script = format!(
         r#"
         if (location.origin === {origin}) {{
-            localStorage.removeItem("bolly_auth_token");
-            Object.defineProperty(window, "__BOLLY_DESKTOP_RELAY__", {{value: true}});
-            window.__bollyBootstrap = async () => {{
-                const response = await fetch("/__desktop/bootstrap", {{method: "POST", headers: {{"X-Bolly-Bootstrap": {session}}}}});
+            localStorage.removeItem("nolune_auth_token");
+            Object.defineProperty(window, "__NOLUNE_DESKTOP_RELAY__", {{value: true}});
+            window.__noluneBootstrap = async () => {{
+                const response = await fetch("/__desktop/bootstrap", {{method: "POST", headers: {{"X-Nolune-Bootstrap": {session}}}}});
                 if (response.ok) location.replace("/");
                 else document.body.textContent = "Could not open companion. Return to the dashboard and reconnect.";
             }};
@@ -185,7 +185,7 @@ async fn bootstrap(State(state): State<RelayState>, headers: HeaderMap) -> Respo
     if *state.stopped.borrow()
         || !is_local_request(&headers, &state.origin)
         || headers
-            .get("x-bolly-bootstrap")
+            .get("x-nolune-bootstrap")
             .and_then(|v| v.to_str().ok())
             != Some(&state.session)
     {
@@ -214,7 +214,7 @@ async fn forward(State(mut state): State<RelayState>, request: Request<Body>) ->
                 .header("content-security-policy", companion_csp(&state.origin))
                 .header("referrer-policy", "no-referrer")
                 .header("x-content-type-options", "nosniff")
-                .body(Body::from("<!doctype html><html><body><script>window.__bollyBootstrap?.()</script></body></html>"))
+                .body(Body::from("<!doctype html><html><body><script>window.__noluneBootstrap?.()</script></body></html>"))
                 .unwrap();
         }
         return StatusCode::UNAUTHORIZED.into_response();
@@ -237,7 +237,7 @@ async fn forward(State(mut state): State<RelayState>, request: Request<Body>) ->
         "referer",
         "connection",
         "upgrade",
-        "x-bolly-bootstrap",
+        "x-nolune-bootstrap",
         "accept-encoding",
     ] {
         headers.remove(name);
@@ -900,10 +900,10 @@ mod tests {
 
     #[test]
     fn relay_cookie_is_host_only_http_only_and_never_contains_upstream_token() {
-        let cookie = session_cookie("bolly_relay_random", "random-session");
+        let cookie = session_cookie("nolune_relay_random", "random-session");
         assert_eq!(
             cookie,
-            "bolly_relay_random=random-session; Path=/; HttpOnly; SameSite=Strict"
+            "nolune_relay_random=random-session; Path=/; HttpOnly; SameSite=Strict"
         );
         assert!(!cookie.contains("Domain="));
         assert!(!cookie.contains("Max-Age="));
@@ -1054,7 +1054,7 @@ mod tests {
                 "Bearer long-lived"
             );
             assert!(!request.headers().contains_key("cookie"));
-            assert!(!request.headers().contains_key("x-bolly-bootstrap"));
+            assert!(!request.headers().contains_key("x-nolune-bootstrap"));
             assert!(request.uri().query().is_none());
             if request.uri().path() == "/redirect" {
                 return Response::builder()
@@ -1099,7 +1099,7 @@ mod tests {
             }
             Response::builder()
                 .header("content-type", "text/plain; charset=utf-8")
-                .header("set-cookie", "bolly_token=long-lived")
+                .header("set-cookie", "nolune_token=long-lived")
                 .body(Body::from(request.uri().path().to_owned()))
                 .unwrap()
         }
@@ -1131,7 +1131,7 @@ mod tests {
         let response = client
             .post(format!("{}/__desktop/bootstrap", relay.origin))
             .header("origin", &relay.origin)
-            .header("x-bolly-bootstrap", &relay.session)
+            .header("x-nolune-bootstrap", &relay.session)
             .send()
             .await
             .unwrap();
@@ -1165,7 +1165,7 @@ mod tests {
             .text()
             .await
             .unwrap();
-        assert!(bootstrap.contains("__bollyBootstrap"));
+        assert!(bootstrap.contains("__noluneBootstrap"));
         assert!(!bootstrap.contains(&relay.session));
         let cookie = session(&client, &relay).await;
         assert!(!cookie.contains("long-lived"));

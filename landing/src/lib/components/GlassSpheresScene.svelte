@@ -306,7 +306,7 @@
 
 	// ── Steps data ──
 	const steps = [
-		{ num: '01', title: 'install', desc: 'Run Bolly on your own machine.' },
+		{ num: '01', title: 'install', desc: 'Run Nolune on your own machine.' },
 		{ num: '02', title: 'shape who they are', desc: 'Choose a personality or write your own.' },
 		{ num: '03', title: 'just talk', desc: 'They remember everything. Their mood shifts. They grow.' },
 	];
@@ -630,7 +630,7 @@
 
 <Text text="What it does" font={bricolage} fontSize={0.22} color={warm} anchorX="left" anchorY="middle" position={[-7, Y.features + 5, 0]} letterSpacing={0.15} />
 <Text text="not another chatbot" font={fraunces} fontSize={1.0} color={text} anchorX="left" anchorY="middle" position={[-7, Y.features + 3.5, 0]} />
-<Text text="Bolly is a friend that remembers, feels, and grows — one that actually helps you get through your day." font={bricolage} fontSize={0.25} color={dim} anchorX="left" anchorY="top" position={[-7, Y.features + 2.5, 0]} maxWidth={8} lineHeight={1.5} />
+<Text text="Nolune is a friend that remembers, feels, and grows — one that actually helps you get through your day." font={bricolage} fontSize={0.25} color={dim} anchorX="left" anchorY="top" position={[-7, Y.features + 2.5, 0]} maxWidth={8} lineHeight={1.5} />
 
 {#each features as f, i}
 	{@const col = i % 3}
@@ -657,7 +657,7 @@
 	<div data-backing="demo" style="width:500px;height:380px;background:oklch(0.04 0.015 260);border:1px solid oklch(1 0 0 / 8%);overflow:hidden;display:flex;flex-direction:column;">
 		<div style="display:flex;align-items:center;gap:0.5rem;padding:0.75rem 1rem;border-bottom:1px solid oklch(1 0 0 / 5%);">
 			<div style="width:28px;height:28px;border-radius:50%;background:oklch(0.78 0.12 75 / 10%);border:1px solid oklch(0.78 0.12 75 / 15%);display:flex;align-items:center;justify-content:center;font-family:'Fraunces',serif;font-style:italic;font-size:0.8rem;color:oklch(0.78 0.12 75 / 60%);">b</div>
-			<div><span style="font-size:0.85rem;color:oklch(0.90 0.02 75);">bolly</span><br/><span style="font-size:0.75rem;color:oklch(0.78 0.12 75 / 40%);font-style:italic;">feeling curious</span></div>
+			<div><span style="font-size:0.85rem;color:oklch(0.90 0.02 75);">nolune</span><br/><span style="font-size:0.75rem;color:oklch(0.78 0.12 75 / 40%);font-style:italic;">feeling curious</span></div>
 		</div>
 		<div style="padding:1.25rem;display:flex;flex-direction:column;gap:0.6rem;font-family:'Bricolage Grotesque',sans-serif;font-size:0.85rem;flex:1;">
 			<div style="align-self:flex-start;color:oklch(0.72 0.025 220 / 60%);padding:0.55rem 0.9rem;background:linear-gradient(160deg,oklch(1 0 0 / 6%),oklch(0.5 0.02 220 / 8%),oklch(1 0 0 / 3%));border:1px solid oklch(1 0 0 / 8%);border-top-color:oklch(1 0 0 / 15%);max-width:65%;">i have an exam on thursday and i haven't started studying. kind of freaking out</div>
@@ -702,7 +702,7 @@
      FOOTER
      ═══════════════════════════════════════ -->
 
-<Text text="© 2026 Bolly · Triangle Interactive" font={bricolage} fontSize={0.18} color={ghost} anchorX="center" anchorY="middle" position={[0, Y.footer, 0]} textAlign="center" />
+<Text text="© 2026 Nolune · Triangle Interactive" font={bricolage} fontSize={0.18} color={ghost} anchorX="center" anchorY="middle" position={[0, Y.footer, 0]} textAlign="center" />
 
 <HTML transform pointerEvents="auto" position={[0, Y.footer - 1, 0]} scale={0.5}>
 	<div style="display:flex;gap:1.5rem;font-family:'Bricolage Grotesque',sans-serif;font-size:0.75rem;">

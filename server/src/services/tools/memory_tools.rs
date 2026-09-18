@@ -211,7 +211,7 @@ impl MemoryReadTool {
                 .join("memory"),
             instance_slug: instance_slug.to_string(),
             public_url: public_url.to_string(),
-            auth_token: std::env::var("BOLLY_AUTH_TOKEN").unwrap_or_default(),
+            auth_token: std::env::var("NOLUNE_AUTH_TOKEN").unwrap_or_default(),
         }
     }
 }
@@ -501,7 +501,7 @@ impl MemorySearchTool {
         vector_store: Arc<VectorStore>,
         public_url: &str,
     ) -> Self {
-        let auth_token = std::env::var("BOLLY_AUTH_TOKEN").unwrap_or_default();
+        let auth_token = std::env::var("NOLUNE_AUTH_TOKEN").unwrap_or_default();
         Self {
             instance_slug: instance_slug.to_string(),
             vector_store,

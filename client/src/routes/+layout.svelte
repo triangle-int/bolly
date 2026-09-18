@@ -86,7 +86,7 @@
 <svelte:head>
 	<link rel="icon" href={favicon} />
 	<link rel="manifest" href="/manifest.webmanifest" />
-	<title>bolly</title>
+	<title>nolune</title>
 </svelte:head>
 
 <div class="relative h-dvh w-full overflow-hidden" style="padding-top: env(safe-area-inset-top); padding-left: env(safe-area-inset-left); padding-right: env(safe-area-inset-right);">

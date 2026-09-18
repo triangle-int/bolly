@@ -11,9 +11,9 @@ const source = ts.transpile(readFileSync(new URL("../../client/src/lib/api/clien
 async function setup(desktop) {
   const urls = [];
   const context = vm.createContext({
-    window: desktop ? { __BOLLY_DESKTOP_RELAY__: true } : {},
+    window: desktop ? { __NOLUNE_DESKTOP_RELAY__: true } : {},
     location: { protocol: "http:", host: "127.0.0.1:1234" },
-    document: { cookie: "bolly_token=legacy-cookie" },
+    document: { cookie: "nolune_token=legacy-cookie" },
     localStorage: { getItem: () => "legacy-storage" },
     WebSocket: class { constructor(url) { urls.push(url); } },
     URL,

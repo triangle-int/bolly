@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-	<title>Privacy Policy — Bolly</title>
+	<title>Privacy Policy — Nolune</title>
 </svelte:head>
 
 <div class="legal-page">
@@ -11,7 +11,7 @@
 		<div class="legal-header-inner">
 			<a href="/" class="legal-brand">
 				<div class="legal-logo">b</div>
-				<span class="legal-brand-name">bolly</span>
+				<span class="legal-brand-name">nolune</span>
 			</a>
 		</div>
 	</header>
@@ -23,7 +23,7 @@
 		<div class="prose">
 			<h2>1. Who we are</h2>
 			<p>
-				Bolly is operated by Triangle Interactive ("we", "us", "our"). We provide an AI companion
+				Nolune is operated by Triangle Interactive ("we", "us", "our"). We provide an AI companion
 				platform that runs on dedicated server instances. This policy explains how we collect, use,
 				and protect your information.
 			</p>
@@ -68,7 +68,7 @@
 
 			<h2>5. Google API Services User Data Policy</h2>
 			<p>
-				Bolly's use and transfer of information received from Google APIs adheres to the
+				Nolune's use and transfer of information received from Google APIs adheres to the
 				<a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank">Google API Services User Data Policy</a>,
 				including the Limited Use requirements. Specifically:
 			</p>
@@ -104,7 +104,7 @@
 			<p>We may update this policy. Material changes will be communicated via email or a notice on the dashboard.</p>
 
 			<h2>10. Contact</h2>
-			<p>Questions? Email <a href="mailto:support@bollyai.dev">support@bollyai.dev</a>.</p>
+			<p>Questions? Email <a href="mailto:support@nolune.dev">support@nolune.dev</a>.</p>
 		</div>
 	</div>
 

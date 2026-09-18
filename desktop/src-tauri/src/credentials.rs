@@ -2,7 +2,7 @@
 //! keychain record, so browser-writable metadata can never retarget a credential.
 use serde::{Deserialize, Serialize};
 
-const SERVICE: &str = "com.triangle-int.bolly-desktop.self-hosted";
+const SERVICE: &str = "com.triangle-int.nolune-desktop.self-hosted";
 const ACCOUNT: &str = "saved-connection-v2";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

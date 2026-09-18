@@ -1,7 +1,7 @@
 import { track } from '@vercel/analytics/server';
 import type { RequestHandler } from './$types.js';
 
-const SCRIPT_URL = 'https://raw.githubusercontent.com/triangle-int/bolly/main/scripts/install.sh';
+const SCRIPT_URL = 'https://raw.githubusercontent.com/triangle-int/nolune/main/scripts/install.sh';
 
 export const GET: RequestHandler = async ({ request }) => {
 	const res = await fetch(SCRIPT_URL);

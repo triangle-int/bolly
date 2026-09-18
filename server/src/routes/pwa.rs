@@ -15,8 +15,8 @@ async fn manifest(State(state): State<AppState>) -> impl IntoResponse {
     };
 
     let manifest = json!({
-        "name": "Bolly",
-        "short_name": "Bolly",
+        "name": "Nolune",
+        "short_name": "Nolune",
         "description": "Your AI companion",
         "start_url": start_url,
         "display": "standalone",
