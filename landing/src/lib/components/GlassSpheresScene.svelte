@@ -17,7 +17,7 @@
 			const fixEl = (el: HTMLElement) => {
 				el.style.boxSizing = 'border-box';
 				el.style.backdropFilter = 'none';
-				el.style.webkitBackdropFilter = 'none';
+				el.style.setProperty('-webkit-backdrop-filter', 'none');
 				if (el.style.background?.includes('rgba')) el.style.background = '#0a0a14';
 			};
 			fixEl(clone);

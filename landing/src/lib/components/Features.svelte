@@ -1,132 +1,21 @@
 <script lang="ts">
 	import Reveal from './Reveal.svelte';
-
-	const features = [
-		{
-			title: 'feels your mood',
-			desc: "Notices when you're stressed, tired, or excited — not because you said so, but from how you write.",
-			video: '/assets/feature-mood.mp4',
-		},
-		{
-			title: 'remembers everything',
-			desc: "Every conversation, every detail. It builds a living memory of who you are and what matters to you.",
-			video: '/assets/feature-memory.mp4',
-		},
-		{
-			title: 'read its thoughts',
-			desc: "A visible inner monologue — watch it think, reflect, and decide whether to reach out or wait. Every reasoning step, visible to you.",
-			video: '/assets/feature-transparent.mp4',
-		},
-		{
-			title: 'messages you first',
-			desc: "An adaptive heartbeat — not a timer. It notices when you disappear, senses your rhythm, and reaches out when it actually makes sense.",
-			video: '/assets/feature-heartbeat.mp4',
-		},
+	const traits = [
+		{ mark: 'MEM', title: 'Inspectable memory', text: 'Memories are ordinary files you can read, edit, back up, or remove.' },
+		{ mark: 'VOX', title: 'A voice and a mood', text: 'Voice, changing moods, and animated skins make the same identity feel present.' },
+		{ mark: 'HB', title: 'Proactive, by choice', text: 'Heartbeats and schedules let Bolly check in and follow routines you define.' }
 	];
 </script>
-
-<section class="features" id="features">
-	{#each features as f, i}
-		<div class="feature" class:feature-reverse={i % 2 === 1}>
-			<Reveal delay={0}>
-				<div class="feature-visual">
-					<video autoplay muted loop playsinline class="feature-video" src={f.video}></video>
-				</div>
-			</Reveal>
-			<Reveal delay={150}>
-				<div class="feature-text">
-					<h3 class="feature-title">{f.title}</h3>
-					<p class="feature-desc">{f.desc}</p>
-				</div>
-			</Reveal>
+<section id="companion" class="companion">
+	<div class="section-shell">
+		<div class="intro"><Reveal><p class="eyebrow">More than remote control</p><h2 class="section-title">The computer is capable.<br /><span>The companion is continuous.</span></h2></Reveal><Reveal delay={100}><p class="section-copy">Bolly is one recognizable presence across every conversation and connected computer — not a drawer full of disposable agent threads.</p></Reveal></div>
+		<div class="identity">
+			<Reveal><div class="portrait"><img src="/assets/plan-companion.png" alt="Bolly's warm amber companion skin" /><div class="portrait-meta"><span>IDENTITY / BOLLY</span><b>calm · curious · present</b></div></div></Reveal>
+			<div class="trait-list">{#each traits as trait, i}<Reveal delay={i * 90}><article><span>{trait.mark}</span><div><h3>{trait.title}</h3><p>{trait.text}</p></div></article></Reveal>{/each}</div>
 		</div>
-	{/each}
+		<p class="skin-note"><i></i> Skins change Bolly’s expression, not its memory or identity. Deeper customization is planned.</p>
+	</div>
 </section>
-
 <style>
-	.features {
-		padding: 4rem 0;
-	}
-
-	.feature {
-		display: flex;
-		align-items: center;
-		gap: 4rem;
-		max-width: 1100px;
-		margin: 0 auto;
-		padding: 5rem 1.5rem;
-	}
-
-	.feature-reverse {
-		flex-direction: row-reverse;
-	}
-
-	.feature-visual {
-		flex: 1.2;
-		border-radius: 1.25rem;
-		overflow: hidden;
-		border: 1px solid var(--glass-border);
-		border-top-color: var(--glass-border-top);
-		box-shadow:
-			0 8px 40px oklch(0 0 0 / 25%),
-			0 0 0 1px oklch(1 0 0 / 3%);
-		position: relative;
-	}
-
-	.feature-visual::before {
-		content: '';
-		position: absolute;
-		top: 0;
-		left: 8%;
-		right: 8%;
-		height: 1px;
-		background: linear-gradient(90deg, transparent, oklch(1 0 0 / 18%), transparent);
-		pointer-events: none;
-		z-index: 2;
-	}
-
-	.feature-video {
-		display: block;
-		width: 100%;
-		border-radius: 1.25rem;
-	}
-
-	.feature-text {
-		flex: 0.8;
-	}
-
-	.feature-title {
-		font-family: var(--font-display);
-		font-weight: 400;
-		font-style: italic;
-		font-size: clamp(1.5rem, 3vw, 2.25rem);
-		line-height: 1.15;
-		letter-spacing: -0.02em;
-		color: var(--color-text);
-		margin-bottom: 1rem;
-	}
-
-	.feature-desc {
-		font-size: 1rem;
-		line-height: 1.7;
-		color: var(--color-text-dim);
-		max-width: 420px;
-	}
-
-	@media (max-width: 768px) {
-		.feature,
-		.feature-reverse {
-			flex-direction: column;
-			gap: 2rem;
-			padding: 3rem 1.5rem;
-		}
-
-		.feature-text {
-			text-align: center;
-		}
-
-		.feature-desc {
-			margin: 0 auto;
-		}
-	}
+	.companion{border-bottom:1px solid var(--color-border);background:#0d0f14}.intro{display:grid;grid-template-columns:1.2fr .8fr;gap:5rem;align-items:end}.section-title span{font-family:var(--font-display);font-style:italic;font-weight:400;color:var(--color-warm)}.identity{display:grid;grid-template-columns:.85fr 1.15fr;gap:5rem;margin-top:4.5rem;align-items:center}.portrait{height:480px;position:relative;background:#08090d;border:1px solid var(--color-border-warm);overflow:hidden}.portrait::before{content:'';position:absolute;inset:0;background:radial-gradient(circle at 50% 45%,var(--color-warm-glow),transparent 55%)}.portrait img{width:100%;height:100%;object-fit:contain;position:relative}.portrait-meta{position:absolute;inset:auto 1rem 1rem;padding:1rem;background:#090b0edd;border-top:1px solid var(--color-border-warm)}.portrait-meta span,.portrait-meta b{display:block}.portrait-meta span{font:.52rem var(--font-mono);letter-spacing:.1em;color:var(--color-warm-dim)}.portrait-meta b{font-size:.72rem;margin-top:.45rem}.trait-list article{display:grid;grid-template-columns:50px 1fr;gap:1.2rem;padding:1.6rem 0;border-top:1px solid var(--color-border)}.trait-list article>span{font:600 .55rem var(--font-mono);color:var(--color-warm-dim)}article h3{font-size:1.1rem;margin:0 0 .5rem}article p{font-size:.85rem;color:var(--color-text-dim);line-height:1.65;margin:0;max-width:430px}.skin-note{font:500 .58rem var(--font-mono);letter-spacing:.05em;color:var(--color-text-ghost);margin:2rem 0 0}.skin-note i{display:inline-block;width:18px;height:1px;background:var(--color-warm);vertical-align:middle;margin-right:.6rem}@media(max-width:760px){.intro,.identity{grid-template-columns:1fr;gap:2rem}.identity{margin-top:3rem}.portrait{height:390px}}
 </style>

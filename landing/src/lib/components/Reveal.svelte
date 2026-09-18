@@ -47,4 +47,8 @@
 		opacity: 1;
 		transform: translateY(0);
 	}
+
+	@media (prefers-reduced-motion: reduce) {
+		.reveal { opacity: 1; transform: none; transition: none; }
+	}
 </style>

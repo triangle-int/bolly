@@ -1,41 +1,4 @@
-<footer class="footer">
-	<div class="footer-line"></div>
-	<div class="mx-auto max-w-[1100px] px-6 flex flex-col sm:flex-row justify-between items-center gap-4">
-		<div class="text-xs" style="color: oklch(0.90 0.02 75 / 20%);">
-			&copy; 2026 Bolly &middot; <a href="https://triangleint.com" target="_blank" class="footer-link">Triangle Interactive</a>
-		</div>
-		<ul class="flex gap-6 list-none">
-			<li><a href="/docs" class="footer-link text-xs">Docs</a></li>
-			<li><a href="/privacy" class="footer-link text-xs">Privacy</a></li>
-			<li><a href="/terms" class="footer-link text-xs">Terms</a></li>
-		</ul>
-	</div>
-</footer>
-
+<footer><div class="inner"><a class="brand" href="/">bolly</a><p>One persistent companion, on computers you control.</p><nav aria-label="Footer"><a href="#how">How it works</a><a href="#install">Install</a><a href="https://github.com/triangle-int/bolly" target="_blank" rel="noopener">GitHub</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a></nav><small>© 2026 Triangle Interactive LLC</small></div></footer>
 <style>
-	.footer {
-		padding: 2.5rem 0;
-		position: relative;
-		border-top: 1px solid var(--glass-border);
-	}
-
-	.footer-line {
-		position: absolute;
-		top: 0;
-		left: 10%;
-		right: 10%;
-		height: 1px;
-		background: linear-gradient(90deg, transparent, oklch(1 0 0 / 6%), transparent);
-		pointer-events: none;
-	}
-
-	.footer-link {
-		color: oklch(0.90 0.02 75 / 20%);
-		transition: color 0.3s ease;
-		text-decoration: none;
-	}
-
-	.footer-link:hover {
-		color: oklch(0.90 0.02 75 / 50%);
-	}
+	footer{border-top:1px solid var(--color-border);background:#07080a;padding:3rem 1.5rem}.inner{max-width:1180px;margin:auto;display:grid;grid-template-columns:auto 1fr auto;gap:1rem 2rem;align-items:center}.brand{font:italic 1.4rem var(--font-display);color:var(--color-warm)}p,small,nav a{font-size:.68rem;color:var(--color-text-ghost)}nav{display:flex;gap:1.5rem}small{grid-column:1/-1;border-top:1px solid var(--color-border);padding-top:1rem}@media(max-width:700px){.inner{grid-template-columns:1fr}nav{flex-wrap:wrap}small{grid-column:auto}}
 </style>

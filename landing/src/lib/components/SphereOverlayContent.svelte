@@ -108,7 +108,9 @@
 	let captureCtx: CanvasRenderingContext2D;
 	let bgTexture: InstanceType<typeof CanvasTexture> | null = null;
 
-	onMount(async () => {
+	onMount(() => {
+		let cleanup: (() => void) | undefined;
+		void (async () => {
 		await new Promise(r => setTimeout(r, 600));
 
 		const pageEl = document.getElementById('page-capture-source');
@@ -213,11 +215,13 @@
 		}
 		rafId = requestAnimationFrame(loop);
 
-		return () => {
+		cleanup = () => {
 			window.removeEventListener('scroll', markDirty);
 			cancelAnimationFrame(rafId);
 			bgTexture?.dispose();
 		};
+		})();
+		return () => cleanup?.();
 	});
 
 	// ── Scroll & mouse ──
@@ -307,7 +311,7 @@
 	});
 </script>
 
-<T.PerspectiveCamera makeDefault position={[0, 0, {CAM_Z}]} fov={FOV} />
+<T.PerspectiveCamera makeDefault position={[0, 0, CAM_Z]} fov={FOV} />
 
 <T.Mesh bind:ref={skyboxRef} geometry={skyGeo} material={skyMat} visible={false} />
 
