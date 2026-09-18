@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="landing/static/assets/plan-companion.png" alt="Nolune" width="200" />
+  <img src="landing/static/assets/nolune-moon.svg" alt="Nolune, a lavender crescent companion" width="200" />
 </p>
 
 <h1 align="center">Nolune</h1>
@@ -86,9 +86,9 @@ Nolune is self-hosted and BYOK. There is no required Nolune cloud account, and N
 <table>
 <tr>
 <td align="center" width="50%">
-<img src="landing/static/assets/plan-companion.png" alt="Nolune skin" width="280" />
+<img src="landing/static/assets/nolune-moon.svg" alt="Nolune Little Moon skin" width="280" />
 <br><br>
-<strong>Nolune</strong> — a warm, golden presence
+<strong>Nolune · Little Moon</strong> — a curious lavender crescent
 </td>
 <td align="center" width="50%">
 <img src="client/static/skins/mint/character.png" alt="Minty skin" width="280" />
