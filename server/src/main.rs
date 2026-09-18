@@ -23,12 +23,6 @@ async fn main() {
     // No subcommand → run the server
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .filter_module("tracing::span", log::LevelFilter::Warn)
-        .filter_module("lance", log::LevelFilter::Warn)
-        .filter_module("lance_core", log::LevelFilter::Warn)
-        .filter_module("lance_io", log::LevelFilter::Warn)
-        .filter_module("lance_index", log::LevelFilter::Warn)
-        .filter_module("lance_table", log::LevelFilter::Warn)
-        .filter_module("lancedb", log::LevelFilter::Warn)
         .init();
 
     let mut config = config::load_config().unwrap_or_else(|err| {
@@ -103,16 +97,11 @@ async fn main() {
             state.machine_registry.clone(),
         );
 
-        // Backfill existing memories into LanceDB (background, non-blocking)
+        // Backfill missing or invalid local indexes from memory files (background, non-blocking)
         let vs = state.vector_store.clone();
         let ws = state.workspace_dir.clone();
         let gai = google_ai_key;
         tokio::spawn(async move {
-            let marker = ws.join(".vectors_backfilled_lancedb");
-            if marker.exists() {
-                return;
-            }
-
             // Scan all instances and backfill
             let instances_dir = ws.join("instances");
             let entries = match std::fs::read_dir(&instances_dir) {
@@ -126,6 +115,15 @@ async fn main() {
                     continue;
                 }
                 let slug = entry.file_name().to_string_lossy().to_string();
+                match vs.needs_backfill(&slug).await {
+                    Ok(false) => continue,
+                    Ok(true) => {}
+                    Err(e) => {
+                        log::warn!("[backfill] {slug}: cannot prepare index: {e}");
+                        had_errors = true;
+                        continue;
+                    }
+                }
                 info!("[backfill] starting for instance {slug}");
                 match vs.backfill_text_memories(&ws, &slug, &gai).await {
                     Ok(count) => info!("[backfill] {slug}: indexed {count} chunks"),
@@ -136,9 +134,7 @@ async fn main() {
                 }
             }
 
-            // Only write marker if all instances succeeded
             if !had_errors {
-                let _ = std::fs::write(&marker, "done");
                 info!("[backfill] completed");
             } else {
                 log::warn!("[backfill] completed with errors — will retry on next restart");

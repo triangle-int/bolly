@@ -40,7 +40,7 @@ pub struct AppState {
     pub landing_url: String,
     /// Auth token for landing API calls.
     pub _landing_auth_token: String,
-    /// LanceDB vector store for semantic memory search.
+    /// Versioned local vector store for semantic memory search.
     pub vector_store: Arc<VectorStore>,
     /// BM25 keyword search over memory files.
     pub keyword_store: Arc<KeywordStore>,
@@ -68,7 +68,7 @@ impl AppState {
         let landing_url = config.landing_url.clone();
         let landing_auth_token = config.auth_token.clone();
 
-        // Open embedded LanceDB vector store
+        // Open the local derived vector index.
         let vector_store = VectorStore::connect(&config::workspace_root()).await;
 
         // Fetch plan from landing API if configured
