@@ -246,7 +246,7 @@ GOOGLE_AI = ""       # Optional — embeddings + media analysis
 ELEVENLABS = ""      # Optional — text-to-speech
 CONF
     log "created $BOLLY_DIR/config.toml"
-    log "auth token: ${BOLD}$AUTH_TOKEN${NC}"
+    info "authentication token saved in $BOLLY_DIR/config.toml"
 else
     log "config already exists, skipping"
     # Backfill auth_token if empty (upgrade from older install)
@@ -256,7 +256,6 @@ else
         sed -i.bak "s/^auth_token\s*=.*/auth_token = \"$AUTH_TOKEN\"/" "$BOLLY_DIR/config.toml"
         rm -f "$BOLLY_DIR/config.toml.bak"
         log "generated auth token for existing install"
-        log "auth token: ${BOLD}$AUTH_TOKEN${NC}"
     fi
 fi
 
@@ -300,11 +299,14 @@ chmod +x "$BIN_DIR/update"
 
 # ─── Platform-specific service ────────────────────────────────────────────────
 step "setting up service"
+SERVICE_KIND="none"
 
 if [ "$PLATFORM" = "linux" ]; then
     # ── systemd ──
     if command -v systemctl &>/dev/null && [ "$(id -u)" -eq 0 ]; then
-        SERVICE_FILE="/etc/systemd/system/bolly.service"
+        SYSTEMD_SYSTEM_DIR="${BOLLY_SYSTEMD_SYSTEM_DIR:-/etc/systemd/system}"
+        mkdir -p "$SYSTEMD_SYSTEM_DIR"
+        SERVICE_FILE="$SYSTEMD_SYSTEM_DIR/bolly.service"
         cat > "$SERVICE_FILE" <<EOF
 [Unit]
 Description=Bolly AI Companion
@@ -324,7 +326,7 @@ RestartSec=3
 WantedBy=multi-user.target
 EOF
         systemctl daemon-reload
-        systemctl enable bolly >/dev/null 2>&1
+        SERVICE_KIND="systemd-system"
         log "systemd service created"
         info "start:   sudo systemctl start bolly"
         info "logs:    sudo journalctl -u bolly -f"
@@ -350,7 +352,7 @@ RestartSec=3
 WantedBy=default.target
 EOF
         systemctl --user daemon-reload
-        systemctl --user enable bolly >/dev/null 2>&1
+        SERVICE_KIND="systemd-user"
         log "user systemd service created"
         info "start:   systemctl --user start bolly"
         info "logs:    journalctl --user -u bolly -f"
@@ -394,9 +396,10 @@ elif [ "$PLATFORM" = "macos" ]; then
 </dict>
 </plist>
 EOF
+    SERVICE_KIND="launchd"
     log "launchd service created"
-    info "start:   launchctl load $PLIST"
-    info "stop:    launchctl unload $PLIST"
+    info "start:   launchctl bootstrap gui/$(id -u) $PLIST"
+    info "stop:    launchctl bootout gui/$(id -u)/dev.bollyai.bolly"
     info "logs:    tail -f $BOLLY_DIR/bolly.log"
 fi
 
@@ -407,9 +410,11 @@ RC_FILE="$HOME/.${SHELL_NAME}rc"
 if ! echo "$PATH" | grep -q "$BIN_DIR"; then
     EXPORT_LINE="export PATH=\"$BIN_DIR:\$PATH\""
     if [ -f "$RC_FILE" ] && ! grep -q "$BIN_DIR" "$RC_FILE"; then
-        echo "" >> "$RC_FILE"
-        echo "# bolly" >> "$RC_FILE"
-        echo "$EXPORT_LINE" >> "$RC_FILE"
+        {
+            echo ""
+            echo "# bolly"
+            echo "$EXPORT_LINE"
+        } >> "$RC_FILE"
         log "added to PATH in $RC_FILE"
     fi
 fi
@@ -429,31 +434,68 @@ if [ -f "$BOLLY_DIR/config.toml" ]; then
 fi
 BOLLY_URL="http://localhost:$BOLLY_PORT"
 
-# Stop any running bolly instance
-OLD_PID=$(pgrep -f "$BIN_DIR/bolly" 2>/dev/null | head -1)
-if [ -n "$OLD_PID" ]; then
-    info "stopping old instance (PID: $OLD_PID)..."
-    kill "$OLD_PID" 2>/dev/null
-    sleep 1
-    kill -9 "$OLD_PID" 2>/dev/null || true
-    log "stopped old instance"
-fi
+find_exact_bolly_pids() {
+    ps -axo pid=,command= | while read -r pid command; do
+        if [ "$command" = "$BIN" ]; then
+            printf '%s\n' "$pid"
+        fi
+    done
+}
 
-# Unload launchd/systemd if loaded (will re-create below)
-if [ "$PLATFORM" = "macos" ]; then
-    PLIST="$HOME/Library/LaunchAgents/dev.bollyai.bolly.plist"
-    launchctl unload "$PLIST" 2>/dev/null || true
-elif command -v systemctl &>/dev/null; then
-    systemctl --user stop bolly 2>/dev/null || true
-fi
+stop_stray_bolly() {
+    local pids remaining pid
+    pids=$(find_exact_bolly_pids)
+    [ -z "$pids" ] && return 0
 
-# Start fresh
-"$BIN" &>/dev/null &
-BOLLY_PID=$!
+    for pid in $pids; do
+        info "stopping unmanaged bolly process (PID: $pid)..."
+        kill "$pid" 2>/dev/null || true
+    done
+
+    for _ in $(seq 1 20); do
+        remaining=$(find_exact_bolly_pids)
+        [ -z "$remaining" ] && return 0
+        sleep 0.1
+    done
+
+    fail "could not stop the existing Bolly process (PID: $remaining)"
+}
+
+# Start through the native service manager so the installed service is the
+# process we verify. Fall back to a direct process only without a service manager.
+case "$SERVICE_KIND" in
+    launchd)
+        LAUNCH_DOMAIN="gui/$(id -u)"
+        LAUNCH_SERVICE="$LAUNCH_DOMAIN/dev.bollyai.bolly"
+        launchctl bootout "$LAUNCH_SERVICE" >/dev/null 2>&1 || true
+        stop_stray_bolly
+        launchctl bootstrap "$LAUNCH_DOMAIN" "$PLIST"
+        launchctl kickstart -k "$LAUNCH_SERVICE"
+        launchctl print "$LAUNCH_SERVICE" >/dev/null
+        ;;
+    systemd-system)
+        systemctl stop bolly >/dev/null 2>&1 || true
+        stop_stray_bolly
+        systemctl enable bolly >/dev/null
+        systemctl restart bolly
+        systemctl is-active --quiet bolly
+        ;;
+    systemd-user)
+        systemctl --user stop bolly >/dev/null 2>&1 || true
+        stop_stray_bolly
+        systemctl --user enable bolly >/dev/null
+        systemctl --user restart bolly
+        systemctl --user is-active --quiet bolly
+        ;;
+    none)
+        stop_stray_bolly
+        "$BIN" &>/dev/null &
+        ;;
+esac
 
 info "waiting for bolly to start..."
-for i in $(seq 1 30); do
-    if curl -sf "$BOLLY_URL/api/health" >/dev/null 2>&1; then
+for _ in $(seq 1 30); do
+    if curl -sf "$BOLLY_URL/healthz" >/dev/null 2>&1; then
         break
     fi
     sleep 0.5
@@ -463,7 +505,7 @@ done
 AUTH_TOKEN=$(grep -E '^auth_token\s*=' "$BOLLY_DIR/config.toml" | head -1 | sed 's/[^=]*=\s*//' | tr -d ' "')
 AUTH_URL="$BOLLY_URL/auth?token=$AUTH_TOKEN"
 
-if curl -sf "$BOLLY_URL/api/health" >/dev/null 2>&1; then
+if curl -sf "$BOLLY_URL/healthz" >/dev/null 2>&1; then
     log "bolly is running on port $BOLLY_PORT"
 
     # Open browser with auth
@@ -478,15 +520,8 @@ if curl -sf "$BOLLY_URL/api/health" >/dev/null 2>&1; then
     echo -e "${BOLD}  │${NC}  ${GREEN}bolly is ready!${NC}            ${BOLD}│${NC}"
     echo -e "${BOLD}  └─────────────────────────────┘${NC}"
     echo ""
-    echo -e "  ${CYAN}${AUTH_URL}${NC}"
+    echo -e "  ${CYAN}${BOLLY_URL}${NC}"
     echo ""
 else
-    warn "bolly didn't start automatically"
-    echo ""
-    echo -e "${BOLD}  ┌─────────────────────────────┐${NC}"
-    echo -e "${BOLD}  │${NC}  ${GREEN}installation complete!${NC}     ${BOLD}│${NC}"
-    echo -e "${BOLD}  └─────────────────────────────┘${NC}"
-    echo ""
-    echo -e "  ${YELLOW}→${NC} Run ${BOLD}bolly${NC} and visit ${CYAN}${BOLLY_URL}${NC}"
-    echo ""
+    fail "bolly service did not become healthy — check $BOLLY_DIR/bolly.log"
 fi
