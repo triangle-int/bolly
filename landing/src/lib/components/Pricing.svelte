@@ -1,25 +1,5 @@
 <script lang="ts">
 	import Reveal from './Reveal.svelte';
-
-	const plans = [
-		{
-			name: 'companion',
-			desc: 'Everything you need',
-			price: 10,
-			features: [
-				'Bring your own API key',
-				'No rate limits',
-				'20 GB storage',
-				'Persistent memory',
-				'Web browsing',
-				'Email & calendar',
-				'Computer use',
-			],
-			featured: true,
-			badge: 'byok',
-			icon: '/assets/plan-companion.png',
-		},
-	];
 </script>
 
 <section class="py-28" id="pricing">
@@ -32,7 +12,7 @@
 		</Reveal>
 		<Reveal delay={200}>
 			<p class="text-[0.9375rem] text-text-dim max-w-[480px] mb-10">
-				Bring your own Anthropic API key — pay only for hosting. No rate limits, full control.
+				Bring your own Anthropic API key. No rate limits, full control.
 			</p>
 		</Reveal>
 
@@ -80,42 +60,6 @@
 						</a>
 					</div>
 				</div>
-
-				<!-- Cloud -->
-				{#each plans as plan}
-					<div class="price-card" class:featured={plan.featured}>
-						{#if plan.badge}
-							<div class="price-badge">{plan.badge}</div>
-						{/if}
-
-						<div class="price-card-inner">
-							<img src={plan.icon} alt="" class="plan-icon" />
-							<div class="font-display italic text-xl text-text mb-1">{plan.name}</div>
-							<div class="text-xs text-text-ghost mb-6">{plan.desc}</div>
-
-							<div class="price-amount">
-								<span class="text-xl text-text-dim font-light">$</span>
-								<span class="font-display italic text-5xl text-text leading-none -tracking-wider">
-									{plan.price}
-								</span>
-							</div>
-							<div class="text-[0.8125rem] text-text-ghost mb-8">per month</div>
-
-							<ul class="list-none mb-8 space-y-1.5 flex-1">
-								{#each plan.features as feature}
-									<li class="text-[0.8125rem] text-text-dim flex items-center gap-2">
-										<span class="w-1 h-1 rounded-full shrink-0" style="background: oklch(0.55 0.08 240 / 30%);"></span>
-										{feature}
-									</li>
-								{/each}
-							</ul>
-
-							<a href="/signup" class="price-btn" class:price-btn-featured={plan.featured}>
-								Get started
-							</a>
-						</div>
-					</div>
-				{/each}
 			</div>
 		</Reveal>
 
@@ -126,13 +70,6 @@
 </section>
 
 <style>
-	.plan-icon {
-		width: 48px;
-		height: 48px;
-		object-fit: contain;
-		margin-bottom: 1rem;
-	}
-
 	.section-label {
 		font-size: 0.8rem;
 		letter-spacing: 0.15em;
@@ -154,9 +91,9 @@
 
 	.pricing-grid {
 		display: grid;
-		grid-template-columns: repeat(2, 1fr);
+		grid-template-columns: 1fr;
 		gap: 1.5rem;
-		max-width: 800px;
+		max-width: 400px;
 		margin: 0 auto;
 		padding-top: 0.75rem;
 	}
@@ -214,28 +151,6 @@
 			inset 0 1px 0 oklch(1 0 0 / 6%);
 	}
 
-	.price-card.featured {
-		border-color: oklch(0.78 0.12 75 / 15%);
-		border-top-color: oklch(0.78 0.12 75 / 25%);
-		background: oklch(0.78 0.12 75 / 3%);
-	}
-
-	.price-card.featured .price-card-inner::before {
-		background: linear-gradient(90deg, transparent, oklch(0.78 0.12 75 / 25%), transparent);
-	}
-
-	.price-card.featured .price-card-inner::after {
-		background: linear-gradient(180deg, oklch(0.78 0.12 75 / 5%) 0%, transparent 100%);
-	}
-
-	.price-card.featured:hover {
-		border-color: oklch(0.78 0.12 75 / 30%);
-		box-shadow:
-			0 4px 32px oklch(0.78 0.12 75 / 8%),
-			0 0 60px oklch(0.78 0.12 75 / 4%),
-			inset 0 1px 0 oklch(0.78 0.12 75 / 10%);
-	}
-
 	.price-card-inner {
 		position: relative;
 		z-index: 3;
@@ -245,24 +160,6 @@
 		flex: 1;
 		overflow: hidden;
 		border-radius: 1rem;
-	}
-
-	.price-badge {
-		position: absolute;
-		top: -0.6rem;
-		left: 50%;
-		transform: translateX(-50%);
-		font-size: 0.85rem;
-		letter-spacing: 0.1em;
-		text-transform: uppercase;
-		padding: 0.25rem 0.875rem;
-		border-radius: 1rem;
-		background: oklch(0.78 0.12 75 / 8%);
-		backdrop-filter: var(--glass-blur);
-		border: 1px solid oklch(0.78 0.12 75 / 15%);
-		border-top-color: oklch(0.78 0.12 75 / 25%);
-		color: var(--color-warm);
-		z-index: 4;
 	}
 
 	.price-amount {
@@ -309,17 +206,6 @@
 		box-shadow: inset 0 1px 0 oklch(1 0 0 / 8%);
 	}
 
-	.price-btn-featured {
-		background: oklch(0.78 0.12 75 / 10%);
-		border-color: oklch(0.78 0.12 75 / 18%);
-		border-top-color: oklch(0.78 0.12 75 / 28%);
-		color: var(--color-warm);
-	}
-
-	.price-btn-featured::before {
-		background: linear-gradient(180deg, oklch(0.78 0.12 75 / 6%) 0%, transparent 100%);
-	}
-
 	.install-cmd {
 		padding: 0.625rem 1rem;
 		border-radius: 0.5rem;
@@ -344,11 +230,4 @@
 		margin-top: 2rem;
 	}
 
-	.price-btn-featured:hover {
-		background: oklch(0.78 0.12 75 / 15%);
-		border-color: oklch(0.78 0.12 75 / 30%);
-		box-shadow:
-			0 0 30px oklch(0.78 0.12 75 / 8%),
-			inset 0 1px 0 oklch(0.78 0.12 75 / 12%);
-	}
 </style>
