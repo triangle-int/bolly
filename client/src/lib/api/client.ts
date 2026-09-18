@@ -47,7 +47,13 @@ function deleteCookie(name: string) {
 	document.cookie = `${name}=; path=/; max-age=0`;
 }
 
+export function isDesktopRelay(): boolean {
+	return typeof window !== "undefined" && "__BOLLY_DESKTOP_RELAY__" in window;
+}
+
 export function getAuthToken(): string | null {
+	// Desktop authenticates in the native exact-origin relay, never in browser URLs.
+	if (isDesktopRelay()) return null;
 	if (typeof localStorage === "undefined") return getCookie(TOKEN_COOKIE);
 	// Try localStorage first, fall back to cookie (for PWA isolated storage)
 	return localStorage.getItem(TOKEN_KEY) ?? getCookie(TOKEN_COOKIE);
@@ -62,6 +68,7 @@ export function mediaUrl(slug: string, uploadId: string): string {
 }
 
 export function setAuthToken(token: string) {
+	if (isDesktopRelay()) throw new Error("Reconnect from the desktop dashboard.");
 	if (typeof localStorage !== "undefined") {
 		localStorage.setItem(TOKEN_KEY, token);
 	}

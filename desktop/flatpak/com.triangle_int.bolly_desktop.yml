@@ -13,9 +13,11 @@ finish-args:
   - --share=network
   - --talk-name=org.kde.StatusNotifierWatcher
   - --filesystem=xdg-run/tray-icon:create
+  # OS credential store
+  - --talk-name=org.freedesktop.secrets
   # Accessibility (for computer use)
   - --talk-name=org.a11y.Bus
-  # Single instance (deep link forwarding)
+  # Single instance window focus
   - --talk-name=org.com_triangle_int_bolly_desktop.SingleInstance
   - --own-name=org.com_triangle_int_bolly_desktop.SingleInstance
 
