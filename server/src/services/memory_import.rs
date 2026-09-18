@@ -94,14 +94,32 @@ pub fn spawn_import(
 ) {
     tokio::spawn(async move {
         match run_import(
-            &http, &api_key, &workspace_dir, &instance_slug,
-            &upload_dir, &events, &vector_store, &google_ai_key,
-        ).await {
+            &http,
+            &api_key,
+            &workspace_dir,
+            &instance_slug,
+            &upload_dir,
+            &events,
+            &vector_store,
+            &google_ai_key,
+        )
+        .await
+        {
             Ok(count) => {
-                emit(&events, &instance_slug, ImportStage::Done, &format!("imported {count} memories"));
+                emit(
+                    &events,
+                    &instance_slug,
+                    ImportStage::Done,
+                    &format!("imported {count} memories"),
+                );
             }
             Err(e) => {
-                emit(&events, &instance_slug, ImportStage::Error, &format!("import failed: {e}"));
+                emit(
+                    &events,
+                    &instance_slug,
+                    ImportStage::Error,
+                    &format!("import failed: {e}"),
+                );
             }
         }
     });
@@ -127,34 +145,77 @@ async fn run_import(
     google_ai_key: &str,
 ) -> anyhow::Result<usize> {
     // ── Stage 0: Parse uploaded files into chunks ──
-    emit(events, instance_slug, ImportStage::Parsing, "parsing uploaded files...");
+    emit(
+        events,
+        instance_slug,
+        ImportStage::Parsing,
+        "parsing uploaded files...",
+    );
     let chunks = parse_upload_dir(upload_dir)?;
     if chunks.is_empty() {
         anyhow::bail!("no data found to import");
     }
-    emit(events, instance_slug, ImportStage::Parsing, &format!("found {} chunks to process", chunks.len()));
+    emit(
+        events,
+        instance_slug,
+        ImportStage::Parsing,
+        &format!("found {} chunks to process", chunks.len()),
+    );
 
     // ── Stage 1: Batch extraction (Haiku) ──
-    emit(events, instance_slug, ImportStage::Extracting, &format!("sending {} chunks to extraction...", chunks.len()));
+    emit(
+        events,
+        instance_slug,
+        ImportStage::Extracting,
+        &format!("sending {} chunks to extraction...", chunks.len()),
+    );
     let batch_id = create_extraction_batch(http, api_key, &chunks).await?;
-    emit(events, instance_slug, ImportStage::Extracting, &format!("batch {batch_id} created, waiting..."));
+    emit(
+        events,
+        instance_slug,
+        ImportStage::Extracting,
+        &format!("batch {batch_id} created, waiting..."),
+    );
 
     let facts = poll_and_collect(http, api_key, &batch_id, events, instance_slug).await?;
-    emit(events, instance_slug, ImportStage::Extracting, &format!("extracted {} raw facts", facts.len()));
+    emit(
+        events,
+        instance_slug,
+        ImportStage::Extracting,
+        &format!("extracted {} raw facts", facts.len()),
+    );
 
     if facts.is_empty() {
         anyhow::bail!("no facts extracted from data");
     }
 
     // ── Stage 2: Organization (single Sonnet call) ──
-    emit(events, instance_slug, ImportStage::Organizing, "organizing and deduplicating...");
-    let memory_dir = workspace_dir.join("instances").join(instance_slug).join("memory");
+    emit(
+        events,
+        instance_slug,
+        ImportStage::Organizing,
+        "organizing and deduplicating...",
+    );
+    let memory_dir = workspace_dir
+        .join("instances")
+        .join(instance_slug)
+        .join("memory");
     let existing_catalog = memory::build_library_catalog(workspace_dir, instance_slug);
     let ops = organize_facts(http, api_key, &facts, &existing_catalog).await?;
-    emit(events, instance_slug, ImportStage::Organizing, &format!("{} memory files to write", ops.len()));
+    emit(
+        events,
+        instance_slug,
+        ImportStage::Organizing,
+        &format!("{} memory files to write", ops.len()),
+    );
 
     // ── Stage 3: Write to memory + index ──
-    emit(events, instance_slug, ImportStage::Writing, "writing memories...");
+    emit(
+        events,
+        instance_slug,
+        ImportStage::Writing,
+        "writing memories...",
+    );
     let count = ops.len();
     for op in &ops {
         let full_path = memory_dir.join(&op.path);
@@ -169,13 +230,19 @@ async fn run_import(
             let mut chunk_vecs = Vec::new();
             for chunk in &chunks {
                 if let Ok(vec) = embedding::embed_text(
-                    google_ai_key, chunk, embedding::TaskType::RetrievalDocument,
-                ).await {
+                    google_ai_key,
+                    chunk,
+                    embedding::TaskType::RetrievalDocument,
+                )
+                .await
+                {
                     chunk_vecs.push((chunk.clone(), vec));
                 }
             }
             if !chunk_vecs.is_empty() {
-                let _ = vector_store.upsert_text_memory(instance_slug, &op.path, chunk_vecs).await;
+                let _ = vector_store
+                    .upsert_text_memory(instance_slug, &op.path, chunk_vecs)
+                    .await;
             }
         }
     }
@@ -206,7 +273,10 @@ fn parse_upload_dir(dir: &Path) -> anyhow::Result<Vec<ImportChunk>> {
         }
 
         let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown");
 
         match ext {
             "json" => {
@@ -245,7 +315,8 @@ fn parse_json_file(name: &str, raw: &str) -> Vec<ImportChunk> {
             "conversations.json" => {
                 for (i, conv) in arr.iter().enumerate() {
                     let conv_name = conv["name"].as_str().unwrap_or("untitled");
-                    let messages = conv["chat_messages"].as_array()
+                    let messages = conv["chat_messages"]
+                        .as_array()
                         .or_else(|| conv["messages"].as_array());
 
                     if let Some(msgs) = messages {
@@ -262,7 +333,8 @@ fn parse_json_file(name: &str, raw: &str) -> Vec<ImportChunk> {
             "memories.json" => {
                 for (i, mem) in arr.iter().enumerate() {
                     // Claude's memories.json has a `conversations_memory` field
-                    let text = mem["conversations_memory"].as_str()
+                    let text = mem["conversations_memory"]
+                        .as_str()
                         .or_else(|| mem["content"].as_str())
                         .or_else(|| mem["text"].as_str())
                         .unwrap_or("");
@@ -279,7 +351,8 @@ fn parse_json_file(name: &str, raw: &str) -> Vec<ImportChunk> {
             "projects.json" => {
                 for (i, proj) in arr.iter().enumerate() {
                     let proj_name = proj["name"].as_str().unwrap_or("untitled");
-                    let instructions = proj["instructions"].as_str()
+                    let instructions = proj["instructions"]
+                        .as_str()
                         .or_else(|| proj["description"].as_str())
                         .unwrap_or("");
                     if !instructions.trim().is_empty() {
@@ -326,18 +399,21 @@ fn format_conversation(name: &str, messages: &[serde_json::Value]) -> String {
 
     for msg in messages {
         let sender = msg["sender"].as_str().unwrap_or("unknown");
-        let text = msg["text"].as_str()
+        let text = msg["text"]
+            .as_str()
             .or_else(|| {
-                msg["content"].as_array()
-                    .and_then(|blocks| {
-                        blocks.iter()
-                            .find(|b| b["type"].as_str() == Some("text"))
-                            .and_then(|b| b["text"].as_str())
-                    })
+                msg["content"].as_array().and_then(|blocks| {
+                    blocks
+                        .iter()
+                        .find(|b| b["type"].as_str() == Some("text"))
+                        .and_then(|b| b["text"].as_str())
+                })
             })
             .unwrap_or("");
 
-        if text.is_empty() { continue; }
+        if text.is_empty() {
+            continue;
+        }
 
         let line = format!("{sender}: {text}\n\n");
         total_len += line.len();
@@ -378,19 +454,23 @@ async fn create_extraction_batch(
     api_key: &str,
     chunks: &[ImportChunk],
 ) -> anyhow::Result<String> {
-    let requests: Vec<serde_json::Value> = chunks.iter().map(|chunk| {
-        serde_json::json!({
-            "custom_id": chunk.id,
-            "params": {
-                "model": CHEAP_MODEL,
-                "max_tokens": 2048,
-                "system": EXTRACTION_SYSTEM,
-                "messages": [{"role": "user", "content": chunk.content}]
-            }
+    let requests: Vec<serde_json::Value> = chunks
+        .iter()
+        .map(|chunk| {
+            serde_json::json!({
+                "custom_id": chunk.id,
+                "params": {
+                    "model": CHEAP_MODEL,
+                    "max_tokens": 2048,
+                    "system": EXTRACTION_SYSTEM,
+                    "messages": [{"role": "user", "content": chunk.content}]
+                }
+            })
         })
-    }).collect();
+        .collect();
 
-    let resp = http.post("https://api.anthropic.com/v1/messages/batches")
+    let resp = http
+        .post("https://api.anthropic.com/v1/messages/batches")
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
@@ -419,7 +499,10 @@ async fn poll_and_collect(
     loop {
         tokio::time::sleep(Duration::from_secs(10)).await;
 
-        let resp = http.get(format!("https://api.anthropic.com/v1/messages/batches/{batch_id}"))
+        let resp = http
+            .get(format!(
+                "https://api.anthropic.com/v1/messages/batches/{batch_id}"
+            ))
             .header("x-api-key", api_key)
             .header("anthropic-version", "2023-06-01")
             .send()
@@ -430,7 +513,8 @@ async fn poll_and_collect(
 
         match batch.processing_status.as_str() {
             "ended" => {
-                let results_url = batch.results_url
+                let results_url = batch
+                    .results_url
                     .ok_or_else(|| anyhow::anyhow!("batch ended but no results_url"))?;
                 return download_results(http, api_key, &results_url).await;
             }
@@ -438,7 +522,12 @@ async fn poll_and_collect(
                 anyhow::bail!("batch {}: {}", batch_id, batch.processing_status);
             }
             status => {
-                emit(events, instance_slug, ImportStage::Extracting, &format!("batch status: {status}..."));
+                emit(
+                    events,
+                    instance_slug,
+                    ImportStage::Extracting,
+                    &format!("batch status: {status}..."),
+                );
             }
         }
     }
@@ -449,7 +538,8 @@ async fn download_results(
     api_key: &str,
     results_url: &str,
 ) -> anyhow::Result<Vec<String>> {
-    let resp = http.get(results_url)
+    let resp = http
+        .get(results_url)
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
         .send()
@@ -459,7 +549,9 @@ async fn download_results(
     let mut facts = Vec::new();
 
     for line in body.lines() {
-        if line.trim().is_empty() { continue; }
+        if line.trim().is_empty() {
+            continue;
+        }
         let result: BatchResultLine = match serde_json::from_str(line) {
             Ok(r) => r,
             Err(e) => {
@@ -468,7 +560,9 @@ async fn download_results(
             }
         };
 
-        if result.result.result_type != "succeeded" { continue; }
+        if result.result.result_type != "succeeded" {
+            continue;
+        }
         if let Some(msg) = result.result.message {
             for block in msg.content {
                 if block.block_type == "text" && !block.text.contains("SKIP") {
@@ -535,7 +629,8 @@ async fn organize_facts(
         }]
     });
 
-    let resp = http.post("https://api.anthropic.com/v1/messages")
+    let resp = http
+        .post("https://api.anthropic.com/v1/messages")
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
@@ -554,15 +649,22 @@ async fn organize_facts(
     let text = resp_json["content"][0]["text"].as_str().unwrap_or("");
 
     // Parse JSON from response — handle possible markdown fences
-    let json_text = text.trim()
-        .strip_prefix("```json").unwrap_or(text.trim())
-        .strip_prefix("```").unwrap_or(text.trim())
-        .strip_suffix("```").unwrap_or(text.trim())
+    let json_text = text
+        .trim()
+        .strip_prefix("```json")
+        .unwrap_or(text.trim())
+        .strip_prefix("```")
+        .unwrap_or(text.trim())
+        .strip_suffix("```")
+        .unwrap_or(text.trim())
         .trim();
 
-    let ops: Vec<MemoryOp> = serde_json::from_str(json_text)
-        .map_err(|e| anyhow::anyhow!("failed to parse organization output: {e}\nraw: {}", &json_text[..json_text.len().min(500)]))?;
+    let ops: Vec<MemoryOp> = serde_json::from_str(json_text).map_err(|e| {
+        anyhow::anyhow!(
+            "failed to parse organization output: {e}\nraw: {}",
+            &json_text[..json_text.len().min(500)]
+        )
+    })?;
 
     Ok(ops)
 }
-

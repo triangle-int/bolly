@@ -25,10 +25,7 @@ pub fn save_rhythm(instance_dir: &Path, rhythm: &InteractionRhythm) {
 
 /// Recompute rhythm from all message history across all chats.
 pub fn recompute_rhythm(workspace_dir: &Path, slug: &str) -> InteractionRhythm {
-    let chats_dir = workspace_dir
-        .join("instances")
-        .join(slug)
-        .join("chats");
+    let chats_dir = workspace_dir.join("instances").join(slug).join("chats");
 
     let mut all_user_msgs: Vec<(i64, usize)> = Vec::new(); // (unix_secs, content_len)
 
@@ -44,9 +41,16 @@ pub fn recompute_rhythm(workspace_dir: &Path, slug: &str) -> InteractionRhythm {
                     // Use entry timestamp if available
                     if let Some(ref ts_str) = he.ts {
                         if let Ok(ts_millis) = ts_str.parse::<i64>() {
-                            let content_len: usize = content.iter().map(|b| {
-                                if let crate::services::llm::ContentBlock::Text { text } = b { text.len() } else { 0 }
-                            }).sum();
+                            let content_len: usize = content
+                                .iter()
+                                .map(|b| {
+                                    if let crate::services::llm::ContentBlock::Text { text } = b {
+                                        text.len()
+                                    } else {
+                                        0
+                                    }
+                                })
+                                .sum();
                             all_user_msgs.push((ts_millis / 1000, content_len));
                         }
                     }
@@ -128,9 +132,16 @@ pub fn snapshot_before_clear(workspace_dir: &Path, slug: &str) {
                     if let Some(ref ts_str) = he.ts {
                         if let Ok(ts_ms) = ts_str.parse::<i64>() {
                             let ts = ts_ms / 1000;
-                            let content_len: usize = content.iter().map(|b| {
-                                if let crate::services::llm::ContentBlock::Text { text } = b { text.len() } else { 0 }
-                            }).sum();
+                            let content_len: usize = content
+                                .iter()
+                                .map(|b| {
+                                    if let crate::services::llm::ContentBlock::Text { text } = b {
+                                        text.len()
+                                    } else {
+                                        0
+                                    }
+                                })
+                                .sum();
                             timestamps.push(ts);
                             msg_count += 1;
                             total_chars += content_len as u64;
@@ -138,7 +149,8 @@ pub fn snapshot_before_clear(workspace_dir: &Path, slug: &str) {
                             if let Some(dt) = Utc.timestamp_opt(ts, 0).single() {
                                 let local = dt.with_timezone(&tz);
                                 rhythm.hourly_activity[local.hour() as usize] += 1;
-                                rhythm.daily_activity[local.weekday().num_days_from_monday() as usize] += 1;
+                                rhythm.daily_activity
+                                    [local.weekday().num_days_from_monday() as usize] += 1;
                                 let date = local.format("%Y-%m-%d").to_string();
                                 *rhythm.daily_history.entry(date).or_insert(0) += 1;
                             }
@@ -162,15 +174,21 @@ pub fn snapshot_before_clear(workspace_dir: &Path, slug: &str) {
     let mut intervals: Vec<i64> = Vec::new();
     for w in timestamps.windows(2) {
         let gap = w[1] - w[0];
-        if gap > 0 && gap < SESSION_GAP_SECS { intervals.push(gap); }
+        if gap > 0 && gap < SESSION_GAP_SECS {
+            intervals.push(gap);
+        }
     }
     if !intervals.is_empty() {
-        rhythm.avg_response_interval_secs = intervals.iter().sum::<i64>() as f64 / intervals.len() as f64;
+        rhythm.avg_response_interval_secs =
+            intervals.iter().sum::<i64>() as f64 / intervals.len() as f64;
     }
 
     rhythm.updated_at = Utc::now().timestamp();
     save_rhythm(&instance_dir, &rhythm);
-    log::info!("[rhythm] snapshot before clear: {} messages accumulated for {slug}", rhythm.total_messages);
+    log::info!(
+        "[rhythm] snapshot before clear: {} messages accumulated for {slug}",
+        rhythm.total_messages
+    );
 }
 
 /// Build a human-readable rhythm insight string for injection into prompts.
@@ -242,7 +260,9 @@ pub fn build_rhythm_insights(
             if ratio > 2.0 {
                 insights.push("their messages are longer than usual — being more detailed".into());
             } else if ratio < 0.4 && session.msg_count > 2 {
-                insights.push("their messages are shorter than usual — could be distracted or terse".into());
+                insights.push(
+                    "their messages are shorter than usual — could be distracted or terse".into(),
+                );
             }
         }
     }

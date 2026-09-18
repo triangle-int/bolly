@@ -2,17 +2,17 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use tokio::sync::{broadcast, Mutex, RwLock};
+use tokio::sync::{Mutex, RwLock, broadcast};
 use tokio_util::sync::CancellationToken;
 
 use crate::{
     config::{self, Config},
     domain::events::ServerEvent,
-    services::llm::LlmBackend,
-    services::mcp::McpRegistry,
     services::keyword_search::KeywordStore,
-    services::vector::VectorStore,
+    services::llm::LlmBackend,
     services::machine_registry::MachineRegistry,
+    services::mcp::McpRegistry,
+    services::vector::VectorStore,
 };
 
 /// A pending secret request waiting for user input.
@@ -108,7 +108,7 @@ impl AppState {
         }
     }
 
-    /// Reload config from disk and rebuild LLM if tokens changed.
+    /// Reload config from disk and rebuild LLM if credentials or model selection changed.
     pub async fn reload_config(&self) {
         let new_config = match config::load_config() {
             Ok(c) => c,
@@ -122,9 +122,13 @@ impl AppState {
             let old = self.config.read().await;
             let tokens = old.llm.tokens != new_config.llm.tokens;
             let provider = old.llm.provider != new_config.llm.provider;
-            let llm = tokens || provider;
+            let models = old.llm.profiles != new_config.llm.profiles;
+            let llm = tokens || provider || models;
             let mcp = old.mcp_servers.len() != new_config.mcp_servers.len()
-                || old.mcp_servers.iter().zip(new_config.mcp_servers.iter())
+                || old
+                    .mcp_servers
+                    .iter()
+                    .zip(new_config.mcp_servers.iter())
                     .any(|(a, b)| a.name != b.name || a.url != b.url);
             (llm, mcp)
         };
@@ -132,12 +136,18 @@ impl AppState {
         if llm_changed {
             let new_llm = LlmBackend::from_config(&new_config);
             *self.llm.write().await = new_llm;
-            log::info!("config reloaded: LLM rebuilt (provider={:?})", new_config.llm.provider);
+            log::info!(
+                "config reloaded: LLM rebuilt (provider={:?})",
+                new_config.llm.provider
+            );
         }
 
         if mcp_changed {
             self.mcp_registry.reconnect(&new_config.mcp_servers).await;
-            log::info!("config reloaded: MCP servers reconnected ({} tools)", self.mcp_registry.tool_count().await);
+            log::info!(
+                "config reloaded: MCP servers reconnected ({} tools)",
+                self.mcp_registry.tool_count().await
+            );
         }
 
         // Preserve plan from API — it's not in config.toml
@@ -148,5 +158,4 @@ impl AppState {
             cfg.plan = plan;
         }
     }
-
 }

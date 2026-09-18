@@ -1,33 +1,51 @@
 //! Screen capture via the `screenshots` crate (cross-platform).
 //! Takes a screenshot every second and stores it as JPEG in memory.
 
-use std::sync::{Mutex, atomic::{AtomicBool, Ordering}};
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Mutex,
+};
 use std::time::Duration;
 
 static STREAMING: AtomicBool = AtomicBool::new(false);
+static CAPTURE_TASK: Mutex<Option<std::thread::JoinHandle<()>>> = Mutex::new(None);
 static LAST_FRAME: Mutex<Option<Vec<u8>>> = Mutex::new(None);
 
 pub fn start() -> Result<(), String> {
+    let mut task = CAPTURE_TASK
+        .lock()
+        .map_err(|_| "Capture state unavailable")?;
     if STREAMING.load(Ordering::Relaxed) {
         return Ok(());
+    }
+
+    if let Some(previous) = task.take() {
+        let _ = previous.join();
     }
 
     // Quick check that we can capture
     screenshots::Screen::all().map_err(|e| format!("no screens: {e}"))?;
 
     STREAMING.store(true, Ordering::Relaxed);
-    std::thread::spawn(|| {
+    *task = Some(std::thread::spawn(|| {
         if let Err(e) = capture_loop() {
             eprintln!("[recorder] error: {e}");
         }
         STREAMING.store(false, Ordering::Relaxed);
-    });
+    }));
     eprintln!("[recorder] started (screenshots, 1fps)");
     Ok(())
 }
 
 pub fn stop() -> Result<(), String> {
+    let mut task = CAPTURE_TASK
+        .lock()
+        .map_err(|_| "Capture state unavailable")?;
     STREAMING.store(false, Ordering::Relaxed);
+    if let Some(task) = task.take() {
+        let _ = task.join();
+    }
+    *LAST_FRAME.lock().map_err(|_| "Capture state unavailable")? = None;
     eprintln!("[recorder] stopped");
     Ok(())
 }
@@ -38,6 +56,11 @@ pub fn get_last_frame() -> Option<Vec<u8>> {
 
 pub fn is_recording() -> bool {
     STREAMING.load(Ordering::Relaxed)
+}
+
+#[cfg(test)]
+pub fn mark_recording_for_test() {
+    STREAMING.store(true, Ordering::Relaxed);
 }
 
 fn capture_loop() -> Result<(), String> {
@@ -65,8 +88,7 @@ fn take_screenshot_jpeg() -> Result<Vec<u8>, String> {
 
     let w = capture.width();
     let h = capture.height();
-    let rgba = image::RgbaImage::from_raw(w, h, capture.into_raw())
-        .ok_or("bad image buffer")?;
+    let rgba = image::RgbaImage::from_raw(w, h, capture.into_raw()).ok_or("bad image buffer")?;
     let img = DynamicImage::ImageRgba8(rgba);
 
     // Scale down for efficiency
@@ -81,7 +103,12 @@ fn take_screenshot_jpeg() -> Result<Vec<u8>, String> {
     let rgb = img.to_rgb8();
     let mut buf = Cursor::new(Vec::new());
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut buf, 50)
-        .encode(rgb.as_raw(), rgb.width(), rgb.height(), image::ExtendedColorType::Rgb8)
+        .encode(
+            rgb.as_raw(),
+            rgb.width(),
+            rgb.height(),
+            image::ExtendedColorType::Rgb8,
+        )
         .map_err(|e| e.to_string())?;
 
     Ok(buf.into_inner())

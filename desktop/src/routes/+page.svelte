@@ -1,51 +1,22 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { listen } from "@tauri-apps/api/event";
-  import { openUrl } from "@tauri-apps/plugin-opener";
-  import {
-    auth, init, setSession, logout, connectUrl, connectSelfHosted,
-    selfHostedConnectUrl, type Tenant, type SelfHostedConfig,
-  } from "$lib/auth.svelte";
+  import { auth, init, saveConnection, testConnection, openConnection, disconnect } from "$lib/auth.svelte";
   import { updater, checkForUpdates, installUpdate, dismissUpdate } from "$lib/updater.svelte";
-  import { load as loadStore } from "@tauri-apps/plugin-store";
 
-  const AUTH_URL = "https://bollyai.dev/desktop-auth";
 
   let splash = $state(true);
   let splashFading = $state(false);
-  let mode = $state<"cloud" | "selfhosted">("cloud");
-
-  // Self-hosted form
+  let editing = $state(false);
   let shUrl = $state("");
   let shToken = $state("");
-
-  async function restoreScreenRecordingPref() {
-    try {
-      const s = await loadStore("settings.json", { autoSave: true });
-      const saved = await s.get<boolean>("screen_recording_allowed");
-      if (saved === true) {
-        await invoke("set_screen_recording_allowed", { allowed: true });
-      }
-    } catch {}
-  }
 
   onMount(() => {
     init();
     checkForUpdates();
-    restoreScreenRecordingPref();
-
-    const unlisten = listen<string>("deep-link", (event) => {
-      try {
-        const url = new URL(event.payload);
-        if (url.protocol === "bolly:" && url.hostname === "callback") {
-          const session = url.searchParams.get("session");
-          if (session) setSession(session);
-        }
-      } catch {}
-    });
-
-    return () => { unlisten.then((fn) => fn()); };
+    invoke("get_screen_recording_allowed").catch(() => {});
+    const fallback = setTimeout(endSplash, 5000);
+    return () => clearTimeout(fallback);
   });
 
   function endSplash() {
@@ -53,58 +24,27 @@
     setTimeout(() => { splash = false; }, 600);
   }
 
-  let showPaste = $state(false);
-  let pasteValue = $state("");
-
-  function signIn() { openUrl(AUTH_URL); }
-
-  function submitCode() {
-    const v = pasteValue.trim();
-    if (v) setSession(v);
+  function edit() {
+    shUrl = auth.connection?.url ?? "";
+    shToken = "";
+    auth.error = null;
+    auth.message = null;
+    editing = true;
   }
 
-  function handleCodeKey(e: KeyboardEvent) {
-    if (e.key === "Enter") { e.preventDefault(); submitCode(); }
-    if (e.key === "Escape") { showPaste = false; pasteValue = ""; }
-  }
-
-  async function connect(tenant: Tenant) {
-    const instanceUrl = `https://${tenant.slug}.bollyai.dev`;
-    await invoke("connect_computer_use", {
-      instanceUrl,
-      authToken: tenant.authToken ?? "",
-    });
-    invoke("navigate", { url: connectUrl(tenant) });
-  }
-
-  async function connectSH() {
-    if (!shUrl.trim() || !shToken.trim()) return;
-    await connectSelfHosted(shUrl.trim(), shToken.trim());
-  }
-
-  async function openSelfHosted(config: SelfHostedConfig) {
-    await invoke("connect_computer_use", {
-      instanceUrl: config.url,
-      authToken: config.token,
-    });
-    invoke("navigate", { url: selfHostedConnectUrl(config) });
-  }
-
-  function handleSHKey(e: KeyboardEvent) {
-    if (e.key === "Enter") { e.preventDefault(); connectSH(); }
-  }
-
-  function statusColor(status: string): string {
-    switch (status) {
-      case "running": return "oklch(0.72 0.17 142)";
-      case "provisioning": return "oklch(0.78 0.12 75)";
-      case "error": return "oklch(0.65 0.20 25)";
-      default: return "oklch(0.50 0.03 240)";
+  async function save() {
+    if (await saveConnection(shUrl, shToken)) {
+      editing = false;
+      shToken = "";
     }
   }
 
-  function planLabel(plan: string): string {
-    return plan.charAt(0).toUpperCase() + plan.slice(1);
+  async function forget() {
+    shToken = "";
+    if (await disconnect()) {
+      editing = false;
+      shUrl = "";
+    }
   }
 </script>
 
@@ -136,8 +76,8 @@
         <img src="/icon.png" alt="" class="logo" />
         <span class="brand-name">bolly</span>
       </div>
-      {#if auth.session || auth.selfHosted}
-        <button class="sign-out-btn" onclick={logout}>Disconnect</button>
+      {#if auth.connection || auth.error}
+        <button class="sign-out-btn" onclick={forget} disabled={auth.loading}>Disconnect</button>
       {/if}
     </header>
 
@@ -169,114 +109,33 @@
     {/if}
 
     <main class="content">
-      {#if auth.loading && !splash}
-        <div class="center-message">
-          <div class="spinner"></div>
-        </div>
-      {:else if auth.selfHosted && !splash}
-        <!-- Self-hosted: connected -->
-        <div class="sign-in-card">
-          <h2 class="sign-in-title">self-hosted instance</h2>
-          <p class="sign-in-desc">{auth.selfHosted.url}</p>
-          <button class="sign-in-btn" onclick={() => openSelfHosted(auth.selfHosted!)}>
-            Open
-          </button>
-        </div>
-      {:else if !auth.session && !auth.selfHosted && !splash}
+      {#if !splash}
         <div class="sign-in-card">
           <h2 class="sign-in-title">connect to your companion</h2>
-
-          <!-- Mode tabs -->
-          <div class="mode-tabs">
-            <button class="mode-tab" class:mode-tab-active={mode === "cloud"} onclick={() => mode = "cloud"}>Cloud</button>
-            <button class="mode-tab" class:mode-tab-active={mode === "selfhosted"} onclick={() => mode = "selfhosted"}>Self-hosted</button>
-          </div>
-
-          {#if mode === "cloud"}
-            <p class="sign-in-desc">Sign in with your bollyai.dev account.</p>
-            <button class="sign-in-btn" onclick={signIn}>
-              Sign in with bollyai.dev
-            </button>
-            {#if !showPaste}
-              <button class="paste-toggle" onclick={() => showPaste = true}>
-                or paste a code
-              </button>
-            {:else}
-              <div class="paste-field">
-                <!-- svelte-ignore a11y_autofocus -->
-                <input
-                  class="paste-input"
-                  bind:value={pasteValue}
-                  onkeydown={handleCodeKey}
-                  placeholder="Paste session code..."
-                  autofocus
-                />
-                {#if pasteValue.trim()}
-                  <button class="paste-go" onclick={submitCode}>Connect</button>
-                {/if}
-              </div>
-            {/if}
-          {:else}
-            <p class="sign-in-desc">Connect to your own bolly server.</p>
-            {#if auth.error}
-              <p class="sh-error">{auth.error}</p>
-            {/if}
+          {#if auth.error}<p class="sh-error" role="alert">{auth.error}</p>{/if}
+          {#if auth.message}<p role="status">{auth.message}</p>{/if}
+          {#if auth.connection && !editing}
+            <p class="sign-in-desc">{auth.connection.url}</p>
             <div class="sh-form">
-              <input
-                class="paste-input"
-                bind:value={shUrl}
-                onkeydown={handleSHKey}
-                placeholder="Server URL (e.g. http://localhost:3000)"
-              />
-              <input
-                class="paste-input"
-                bind:value={shToken}
-                onkeydown={handleSHKey}
-                placeholder="Auth token (from config.toml)"
-                type="password"
-              />
-              <button class="sign-in-btn" onclick={connectSH} disabled={!shUrl.trim() || !shToken.trim()}>
-                Connect
-              </button>
+              <button class="sign-in-btn" onclick={openConnection} disabled={auth.loading}>Open / Reconnect</button>
+              <button class="sign-in-btn" onclick={() => testConnection(auth.connection!.url)} disabled={auth.loading}>Test connection</button>
+              <button class="sign-in-btn" onclick={edit} disabled={auth.loading}>Edit connection</button>
             </div>
+          {:else}
+            <p class="sign-in-desc">Connect to your own Bolly server. Your connection is saved on this computer.</p>
+            <form class="sh-form" onsubmit={(event) => { event.preventDefault(); save(); }}>
+              <label for="server-url">Server URL</label>
+              <input id="server-url" class="paste-input" bind:value={shUrl} placeholder="http://localhost:3000" disabled={auth.loading} required />
+              <label for="auth-token">Auth token</label>
+              <input id="auth-token" class="paste-input" bind:value={shToken} type="password" autocomplete="off" placeholder={auth.connection ? "Leave blank to keep saved token" : "Auth token from config.toml"} disabled={auth.loading} required={!auth.connection} />
+              <button class="sign-in-btn" type="submit" disabled={auth.loading || !shUrl.trim() || (!shToken.trim() && !auth.connection)}>Save connection</button>
+              <button class="sign-in-btn" type="button" onclick={() => testConnection(shUrl, shToken)} disabled={auth.loading || !shUrl.trim() || (!shToken.trim() && !auth.connection)}>Test connection</button>
+              {#if editing}
+                <button class="sign-in-btn" type="button" onclick={() => { editing = false; shToken = ""; auth.error = null; auth.message = null; }} disabled={auth.loading}>Cancel</button>
+              {/if}
+            </form>
           {/if}
-        </div>
-      {:else if auth.error && !splash}
-        <div class="center-message">
-          <p class="error-text">{auth.error}</p>
-          <button class="retry-btn" onclick={() => { import('$lib/auth.svelte').then(m => m.fetchTenants()); }}>Retry</button>
-        </div>
-      {:else if auth.tenants.length === 0 && !auth.loading && !splash}
-        <div class="center-message">
-          <p class="empty-text">No instances yet.</p>
-          <p class="empty-sub">Create one at <button class="link-btn" onclick={() => openUrl("https://bollyai.dev/dashboard")}>bollyai.dev</button></p>
-        </div>
-      {:else if auth.tenants.length > 0 && !splash}
-        <div class="instances">
-          <h2 class="section-title">your instances</h2>
-          <div class="instance-grid">
-            {#each auth.tenants as tenant (tenant.id)}
-              <button
-                class="instance-card"
-                disabled={tenant.status !== "running"}
-                onclick={() => connect(tenant)}
-              >
-                <div class="instance-header">
-                  <span class="instance-slug">{tenant.slug}</span>
-                  <span class="instance-plan">{planLabel(tenant.plan)}</span>
-                </div>
-                <div class="instance-footer">
-                  <span class="instance-status" style:color={statusColor(tenant.status)}>
-                    <span class="status-dot" style:background={statusColor(tenant.status)}></span>
-                    {tenant.status}
-                  </span>
-                  {#if tenant.status === "error" && tenant.errorMessage}
-                    <span class="instance-error">{tenant.errorMessage}</span>
-                  {/if}
-                </div>
-              </button>
-            {/each}
-          </div>
+          {#if auth.loading}<p role="status">Please wait…</p>{/if}
         </div>
       {/if}
     </main>
@@ -557,33 +416,6 @@
     cursor: not-allowed;
   }
 
-  .mode-tabs {
-    display: flex;
-    gap: 2px;
-    margin-bottom: 16px;
-    background: oklch(1 0 0 / 4%);
-    border-radius: 8px;
-    padding: 2px;
-  }
-
-  .mode-tab {
-    flex: 1;
-    padding: 6px 12px;
-    border-radius: 6px;
-    border: none;
-    background: transparent;
-    color: var(--muted);
-    font-family: var(--font-body);
-    font-size: 0.75rem;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .mode-tab-active {
-    background: oklch(1 0 0 / 8%);
-    color: var(--foreground);
-  }
-
   .sh-error {
     font-size: 0.78rem;
     color: oklch(0.65 0.15 25 / 80%);
@@ -598,29 +430,6 @@
     display: flex;
     flex-direction: column;
     gap: 10px;
-  }
-
-  .paste-toggle {
-    display: block;
-    margin: 14px auto 0;
-    background: none;
-    border: none;
-    color: oklch(0.50 0.03 240);
-    font-family: var(--font-body);
-    font-size: 0.72rem;
-    cursor: pointer;
-    transition: color 0.2s;
-  }
-
-  .paste-toggle:hover {
-    color: var(--foreground);
-  }
-
-  .paste-field {
-    display: flex;
-    gap: 8px;
-    margin-top: 14px;
-    animation: dash-in 0.3s ease both;
   }
 
   .paste-input {
@@ -644,204 +453,6 @@
     color: oklch(0.50 0.03 240);
   }
 
-  .paste-go {
-    padding: 8px 14px;
-    border-radius: 8px;
-    border: 1px solid oklch(0.78 0.12 75 / 18%);
-    background: oklch(0.78 0.12 75 / 10%);
-    color: var(--warm);
-    font-family: var(--font-body);
-    font-size: 0.75rem;
-    cursor: pointer;
-    transition: all 0.2s;
-    white-space: nowrap;
-  }
 
-  .paste-go:hover {
-    background: oklch(0.78 0.12 75 / 16%);
-  }
 
-  /* ─── Instances ────────────────────────────────────────────── */
-  .instances {
-    width: 100%;
-    max-width: 560px;
-    animation: dash-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
-  }
-
-  .section-title {
-    font-family: var(--font-display);
-    font-style: italic;
-    font-size: 1.1rem;
-    font-weight: 400;
-    color: var(--foreground);
-    margin: 0 0 20px;
-    text-align: center;
-  }
-
-  .instance-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-  }
-
-  .instance-card {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    padding: 16px 20px;
-    border-radius: 12px;
-    background: var(--card);
-    border: 1px solid var(--glass-border);
-    border-top-color: var(--border-top);
-    text-align: left;
-    cursor: pointer;
-    transition: all 0.25s ease;
-    font-family: var(--font-body);
-    position: relative;
-    overflow: hidden;
-  }
-
-  .instance-card::before {
-    content: "";
-    position: absolute;
-    top: 0;
-    left: 12%;
-    right: 12%;
-    height: 1px;
-    background: linear-gradient(90deg, transparent, oklch(1 0 0 / 14%), transparent);
-    pointer-events: none;
-  }
-
-  .instance-card:not(:disabled):hover {
-    background: oklch(1 0 0 / 6%);
-    border-color: oklch(1 0 0 / 14%);
-    box-shadow: 0 4px 20px oklch(0 0 0 / 30%);
-  }
-
-  .instance-card:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  .instance-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-  }
-
-  .instance-slug {
-    font-size: 0.95rem;
-    font-weight: 500;
-    color: var(--foreground);
-  }
-
-  .instance-plan {
-    font-size: 0.68rem;
-    color: var(--muted);
-    letter-spacing: 0.04em;
-    text-transform: uppercase;
-  }
-
-  .instance-footer {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-  }
-
-  .instance-status {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    font-size: 0.72rem;
-    text-transform: capitalize;
-  }
-
-  .status-dot {
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
-  .instance-error {
-    font-size: 0.68rem;
-    color: oklch(0.65 0.15 25 / 70%);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  /* ─── Utility ──────────────────────────────────────────────── */
-  .center-message {
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
-    text-align: center;
-  }
-
-  .error-text {
-    font-size: 0.85rem;
-    color: oklch(0.65 0.15 25 / 80%);
-    margin: 0;
-  }
-
-  .empty-text {
-    font-size: 0.95rem;
-    color: var(--muted);
-    margin: 0;
-  }
-
-  .empty-sub {
-    font-size: 0.82rem;
-    color: oklch(0.50 0.03 240);
-    margin: 0;
-  }
-
-  .link-btn {
-    background: none;
-    border: none;
-    color: var(--warm);
-    font-family: var(--font-body);
-    font-size: 0.82rem;
-    cursor: pointer;
-    padding: 0;
-    text-decoration: underline;
-    text-decoration-color: oklch(0.78 0.12 75 / 30%);
-    text-underline-offset: 2px;
-  }
-
-  .link-btn:hover {
-    text-decoration-color: var(--warm);
-  }
-
-  .retry-btn {
-    padding: 8px 20px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--foreground);
-    font-family: var(--font-body);
-    font-size: 0.82rem;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .retry-btn:hover {
-    background: oklch(1 0 0 / 5%);
-    border-color: oklch(1 0 0 / 14%);
-  }
-
-  .spinner {
-    width: 24px;
-    height: 24px;
-    border: 2px solid oklch(1 0 0 / 10%);
-    border-top-color: var(--warm);
-    border-radius: 50%;
-    animation: spin 0.8s linear infinite;
-  }
-
-  @keyframes spin {
-    to { transform: rotate(360deg); }
-  }
 </style>

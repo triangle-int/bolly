@@ -76,7 +76,7 @@ Connect the desktop app and your companion can see your screen, click, type, scr
 | **Files** | Read, write, edit, search, explore code |
 | **Shell** | Run commands, interactive sessions |
 | **Web** | Search, fetch pages (Anthropic native) |
-| **Media** | Watch video, listen to music (Google AI) |
+| **Media** | Watch video (Google AI) |
 | **Email** | Send & read email (SMTP/IMAP + Gmail OAuth) |
 | **Google** | Calendar events, Drive files |
 | **Memory** | Write, read, search, forget |
@@ -97,15 +97,90 @@ Open `http://localhost:26559` and follow the onboarding.
 
 ### Docker
 
+Release images are published to `ghcr.io/triangle-int/bolly`:
+
+- `vX.Y.Z` (for example, `v0.32.0`) contains the server and embedded web client
+  built from that release tag. Pin a version for controlled upgrades.
+- `latest` is updated on each successful release image build. There is no nightly image.
+- Supported platform: **linux/amd64** (Intel/AMD 64-bit). Native ARM64 images
+  are not published; the bundled Google Chrome package requires amd64.
+
 ```bash
 docker run -d \
   --name bolly \
-  -p 26559:26559 \
+  -p 127.0.0.1:26559:26559 \
   -v bolly-data:/data \
-  -e BOLLY_HOME=/data \
   --restart always \
   ghcr.io/triangle-int/bolly:latest
 ```
+
+Open `http://localhost:26559`. The image listens on `0.0.0.0:26559` inside the
+container; the command above exposes it only on the host's loopback interface.
+For remote access, configure authentication and a TLS reverse proxy.
+
+The named volume `bolly-data` persists configuration, credentials, memories,
+chats, and uploads under `/data` (`BOLLY_HOME`). Keep it when replacing a
+container. The executable lives outside this volume and never downloads or
+replaces itself on startup. Changes elsewhere in the container, including
+manually installed packages, are lost when it is replaced.
+
+The built-in health check requests `http://127.0.0.1:26559/healthz` every 30 seconds
+with a 5-second timeout, a 60-second startup grace period, and three retries.
+It needs no authentication. Inspect it with:
+
+```bash
+docker inspect --format '{{.State.Health.Status}}' bolly
+curl --fail http://localhost:26559/healthz
+```
+
+`PORT` overrides the internal port and the health check follows it; adjust the
+container side of `-p` to match. Docker reports unhealthy status but does not
+restart a container solely for failing its health check.
+
+#### Upgrade and rollback
+
+Container installations are updated by replacing the image, not through the
+Settings update button. Before upgrading, stop the container and back up its
+volume (the archive contains secrets):
+
+```bash
+docker stop bolly
+docker run --rm -v bolly-data:/data:ro -v "$PWD:/backup" ubuntu:24.04 \
+  tar czf /backup/bolly-data-before-upgrade.tgz -C /data .
+```
+
+Choose an existing release tag, then recreate the container with the same volume
+and any environment variables or network options you originally used:
+
+```bash
+IMAGE=ghcr.io/triangle-int/bolly:v0.32.0 # replace with the desired release
+docker pull "$IMAGE"
+docker rm bolly
+docker run -d --name bolly --restart always \
+  -p 127.0.0.1:26559:26559 -v bolly-data:/data "$IMAGE"
+docker logs --tail 100 bolly
+```
+
+To roll back, repeat these commands with the previous image tag. If the newer
+server changed the data format, restore the matching pre-upgrade backup into a
+fresh volume first and use that volume with the previous image:
+
+```bash
+docker stop bolly
+docker volume create bolly-data-restored
+docker run --rm -v bolly-data-restored:/data -v "$PWD:/backup:ro" ubuntu:24.04 \
+  tar xzf /backup/bolly-data-before-upgrade.tgz -C /data
+docker rm bolly
+IMAGE=ghcr.io/triangle-int/bolly:v0.32.0 # replace with the previous release
+docker run -d --name bolly --restart always \
+  -p 127.0.0.1:26559:26559 -v bolly-data-restored:/data "$IMAGE"
+```
+
+The release workflow runs on `v*` tags; manual runs must select a `v*` tag.
+It publishes images using `GITHUB_TOKEN` with `packages: write`; no deployment
+credentials are required. Ensure the GHCR package is public for anonymous pulls.
+It also preserves the server binaries and macOS, Windows, and Linux desktop
+release artifacts. Nothing in this workflow provisions or updates running servers.
 
 ### Desktop App
 
@@ -177,11 +252,13 @@ Everything is configured through the Settings UI. For advanced use, the config f
 
 ## Updates
 
-Bolly checks for updates automatically. Apply via Settings UI or manually:
+For one-line installations, Bolly checks for updates automatically. Apply via Settings UI or manually:
 
 ```bash
 ~/.bolly/bin/update
 ```
+
+For Docker installations, use the image upgrade and rollback commands above.
 
 ### Uninstall
 

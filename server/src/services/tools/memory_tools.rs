@@ -1,11 +1,15 @@
-use std::{fs, path::{Path, PathBuf}, sync::Arc};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
-use crate::services::tool::{ToolDefinition, Tool};
+use crate::services::tool::{Tool, ToolDefinition};
 use crate::services::vector::VectorStore;
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{openai_schema, ToolExecError};
+use super::{ToolExecError, openai_schema};
 
 // ---------------------------------------------------------------------------
 // memory_write — create or update a memory file
@@ -20,10 +24,21 @@ pub struct MemoryWriteTool {
 }
 
 impl MemoryWriteTool {
-    pub fn new(workspace_dir: &Path, instance_slug: &str, vector_store: Arc<VectorStore>, google_ai_key: &str) -> Self {
+    pub fn new(
+        workspace_dir: &Path,
+        instance_slug: &str,
+        vector_store: Arc<VectorStore>,
+        google_ai_key: &str,
+    ) -> Self {
         Self {
-            memory_dir: workspace_dir.join("instances").join(instance_slug).join("memory"),
-            uploads_dir: workspace_dir.join("instances").join(instance_slug).join("uploads"),
+            memory_dir: workspace_dir
+                .join("instances")
+                .join(instance_slug)
+                .join("memory"),
+            uploads_dir: workspace_dir
+                .join("instances")
+                .join(instance_slug)
+                .join("uploads"),
             instance_slug: instance_slug.to_string(),
             vector_store,
             google_ai_key: google_ai_key.to_string(),
@@ -86,14 +101,20 @@ impl Tool for MemoryWriteTool {
 
             // Find the uploaded file
             let meta_path = self.uploads_dir.join(format!("{upload_id}.json"));
-            let meta_str = fs::read_to_string(&meta_path)
-                .map_err(|e| {
-                    log::warn!("memory_write: upload meta not found at {}: {e}", meta_path.display());
-                    ToolExecError(format!("upload {upload_id} not found (path: {})", meta_path.display()))
-                })?;
+            let meta_str = fs::read_to_string(&meta_path).map_err(|e| {
+                log::warn!(
+                    "memory_write: upload meta not found at {}: {e}",
+                    meta_path.display()
+                );
+                ToolExecError(format!(
+                    "upload {upload_id} not found (path: {})",
+                    meta_path.display()
+                ))
+            })?;
             let meta: serde_json::Value = serde_json::from_str(&meta_str)
                 .map_err(|_| ToolExecError("invalid upload metadata".into()))?;
-            let stored_name = meta["stored_name"].as_str()
+            let stored_name = meta["stored_name"]
+                .as_str()
                 .ok_or_else(|| ToolExecError("missing stored_name".into()))?;
             let mime_type = meta["mime_type"].as_str().unwrap_or("image/jpeg");
 
@@ -109,10 +130,15 @@ impl Tool for MemoryWriteTool {
             if let Ok(bytes) = fs::read(&dst) {
                 if bytes.len() < 20 * 1024 * 1024 {
                     let is_image = mime_type.starts_with("image/");
-                    let source_type = if is_image { "media_image" }
-                        else if mime_type.starts_with("video/") { "media_video" }
-                        else if mime_type.starts_with("audio/") { "media_audio" }
-                        else { "media_document" };
+                    let source_type = if is_image {
+                        "media_image"
+                    } else if mime_type.starts_with("video/") {
+                        "media_video"
+                    } else if mime_type.starts_with("audio/") {
+                        "media_audio"
+                    } else {
+                        "media_document"
+                    };
 
                     let desc = if args.content.is_empty() {
                         clean_path.clone()
@@ -122,17 +148,37 @@ impl Tool for MemoryWriteTool {
 
                     // Embed with text description so text queries can find images
                     let embed_result = if is_image {
-                        crate::services::embedding::embed_text_and_image(&self.google_ai_key, &desc, &bytes, mime_type).await
+                        crate::services::embedding::embed_text_and_image(
+                            &self.google_ai_key,
+                            &desc,
+                            &bytes,
+                            mime_type,
+                        )
+                        .await
                     } else {
-                        crate::services::embedding::embed_media(&self.google_ai_key, &bytes, mime_type).await
+                        crate::services::embedding::embed_media(
+                            &self.google_ai_key,
+                            &bytes,
+                            mime_type,
+                        )
+                        .await
                     };
 
                     match embed_result {
                         Ok(vec) => {
-                            if let Err(e) = self.vector_store.upsert_media(
-                                &self.instance_slug, &clean_path, source_type,
-                                mime_type, &clean_path, &desc, vec,
-                            ).await {
+                            if let Err(e) = self
+                                .vector_store
+                                .upsert_media(
+                                    &self.instance_slug,
+                                    &clean_path,
+                                    source_type,
+                                    mime_type,
+                                    &clean_path,
+                                    &desc,
+                                    vec,
+                                )
+                                .await
+                            {
                                 log::warn!("[memory_write] vector upsert failed: {e}");
                             }
                         }
@@ -146,7 +192,14 @@ impl Tool for MemoryWriteTool {
                 let desc_path = format!("{clean_path}.md");
                 let desc_full = self.memory_dir.join(&desc_path);
                 let _ = fs::write(&desc_full, &args.content);
-                embed_memory_to_vector(&self.vector_store, &self.google_ai_key, &self.instance_slug, &desc_path, &args.content).await;
+                embed_memory_to_vector(
+                    &self.vector_store,
+                    &self.google_ai_key,
+                    &self.instance_slug,
+                    &desc_path,
+                    &args.content,
+                )
+                .await;
             }
 
             return Ok(format!("saved {clean_path}"));
@@ -178,15 +231,30 @@ impl Tool for MemoryWriteTool {
             }
             _ => {
                 let existing = fs::read_to_string(&full_path).ok();
-                let stamped = crate::services::memory::stamp_content(&args.content, existing.as_deref());
+                let stamped =
+                    crate::services::memory::stamp_content(&args.content, existing.as_deref());
                 fs::write(&full_path, &stamped).map_err(|e| ToolExecError(e.to_string()))?;
                 stamped
             }
         };
 
-        embed_memory_to_vector(&self.vector_store, &self.google_ai_key, &self.instance_slug, &clean_path, &final_content).await;
+        embed_memory_to_vector(
+            &self.vector_store,
+            &self.google_ai_key,
+            &self.instance_slug,
+            &clean_path,
+            &final_content,
+        )
+        .await;
 
-        Ok(format!("{} {clean_path}", if args.mode == "append" { "appended to" } else { "wrote" }))
+        Ok(format!(
+            "{} {clean_path}",
+            if args.mode == "append" {
+                "appended to"
+            } else {
+                "wrote"
+            }
+        ))
     }
 }
 
@@ -204,7 +272,10 @@ pub struct MemoryReadTool {
 impl MemoryReadTool {
     pub fn new(workspace_dir: &Path, instance_slug: &str, public_url: &str) -> Self {
         Self {
-            memory_dir: workspace_dir.join("instances").join(instance_slug).join("memory"),
+            memory_dir: workspace_dir
+                .join("instances")
+                .join(instance_slug)
+                .join("memory"),
             instance_slug: instance_slug.to_string(),
             public_url: public_url.to_string(),
             auth_token: std::env::var("BOLLY_AUTH_TOKEN").unwrap_or_default(),
@@ -249,11 +320,7 @@ impl Tool for MemoryReadTool {
             for entry in entries.filter_map(Result::ok) {
                 let name = entry.file_name().to_string_lossy().to_string();
                 let is_dir = entry.path().is_dir();
-                items.push(if is_dir {
-                    format!("{name}/")
-                } else {
-                    name
-                });
+                items.push(if is_dir { format!("{name}/") } else { name });
             }
             items.sort();
             if items.is_empty() {
@@ -268,7 +335,12 @@ impl Tool for MemoryReadTool {
             let is_media = is_image || is_pdf || matches!(ext, "mp4" | "mov" | "mp3" | "wav");
 
             if (is_image || is_pdf) && !self.public_url.is_empty() {
-                let url = super::public_memory_url(&self.public_url, &self.instance_slug, &clean_path, &self.auth_token);
+                let url = super::public_memory_url(
+                    &self.public_url,
+                    &self.instance_slug,
+                    &clean_path,
+                    &self.auth_token,
+                );
                 let block_type = if is_image { "image" } else { "document" };
                 let blocks = serde_json::json!([
                     {"type": "text", "text": format!("memory file: {clean_path}")},
@@ -341,7 +413,8 @@ impl Tool for MemoryListTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let entries = crate::services::memory::scan_library(&self.workspace_dir, &self.instance_slug);
+        let entries =
+            crate::services::memory::scan_library(&self.workspace_dir, &self.instance_slug);
 
         if entries.is_empty() {
             return Ok("(empty library — no memories yet)".into());
@@ -351,7 +424,10 @@ impl Tool for MemoryListTool {
         let filtered: Vec<_> = if prefix.is_empty() {
             entries
         } else {
-            entries.into_iter().filter(|e| e.path.starts_with(prefix)).collect()
+            entries
+                .into_iter()
+                .filter(|e| e.path.starts_with(prefix))
+                .collect()
         };
 
         if filtered.is_empty() {
@@ -379,9 +455,17 @@ pub struct MemoryForgetTool {
 }
 
 impl MemoryForgetTool {
-    pub fn new(workspace_dir: &Path, instance_slug: &str, vector_store: Arc<VectorStore>, google_ai_key: &str) -> Self {
+    pub fn new(
+        workspace_dir: &Path,
+        instance_slug: &str,
+        vector_store: Arc<VectorStore>,
+        google_ai_key: &str,
+    ) -> Self {
         Self {
-            memory_dir: workspace_dir.join("instances").join(instance_slug).join("memory"),
+            memory_dir: workspace_dir
+                .join("instances")
+                .join(instance_slug)
+                .join("memory"),
             instance_slug: instance_slug.to_string(),
             vector_store,
             google_ai_key: google_ai_key.to_string(),
@@ -427,7 +511,11 @@ impl Tool for MemoryForgetTool {
                 if let Some(parent) = full_path.parent() {
                     let _ = cleanup_empty_dirs(parent, &self.memory_dir);
                 }
-                if let Err(e) = self.vector_store.delete_by_path(&self.instance_slug, clean).await {
+                if let Err(e) = self
+                    .vector_store
+                    .delete_by_path(&self.instance_slug, clean)
+                    .await
+                {
                     log::warn!("[memory_forget] vector delete failed: {e}");
                 }
                 return Ok(format!("deleted {clean}"));
@@ -435,20 +523,27 @@ impl Tool for MemoryForgetTool {
         }
 
         // Otherwise, search and delete matching files
-        let workspace_dir = self.memory_dir.parent()
+        let workspace_dir = self
+            .memory_dir
+            .parent()
             .and_then(|p| p.parent())
             .and_then(|p| p.parent())
             .unwrap_or(&self.memory_dir);
-        let instance_slug = self.memory_dir.parent()
+        let instance_slug = self
+            .memory_dir
+            .parent()
             .and_then(|p| p.file_name())
             .and_then(|s| s.to_str())
             .unwrap_or("");
 
-        let removed = crate::services::memory::forget_memories(workspace_dir, instance_slug, target);
+        let removed =
+            crate::services::memory::forget_memories(workspace_dir, instance_slug, target);
         if removed == 0 {
             Ok(format!("no memories matched \"{target}\""))
         } else {
-            Ok(format!("deleted {removed} memory file(s) matching \"{target}\""))
+            Ok(format!(
+                "deleted {removed} memory file(s) matching \"{target}\""
+            ))
         }
     }
 }
@@ -466,7 +561,13 @@ pub struct MemorySearchTool {
 }
 
 impl MemorySearchTool {
-    pub fn new(_workspace_dir: &Path, instance_slug: &str, vector_store: Arc<VectorStore>, google_ai_key: &str, public_url: &str) -> Self {
+    pub fn new(
+        _workspace_dir: &Path,
+        instance_slug: &str,
+        vector_store: Arc<VectorStore>,
+        google_ai_key: &str,
+        public_url: &str,
+    ) -> Self {
         let auth_token = std::env::var("BOLLY_AUTH_TOKEN").unwrap_or_default();
         Self {
             instance_slug: instance_slug.to_string(),
@@ -530,7 +631,9 @@ impl Tool for MemorySearchTool {
             return Ok(format!("no memories matched \"{query}\""));
         }
 
-        let has_images = results.iter().any(|r| r.source_type == "media_image" && !self.public_url.is_empty());
+        let has_images = results
+            .iter()
+            .any(|r| r.source_type == "media_image" && !self.public_url.is_empty());
 
         if !has_images {
             // Text-only results — return plain string
@@ -539,7 +642,10 @@ impl Tool for MemorySearchTool {
                 let preview = r.content_preview.trim();
                 output.push_str(&format!(
                     "--- [{}/{} · {} · score: {:.4}] ---\n{preview}\n\n",
-                    i + 1, results.len(), r.path, r.score,
+                    i + 1,
+                    results.len(),
+                    r.path,
+                    r.score,
                 ));
             }
             return Ok(output);
@@ -553,7 +659,10 @@ impl Tool for MemorySearchTool {
             let preview = r.content_preview.trim();
             text_buf.push_str(&format!(
                 "--- [{}/{} · {} · score: {:.4}] ---\n{preview}\n\n",
-                i + 1, results.len(), r.path, r.score,
+                i + 1,
+                results.len(),
+                r.path,
+                r.score,
             ));
 
             if r.source_type == "media_image" && !self.public_url.is_empty() {
@@ -565,11 +674,23 @@ impl Tool for MemorySearchTool {
                     }
                     // Memory-originated images use /public/memory/, uploads use /public/files/
                     let url = if upload_id.contains('/') {
-                        super::public_memory_url(&self.public_url, &self.instance_slug, upload_id, &self.auth_token)
+                        super::public_memory_url(
+                            &self.public_url,
+                            &self.instance_slug,
+                            upload_id,
+                            &self.auth_token,
+                        )
                     } else {
-                        super::public_file_url(&self.public_url, &self.instance_slug, upload_id, &self.auth_token)
+                        super::public_file_url(
+                            &self.public_url,
+                            &self.instance_slug,
+                            upload_id,
+                            &self.auth_token,
+                        )
                     };
-                    blocks.push(serde_json::json!({"type": "image", "source": {"type": "url", "url": url}}));
+                    blocks.push(
+                        serde_json::json!({"type": "image", "source": {"type": "url", "url": url}}),
+                    );
                 }
             }
         }
@@ -588,7 +709,10 @@ impl Tool for MemorySearchTool {
 fn sanitize_path(path: &str) -> String {
     let path = path.trim().trim_start_matches('/');
     let parts: Vec<&str> = path.split('/').collect();
-    if parts.iter().any(|p| p.is_empty() || *p == ".." || p.starts_with('.')) {
+    if parts
+        .iter()
+        .any(|p| p.is_empty() || *p == ".." || p.starts_with('.'))
+    {
         return String::new();
     }
     let result = parts.join("/");
@@ -604,19 +728,19 @@ fn sanitize_path(path: &str) -> String {
 /// Matches Gemini Embedding 2 supported formats + common web formats.
 const ALLOWED_MEDIA_EXTS: &[&str] = &[
     // Images (Gemini: PNG, JPEG; also allow web formats)
-    ".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg",
-    // Documents (Gemini: PDF)
-    ".pdf",
-    // Video (Gemini: MP4, MOV with H264/H265/AV1/VP9)
-    ".mp4", ".mov",
-    // Audio (Gemini: MP3, WAV)
+    ".jpg", ".jpeg", ".png", ".webp", ".gif", ".svg", // Documents (Gemini: PDF)
+    ".pdf", // Video (Gemini: MP4, MOV with H264/H265/AV1/VP9)
+    ".mp4", ".mov", // Audio (Gemini: MP3, WAV)
     ".mp3", ".wav",
 ];
 
 fn sanitize_media_path(path: &str) -> String {
     let path = path.trim().trim_start_matches('/');
     let parts: Vec<&str> = path.split('/').collect();
-    if parts.iter().any(|p| p.is_empty() || *p == ".." || p.starts_with('.')) {
+    if parts
+        .iter()
+        .any(|p| p.is_empty() || *p == ".." || p.starts_with('.'))
+    {
         return String::new();
     }
     let result = parts.join("/");
@@ -697,11 +821,19 @@ impl Tool for MemoryConnectTool {
                 if args.path_b.is_empty() {
                     return Ok("error: path_b is required for connect".into());
                 }
-                let added = memory::add_edge(&self.workspace_dir, &self.instance_slug, &args.path_a, &args.path_b);
+                let added = memory::add_edge(
+                    &self.workspace_dir,
+                    &self.instance_slug,
+                    &args.path_a,
+                    &args.path_b,
+                );
                 if added {
                     Ok(format!("connected: {} <-> {}", args.path_a, args.path_b))
                 } else {
-                    Ok(format!("already connected: {} <-> {}", args.path_a, args.path_b))
+                    Ok(format!(
+                        "already connected: {} <-> {}",
+                        args.path_a, args.path_b
+                    ))
                 }
             }
             "disconnect" => {
@@ -720,7 +852,10 @@ impl Tool for MemoryConnectTool {
                     memory::save_graph(&self.workspace_dir, &self.instance_slug, &graph);
                     Ok(format!("disconnected: {} <-> {}", args.path_a, args.path_b))
                 } else {
-                    Ok(format!("no connection found between {} and {}", args.path_a, args.path_b))
+                    Ok(format!(
+                        "no connection found between {} and {}",
+                        args.path_a, args.path_b
+                    ))
                 }
             }
             "neighbors" => {
@@ -729,11 +864,21 @@ impl Tool for MemoryConnectTool {
                 if neighbors.is_empty() {
                     Ok(format!("{} has no connections", args.path_a))
                 } else {
-                    Ok(format!("{} is connected to:\n{}", args.path_a,
-                        neighbors.iter().map(|n| format!("- {n}")).collect::<Vec<_>>().join("\n")))
+                    Ok(format!(
+                        "{} is connected to:\n{}",
+                        args.path_a,
+                        neighbors
+                            .iter()
+                            .map(|n| format!("- {n}"))
+                            .collect::<Vec<_>>()
+                            .join("\n")
+                    ))
                 }
             }
-            _ => Ok(format!("unknown action: {}. use connect, disconnect, or neighbors", args.action)),
+            _ => Ok(format!(
+                "unknown action: {}. use connect, disconnect, or neighbors",
+                args.action
+            )),
         }
     }
 }
@@ -752,7 +897,9 @@ async fn embed_memory_to_vector(
     let mut chunk_vectors = Vec::new();
 
     for chunk in &chunks {
-        match embedding::embed_text(google_ai_key, chunk, embedding::TaskType::RetrievalDocument).await {
+        match embedding::embed_text(google_ai_key, chunk, embedding::TaskType::RetrievalDocument)
+            .await
+        {
             Ok(vec) => chunk_vectors.push((chunk.clone(), vec)),
             Err(e) => {
                 log::warn!("[memory_tool] embed error for {path}: {e}");
@@ -761,7 +908,10 @@ async fn embed_memory_to_vector(
         }
     }
 
-    if let Err(e) = vector_store.upsert_text_memory(instance_slug, path, chunk_vectors).await {
+    if let Err(e) = vector_store
+        .upsert_text_memory(instance_slug, path, chunk_vectors)
+        .await
+    {
         log::warn!("[memory_tool] vector upsert failed for {path}: {e}");
     }
 }

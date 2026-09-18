@@ -1,9 +1,9 @@
 use axum::{
+    Json, Router,
     extract::{Path, State},
     http::{HeaderMap, StatusCode},
     response::IntoResponse,
     routing::{delete, get},
-    Json, Router,
 };
 
 use crate::app::state::AppState;
@@ -71,10 +71,12 @@ async fn google_connect_url(
     }
 
     // Build the redirect URL back to the client settings page
-    let host = headers.get("host")
+    let host = headers
+        .get("host")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("localhost");
-    let proto = headers.get("x-forwarded-proto")
+    let proto = headers
+        .get("x-forwarded-proto")
         .and_then(|v| v.to_str().ok())
         .unwrap_or("http");
     let client_redirect = format!("{proto}://{host}/{slug}/settings");
@@ -125,9 +127,7 @@ async fn disconnect_google_account(
         .await;
 
     match res {
-        Ok(r) if r.status().is_success() => {
-            Json(serde_json::json!({ "ok": true })).into_response()
-        }
+        Ok(r) if r.status().is_success() => Json(serde_json::json!({ "ok": true })).into_response(),
         Ok(r) => {
             let status = r.status();
             let body = r.text().await.unwrap_or_default();

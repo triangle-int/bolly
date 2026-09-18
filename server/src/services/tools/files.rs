@@ -1,10 +1,13 @@
-use std::{fs, path::{Path, PathBuf}};
+use std::{
+    fs,
+    path::{Path, PathBuf},
+};
 
-use crate::services::tool::{ToolDefinition, Tool};
+use crate::services::tool::{Tool, ToolDefinition};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{openai_schema, ToolExecError};
+use super::{ToolExecError, openai_schema};
 
 // ---------------------------------------------------------------------------
 // read_file
@@ -71,20 +74,33 @@ impl Tool for ReadFileTool {
         };
 
         if !target.exists() {
-            return Err(ToolExecError(format!("{}: file not found", target.display())));
+            return Err(ToolExecError(format!(
+                "{}: file not found",
+                target.display()
+            )));
         }
 
-        let ext = target.extension().and_then(|e| e.to_str()).unwrap_or("").to_lowercase();
+        let ext = target
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_lowercase();
 
         // Image files — return as content block
         if matches!(ext.as_str(), "jpg" | "jpeg" | "png" | "webp" | "gif") {
             // Try URL if in uploads/
             if let Some(upload_id) = Self::extract_upload_id(&target) {
                 if !self.public_url.is_empty() {
-                    let url = super::public_file_url(&self.public_url, &self.instance_slug, &upload_id, &self.auth_token);
+                    let url = super::public_file_url(
+                        &self.public_url,
+                        &self.instance_slug,
+                        &upload_id,
+                        &self.auth_token,
+                    );
                     return Ok(serde_json::to_string(&serde_json::json!([
                         {"type": "image", "source": {"type": "url", "url": url}}
-                    ])).unwrap());
+                    ]))
+                    .unwrap());
                 }
             }
             // Fallback — base64
@@ -103,7 +119,8 @@ impl Tool for ReadFileTool {
             };
             return Ok(serde_json::to_string(&serde_json::json!([
                 {"type": "image", "source": {"type": "base64", "media_type": mime, "data": b64}}
-            ])).unwrap());
+            ]))
+            .unwrap());
         }
 
         // PDF files — document content block
@@ -111,10 +128,16 @@ impl Tool for ReadFileTool {
             // Try URL
             if let Some(upload_id) = Self::extract_upload_id(&target) {
                 if !self.public_url.is_empty() {
-                    let url = super::public_file_url(&self.public_url, &self.instance_slug, &upload_id, &self.auth_token);
+                    let url = super::public_file_url(
+                        &self.public_url,
+                        &self.instance_slug,
+                        &upload_id,
+                        &self.auth_token,
+                    );
                     return Ok(serde_json::to_string(&serde_json::json!([
                         {"type": "document", "source": {"type": "url", "url": url}}
-                    ])).unwrap());
+                    ]))
+                    .unwrap());
                 }
             }
             // Fallback — base64
@@ -139,7 +162,11 @@ impl Tool for ReadFileTool {
         let content: String = match (args.offset, args.limit) {
             (Some(off), Some(lim)) => {
                 let start = off.saturating_sub(1);
-                raw.lines().skip(start).take(lim).collect::<Vec<_>>().join("\n")
+                raw.lines()
+                    .skip(start)
+                    .take(lim)
+                    .collect::<Vec<_>>()
+                    .join("\n")
             }
             (Some(off), None) => {
                 let start = off.saturating_sub(1);
@@ -215,7 +242,11 @@ impl Tool for WriteFileTool {
         }
 
         fs::write(&target, &args.content).map_err(|e| ToolExecError(e.to_string()))?;
-        Ok(format!("wrote {} bytes to {}", args.content.len(), args.path))
+        Ok(format!(
+            "wrote {} bytes to {}",
+            args.content.len(),
+            args.path
+        ))
     }
 }
 
@@ -268,7 +299,9 @@ impl Tool for EditFileTool {
         };
 
         if args.old_string == args.new_string {
-            return Err(ToolExecError("old_string and new_string are identical".into()));
+            return Err(ToolExecError(
+                "old_string and new_string are identical".into(),
+            ));
         }
 
         let content = fs::read_to_string(&target)
@@ -435,14 +468,27 @@ impl Tool for UploadFileTool {
         });
 
         let meta = crate::services::uploads::save_upload(
-            &self.workspace_dir, &self.instance_slug, &name, &bytes,
-        ).map_err(|e| ToolExecError(format!("upload failed: {e}")))?;
+            &self.workspace_dir,
+            &self.instance_slug,
+            &name,
+            &bytes,
+        )
+        .map_err(|e| ToolExecError(format!("upload failed: {e}")))?;
 
         if self.public_url.is_empty() {
-            return Ok(format!("uploaded as {} ({} bytes) but no public URL configured", meta.id, bytes.len()));
+            return Ok(format!(
+                "uploaded as {} ({} bytes) but no public URL configured",
+                meta.id,
+                bytes.len()
+            ));
         }
 
-        let url = super::public_file_url(&self.public_url, &self.instance_slug, &meta.id, &self.auth_token);
+        let url = super::public_file_url(
+            &self.public_url,
+            &self.instance_slug,
+            &meta.id,
+            &self.auth_token,
+        );
 
         let size_mb = bytes.len() as f64 / 1024.0 / 1024.0;
         Ok(format!("{url}\n\nuploaded: {name} ({size_mb:.1} MB)"))

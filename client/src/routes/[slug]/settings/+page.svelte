@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { page } from "$app/state";
-	import { getSceneStore } from "$lib/stores/scene.svelte.js";
 	import {
 		fetchGoogleAccounts,
 		getGoogleConnectUrl,
@@ -14,8 +13,6 @@
 		updateTimezone,
 		fetchVoiceId,
 		updateVoiceId,
-		fetchMusicEnabled,
-		updateMusicEnabled,
 		fetchEmailAccounts,
 		saveEmailAccounts,
 		deleteAllEmailAccounts,
@@ -40,7 +37,6 @@
 	import { onDestroy } from "svelte";
 
 	const slug = $derived(page.params.slug!);
-	const scene = getSceneStore();
 	const skinStore = getSkinStore();
 
 	// --- suggested extensions (loaded from server) ---
@@ -261,37 +257,6 @@
 		}
 	}
 
-	// Music state
-	let musicEnabledVal = $state(true);
-	let musicLoading = $state(true);
-	let musicSaving = $state(false);
-
-	async function loadMusic() {
-		musicLoading = true;
-		try {
-			const res = await fetchMusicEnabled(slug);
-			musicEnabledVal = res.music_enabled;
-		} catch {
-			// not critical
-		} finally {
-			musicLoading = false;
-		}
-	}
-
-	async function toggleMusic() {
-		musicSaving = true;
-		try {
-			const next = !musicEnabledVal;
-			await updateMusicEnabled(slug, next);
-			musicEnabledVal = next;
-			scene.setMusicEnabled(next);
-		} catch (e) {
-			console.error("[music] toggle failed:", e);
-		} finally {
-			musicSaving = false;
-		}
-	}
-
 	// Voice state
 	let voiceId = $state("");
 	let voiceLoading = $state(true);
@@ -391,7 +356,8 @@
 	];
 
 	// Provider + Model mode + API keys state
-	let provider = $state("api");
+	let provider = $state("anthropic");
+	let setupRequired = $state<string | null>(null);
 	let providerSaving = $state(false);
 	let modelMode = $state("auto");
 	let modelModeSaving = $state(false);
@@ -405,15 +371,17 @@
 		fetchConfigStatus().then(s => {
 			if (s.model_mode) modelMode = s.model_mode;
 			if (s.configured_keys) configuredKeys = s.configured_keys;
-			if (s.provider) provider = s.provider;
+			if (s.provider) provider = s.provider === "api" ? "anthropic" : s.provider;
+			setupRequired = s.setup_required ?? null;
 		}).catch(() => {});
 	});
 
-	async function setProvider(p: 'api' | 'openai') {
+	async function setProvider(p: 'anthropic' | 'openai') {
 		providerSaving = true;
 		try {
 			await updateProvider(p);
 			provider = p;
+			setupRequired = (await fetchConfigStatus()).setup_required ?? null;
 		} catch {
 		} finally {
 			providerSaving = false;
@@ -427,6 +395,7 @@
 			await updateLlmConfig({ [field]: value.trim() });
 			// Refresh status
 			const s = await fetchConfigStatus();
+			setupRequired = s.setup_required ?? null;
 			if (s.configured_keys) configuredKeys = s.configured_keys;
 		} catch (e) {
 			keyError = e instanceof Error ? e.message : "failed";
@@ -672,7 +641,6 @@
 		loadTimezone();
 		loadEmail();
 		loadVoice();
-		loadMusic();
 		loadServer();
 		loadScheduled();
 	});
@@ -921,11 +889,12 @@
 				<p class="section-desc">Choose which AI powers your companion.</p>
 			</div>
 		</div>
+		{#if setupRequired}<p class="section-desc">{setupRequired}</p>{/if}
 		<div class="model-mode-options" class:disabled={providerSaving}>
 			<button
 				class="mode-option"
-				class:mode-active={provider === "api"}
-				onclick={() => setProvider("api")}
+				class:mode-active={provider === "anthropic"}
+				onclick={() => setProvider("anthropic")}
 				disabled={providerSaving}
 			>
 				<span class="mode-name">Anthropic</span>
@@ -1380,34 +1349,6 @@
 		{#if ghError}
 			<p class="error-msg">{ghError}</p>
 		{/if}
-	</section>
-
-	<!-- Music -->
-	<section class="settings-section">
-		<div class="section-header">
-			<img src="/icons/icon-music.png" alt="" class="section-icon-img" />
-			<div class="section-header-text">
-				<h3 class="section-label">music</h3>
-				<p class="section-desc">
-					Background ambient and intro music when entering chat.
-				</p>
-			</div>
-			{#if musicLoading}
-				<div class="loading-dot" style="margin-left:auto"></div>
-			{:else}
-				<button
-					class="switch"
-					class:switch-on={musicEnabledVal}
-					disabled={musicSaving}
-					onclick={toggleMusic}
-					role="switch"
-					aria-label="Toggle music"
-					aria-checked={musicEnabledVal}
-				>
-					<span class="switch-thumb"></span>
-				</button>
-			{/if}
-		</div>
 	</section>
 
 	<!-- Voice -->
@@ -1905,45 +1846,6 @@
 	}
 
 	/* --- github --- */
-
-	.switch {
-		margin-left: auto;
-		position: relative;
-		width: 2.5rem;
-		height: 1.375rem;
-		border-radius: 9999px;
-		border: 1px solid oklch(var(--ink) / 10%);
-		background: oklch(var(--ink) / 6%);
-		cursor: pointer;
-		transition: all 0.2s ease;
-		padding: 0;
-		flex-shrink: 0;
-	}
-	.switch-thumb {
-		position: absolute;
-		top: 2px;
-		left: 2px;
-		width: 1rem;
-		height: 1rem;
-		border-radius: 9999px;
-		background: oklch(0.55 0.02 240);
-		transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
-	}
-	.switch-on {
-		background: oklch(0.78 0.12 75 / 20%);
-		border-color: oklch(0.78 0.12 75 / 30%);
-	}
-	.switch-on .switch-thumb {
-		left: calc(100% - 1rem - 2px);
-		background: oklch(0.78 0.12 75);
-	}
-	.switch:hover {
-		border-color: oklch(var(--ink) / 18%);
-	}
-	.switch:disabled {
-		opacity: 0.4;
-		cursor: not-allowed;
-	}
 
 	.gh-status {
 		display: flex;

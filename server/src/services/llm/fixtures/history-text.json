@@ -1,0 +1,6 @@
+[
+  {"role":"user","content":[{"type":"text","text":"Find this"}],"ts":"123","id":"u"},
+  {"role":"assistant","content":[{"type":"text","text":"Searching"},{"type":"tool_use","id":"call-old","name":"search","input":{"query":"rust"}}],"ts":"124","id":"a","model":"claude-old"},
+  {"role":"user","content":[{"type":"tool_result","tool_use_id":"call-old","content":"Found it"}],"mcp_app_html":"<p>result</p>","mcp_app_input":"{}"},
+  {"role":"assistant","content":[{"type":"compaction","content":"Historical summary"},{"type":"compaction","summary":"Older summary key"},{"type":"server_tool_use","id":"srv","name":"web_search","input":{"query":"rust"}}]}
+]

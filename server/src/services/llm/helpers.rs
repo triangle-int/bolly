@@ -33,9 +33,7 @@ where
             Err(e) if attempt < MAX_RETRIES && is_rate_limit_error(&e.to_string()) => {
                 attempt += 1;
                 let delay = INITIAL_BACKOFF_MS * 2u64.pow(attempt - 1);
-                log::warn!(
-                    "Rate limited, retrying in {delay}ms (attempt {attempt}/{MAX_RETRIES})"
-                );
+                log::warn!("Rate limited, retrying in {delay}ms (attempt {attempt}/{MAX_RETRIES})");
                 tokio::time::sleep(Duration::from_millis(delay)).await;
             }
             Err(e) => return Err(e),
@@ -53,13 +51,20 @@ static REAL_INPUT_TOKENS: Mutex<Option<std::collections::HashMap<String, u64>>> 
 pub(crate) fn cache_real_input_tokens(instance_slug: &str, chat_id: &str, tokens: u64) {
     let key = format!("{instance_slug}/{chat_id}");
     let mut guard = REAL_INPUT_TOKENS.lock().unwrap();
-    guard.get_or_insert_with(std::collections::HashMap::new).insert(key, tokens);
+    guard
+        .get_or_insert_with(std::collections::HashMap::new)
+        .insert(key, tokens);
 }
 
 /// Retrieve the last real input token count for a given instance/chat.
 pub fn get_real_input_tokens(instance_slug: &str, chat_id: &str) -> Option<u64> {
     let key = format!("{instance_slug}/{chat_id}");
-    REAL_INPUT_TOKENS.lock().unwrap().as_ref()?.get(&key).copied()
+    REAL_INPUT_TOKENS
+        .lock()
+        .unwrap()
+        .as_ref()?
+        .get(&key)
+        .copied()
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -75,7 +80,9 @@ than you speak. you're warm but not overbearing. this is a safe, intimate space.
 pub(crate) fn tool_use_summary(name: &str, input: &serde_json::Value) -> String {
     // Extract first meaningful field value for a one-line summary
     if let Some(obj) = input.as_object() {
-        for key in &["query", "command", "path", "content", "url", "name", "message"] {
+        for key in &[
+            "query", "command", "path", "content", "url", "name", "message",
+        ] {
             if let Some(val) = obj.get(*key) {
                 let owned = val.to_string();
                 let s = val.as_str().unwrap_or(&owned);
@@ -99,15 +106,25 @@ pub(crate) fn tool_use_summary(name: &str, input: &serde_json::Value) -> String 
 pub(crate) fn strip_context_blocks(msg: &Message) -> Message {
     match msg {
         Message::User { content } => {
-            let cleaned: Vec<ContentBlock> = content.iter().filter(|b| {
-                if let ContentBlock::Text { text } = b {
-                    !text.starts_with("[current time:")
-                        && !text.starts_with("[system: auto-recalled")
+            let cleaned: Vec<ContentBlock> = content
+                .iter()
+                .filter(|b| {
+                    if let ContentBlock::Text { text } = b {
+                        !text.starts_with("[current time:")
+                            && !text.starts_with("[system: auto-recalled")
+                    } else {
+                        true
+                    }
+                })
+                .cloned()
+                .collect();
+            Message::User {
+                content: if cleaned.is_empty() {
+                    content.clone()
                 } else {
-                    true
-                }
-            }).cloned().collect();
-            Message::User { content: if cleaned.is_empty() { content.clone() } else { cleaned } }
+                    cleaned
+                },
+            }
         }
         other => other.clone(),
     }
@@ -115,7 +132,6 @@ pub(crate) fn strip_context_blocks(msg: &Message) -> Message {
 
 /// Convert HistoryEntry slice to ChatMessage vec for UI display.
 pub fn history_to_chat_messages(entries: &[HistoryEntry]) -> Vec<ChatMessage> {
-
     let mut out = Vec::new();
     let mut counter = 0u64;
     let mut seen_ids = std::collections::HashSet::new();
@@ -156,7 +172,9 @@ pub fn history_to_chat_messages(entries: &[HistoryEntry]) -> Vec<ChatMessage> {
 
             match block {
                 ContentBlock::Text { text } => {
-                    if text.is_empty() { continue; }
+                    if text.is_empty() {
+                        continue;
+                    }
                     out.push(ChatMessage {
                         id: block_id,
                         role: role.clone(),
@@ -166,10 +184,18 @@ pub fn history_to_chat_messages(entries: &[HistoryEntry]) -> Vec<ChatMessage> {
                         tool_name: None,
                         mcp_app_html: None,
                         mcp_app_input: None,
-                        model: if role == ChatRole::Assistant { entry.model.clone() } else { None },
+                        model: if role == ChatRole::Assistant {
+                            entry.model.clone()
+                        } else {
+                            None
+                        },
                     });
                 }
-                ContentBlock::ToolUse { name, input, .. } => {
+                ContentBlock::ToolCall {
+                    name,
+                    arguments: input,
+                    ..
+                } => {
                     let summary = tool_use_summary(name, input);
                     out.push(ChatMessage {
                         id: block_id,
@@ -183,9 +209,9 @@ pub fn history_to_chat_messages(entries: &[HistoryEntry]) -> Vec<ChatMessage> {
                         model: None,
                     });
                 }
-                ContentBlock::ToolResult { content, .. } => {
+                ContentBlock::ToolOutput { content, .. } => {
                     let text = match content {
-                        serde_json::Value::String(s) => s.clone(),
+                        super::types::ToolOutputContent::Text(s) => s.clone(),
                         other => other.to_string(),
                     };
                     out.push(ChatMessage {
@@ -196,10 +222,14 @@ pub fn history_to_chat_messages(entries: &[HistoryEntry]) -> Vec<ChatMessage> {
                         kind: MessageKind::ToolOutput,
                         tool_name: None,
                         mcp_app_html: None,
-                        mcp_app_input: None, model: None,
+                        mcp_app_input: None,
+                        model: None,
                     });
                 }
-                ContentBlock::Compaction { content } => {
+                ContentBlock::ContextSummary { content }
+                | ContentBlock::LegacyContextSummary {
+                    summary: content, ..
+                } => {
                     out.push(ChatMessage {
                         id: block_id,
                         role: ChatRole::Assistant,
@@ -208,10 +238,11 @@ pub fn history_to_chat_messages(entries: &[HistoryEntry]) -> Vec<ChatMessage> {
                         kind: MessageKind::Compaction,
                         tool_name: None,
                         mcp_app_html: None,
-                        mcp_app_input: None, model: None,
+                        mcp_app_input: None,
+                        model: None,
                     });
                 }
-                ContentBlock::Unknown(val) => {
+                ContentBlock::Unknown(val) | ContentBlock::ProviderData { data: val, .. } => {
                     // Server tool blocks (web_search, code_execution) — render like regular tools
                     let block_type = val["type"].as_str().unwrap_or("");
                     if block_type == "server_tool_use" {
@@ -219,15 +250,23 @@ pub fn history_to_chat_messages(entries: &[HistoryEntry]) -> Vec<ChatMessage> {
                         let summary = match tool_name {
                             "web_search" => {
                                 let q = val["input"]["query"].as_str().unwrap_or("");
-                                if q.is_empty() { "searching the web".into() }
-                                else { format!("web search: {q}") }
+                                if q.is_empty() {
+                                    "searching the web".into()
+                                } else {
+                                    format!("web search: {q}")
+                                }
                             }
                             "web_fetch" => {
                                 let u = val["input"]["url"].as_str().unwrap_or("");
-                                if u.is_empty() { "fetching web page".into() }
-                                else { format!("fetching {u}") }
+                                if u.is_empty() {
+                                    "fetching web page".into()
+                                } else {
+                                    format!("fetching {u}")
+                                }
                             }
-                            "bash_code_execution" | "code_execution" => "executing code".to_string(),
+                            "bash_code_execution" | "code_execution" => {
+                                "executing code".to_string()
+                            }
                             "text_editor_code_execution" => "editing file".to_string(),
                             other => format!("{other}"),
                         };
@@ -239,7 +278,8 @@ pub fn history_to_chat_messages(entries: &[HistoryEntry]) -> Vec<ChatMessage> {
                             kind: MessageKind::ToolCall,
                             tool_name: Some(tool_name.to_string()),
                             mcp_app_html: None,
-                            mcp_app_input: None, model: None,
+                            mcp_app_input: None,
+                            model: None,
                         });
                     } else if block_type.ends_with("_tool_result") {
                         let mut output = String::new();
@@ -252,7 +292,9 @@ pub fn history_to_chat_messages(entries: &[HistoryEntry]) -> Vec<ChatMessage> {
                                     let url = r["url"].as_str().unwrap_or("");
                                     if !title.is_empty() {
                                         output.push_str(&format!("- {title}"));
-                                        if !url.is_empty() { output.push_str(&format!(" ({url})")); }
+                                        if !url.is_empty() {
+                                            output.push_str(&format!(" ({url})"));
+                                        }
                                         output.push('\n');
                                     }
                                 }
@@ -263,9 +305,13 @@ pub fn history_to_chat_messages(entries: &[HistoryEntry]) -> Vec<ChatMessage> {
                         if output.is_empty() {
                             let stdout = val["content"]["stdout"].as_str().unwrap_or("");
                             let stderr = val["content"]["stderr"].as_str().unwrap_or("");
-                            if !stdout.is_empty() { output.push_str(stdout); }
+                            if !stdout.is_empty() {
+                                output.push_str(stdout);
+                            }
                             if !stderr.is_empty() {
-                                if !output.is_empty() { output.push('\n'); }
+                                if !output.is_empty() {
+                                    output.push('\n');
+                                }
                                 output.push_str(stderr);
                             }
                         }
@@ -284,7 +330,8 @@ pub fn history_to_chat_messages(entries: &[HistoryEntry]) -> Vec<ChatMessage> {
                             kind: MessageKind::ToolOutput,
                             tool_name: None,
                             mcp_app_html: None,
-                            mcp_app_input: None, model: None,
+                            mcp_app_input: None,
+                            model: None,
                         });
                     }
                     // Other unknown blocks (container_upload, etc.) — skip
@@ -313,35 +360,43 @@ pub fn build_multimodal_prompt(
 
     // Images first (with labels) — Claude performs best with images before text
     let caps: Vec<_> = re.captures_iter(text).collect();
-    let num_images = caps.iter().filter(|c| {
-        let uid = &c[2];
-        crate::services::uploads::get_upload(workspace_dir, instance_slug, uid)
-            .ok().flatten()
-            .map(|m| m.mime_type.starts_with("image/"))
-            .unwrap_or(false)
-    }).count();
+    let num_images = caps
+        .iter()
+        .filter(|c| {
+            let uid = &c[2];
+            crate::services::uploads::get_upload(workspace_dir, instance_slug, uid)
+                .ok()
+                .flatten()
+                .map(|m| m.mime_type.starts_with("image/"))
+                .unwrap_or(false)
+        })
+        .count();
     let mut image_idx = 0;
 
     for cap in &caps {
         let name = &cap[1];
         let upload_id = &cap[2];
 
-        let meta = match crate::services::uploads::get_upload(workspace_dir, instance_slug, upload_id) {
-            Ok(Some(m)) => m,
-            _ => {
-                log::warn!("attachment {upload_id} not found, skipping");
-                continue;
-            }
-        };
-
-        let file_path =
-            match crate::services::uploads::get_upload_file_path(workspace_dir, instance_slug, upload_id) {
-                Some(p) => p,
-                None => {
-                    log::warn!("attachment file for {upload_id} missing, skipping");
+        let meta =
+            match crate::services::uploads::get_upload(workspace_dir, instance_slug, upload_id) {
+                Ok(Some(m)) => m,
+                _ => {
+                    log::warn!("attachment {upload_id} not found, skipping");
                     continue;
                 }
             };
+
+        let file_path = match crate::services::uploads::get_upload_file_path(
+            workspace_dir,
+            instance_slug,
+            upload_id,
+        ) {
+            Some(p) => p,
+            None => {
+                log::warn!("attachment file for {upload_id} missing, skipping");
+                continue;
+            }
+        };
 
         let bytes = match std::fs::read(&file_path) {
             Ok(b) => b,
@@ -357,25 +412,39 @@ pub fn build_multimodal_prompt(
                 contents.push(ContentBlock::text(&format!("Image {image_idx} ({name}):")));
             }
             if !public_url.is_empty() {
-                let url = crate::services::tools::public_file_url(public_url, instance_slug, upload_id, auth_token);
+                let url = crate::services::tools::public_file_url(
+                    public_url,
+                    instance_slug,
+                    upload_id,
+                    auth_token,
+                );
                 contents.push(ContentBlock::Image {
                     source: ImageSource::Url { url: url.clone() },
                 });
                 log::info!("attached image (url): {name} ({url})");
             } else {
                 log::warn!("image {name}: no public URL configured, skipping");
-                contents.push(ContentBlock::text(format!("[image: {name} — no public URL configured]")));
+                contents.push(ContentBlock::text(format!(
+                    "[image: {name} — no public URL configured]"
+                )));
             }
         } else if meta.mime_type == "application/pdf" {
             if !public_url.is_empty() {
-                let url = crate::services::tools::public_file_url(public_url, instance_slug, upload_id, auth_token);
+                let url = crate::services::tools::public_file_url(
+                    public_url,
+                    instance_slug,
+                    upload_id,
+                    auth_token,
+                );
                 contents.push(ContentBlock::Document {
                     source: DocumentSource::Url { url: url.clone() },
                 });
                 log::info!("attached PDF (url): {name} ({url})");
             } else {
                 log::warn!("PDF {name}: no public URL configured, skipping");
-                contents.push(ContentBlock::text(format!("[PDF: {name} — no public URL configured]")));
+                contents.push(ContentBlock::text(format!(
+                    "[PDF: {name} — no public URL configured]"
+                )));
             }
         } else if meta.mime_type.starts_with("text/") || meta.mime_type == "application/json" {
             // Text files are small enough to inline directly — works with any provider
@@ -384,7 +453,10 @@ pub fn build_multimodal_prompt(
             contents.push(ContentBlock::text(format!(
                 "\n--- {name} ---\n{truncated}\n---"
             )));
-            log::info!("attached text file (inline): {name} ({} bytes)", bytes.len());
+            log::info!(
+                "attached text file (inline): {name} ({} bytes)",
+                bytes.len()
+            );
         } else if meta.mime_type == "application/zip" {
             match crate::services::uploads::extract_zip(workspace_dir, instance_slug, upload_id) {
                 Ok((extract_dir, files)) => {
@@ -397,10 +469,7 @@ pub fn build_multimodal_prompt(
                     );
                     for (i, f) in files.iter().enumerate() {
                         if i >= 50 {
-                            summary.push_str(&format!(
-                                "... and {} more files\n",
-                                files.len() - 50
-                            ));
+                            summary.push_str(&format!("... and {} more files\n", files.len() - 50));
                             break;
                         }
                         summary.push_str(&format!("  {f}\n"));
@@ -421,23 +490,36 @@ pub fn build_multimodal_prompt(
                 }
             }
         } else if meta.mime_type.starts_with("video/") || meta.mime_type.starts_with("audio/") {
-            // Video/audio: tell the LLM about the file and how to analyze it
-            let kind = if meta.mime_type.starts_with("video/") { "video" } else { "audio" };
+            // Preserve attachment metadata; video analysis is available via watch_video.
+            let kind = if meta.mime_type.starts_with("video/") {
+                "video"
+            } else {
+                "audio"
+            };
             let size_mb = bytes.len() as f64 / (1024.0 * 1024.0);
-            let file_path = crate::services::uploads::get_upload_file_path(workspace_dir, instance_slug, upload_id)
-                .map(|p| p.display().to_string())
-                .unwrap_or_default();
+            let file_path = crate::services::uploads::get_upload_file_path(
+                workspace_dir,
+                instance_slug,
+                upload_id,
+            )
+            .map(|p| p.display().to_string())
+            .unwrap_or_default();
             let mime = &meta.mime_type;
-            let tool_name = if kind == "audio" { "listen_music" } else { "watch_video" };
-            contents.push(ContentBlock::text(format!(
-                "[{kind}: {name} — {mime}, {size_mb:.1} MB]\n\
-                 local path: {file_path}\n\
-                 to analyze this {kind}, call {tool_name} with the local path above.\n\
-                 IMPORTANT: in the prompt field, include ALL context you know about this file — \
-                 filename, what the user said about it, where it's from, etc. \
-                 this context helps the model give a much better analysis."
-            )));
-            log::info!("attached {kind}: {name} ({}, {size_mb:.1} MB)", meta.mime_type);
+            let mut description =
+                format!("[{kind}: {name} — {mime}, {size_mb:.1} MB]\nlocal path: {file_path}");
+            if kind == "video" {
+                description.push_str(
+                    "\nto analyze this video, call watch_video with the local path above.\n\
+                    IMPORTANT: in the prompt field, include ALL context you know about this file — \
+                    filename, what the user said about it, where it's from, etc. \
+                    this context helps the model give a much better analysis.",
+                );
+            }
+            contents.push(ContentBlock::text(description));
+            log::info!(
+                "attached {kind}: {name} ({}, {size_mb:.1} MB)",
+                meta.mime_type
+            );
         } else {
             contents.push(ContentBlock::text(format!(
                 "[file: {name} — {}, {} bytes, binary format]",
@@ -466,5 +548,50 @@ pub fn load_system_prompt(workspace_dir: &Path, instance_slug: &str) -> String {
         soul.content
     } else {
         DEFAULT_ONBOARDING_PROMPT.to_string()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{build_multimodal_prompt, ContentBlock, Message};
+    use crate::services::uploads::{get_upload_file_path, save_upload};
+
+    #[test]
+    fn media_attachment_prompts_preserve_metadata_and_video_guidance() {
+        let workspace =
+            std::env::temp_dir().join(format!("bolly-media-test-{}", uuid::Uuid::new_v4()));
+        for (name, mime, kind) in [
+            ("voice.mp3", "audio/mpeg", "audio"),
+            ("voice.wav", "audio/wav", "audio"),
+            ("voice.ogg", "audio/ogg", "audio"),
+            ("voice.m4a", "audio/mp4", "audio"),
+            ("clip.mp4", "video/mp4", "video"),
+        ] {
+            let upload = save_upload(&workspace, "test", name, b"media fixture").unwrap();
+            let path = get_upload_file_path(&workspace, "test", &upload.id).unwrap();
+            let message = build_multimodal_prompt(
+                &format!("Please review [attached: {name} ({})]", upload.id),
+                &workspace,
+                "test",
+                "",
+                "",
+            );
+            let Message::User { content } = message else {
+                panic!("expected user message")
+            };
+            let ContentBlock::Text { text } = &content[0] else {
+                panic!("expected attachment metadata")
+            };
+            assert!(text.contains(&format!("[{kind}: {name} — {mime},")));
+            assert!(text.contains(&format!("local path: {}", path.display())));
+            assert!(!text.contains("listen_music"));
+            assert_eq!(text.contains("call watch_video"), kind == "video");
+            let ContentBlock::Text { text } = content.last().unwrap() else {
+                panic!("expected user text")
+            };
+            assert_eq!(text, "Please review");
+            assert_eq!(std::fs::read(&path).unwrap(), b"media fixture");
+        }
+        std::fs::remove_dir_all(workspace).unwrap();
     }
 }

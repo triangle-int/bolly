@@ -1,193 +1,112 @@
-import { load, type Store } from "@tauri-apps/plugin-store";
-import { fetch as tauriFetch } from "@tauri-apps/plugin-http";
+import { invoke } from "@tauri-apps/api/core";
 
-const CLOUD_API = "https://bollyai.dev";
-const STORE_KEY = "session";
-const STORE_SELF_HOSTED = "self_hosted";
+export type Connection = { url: string };
+type Draft = { url: string; token: string };
+class ConnectionError extends Error {}
 
-let store: Store | null = null;
-
-async function getStore(): Promise<Store> {
-  if (!store) {
-    store = await load("settings.json", { autoSave: true });
-  }
-  return store;
-}
-
-// ─── Types ───────────────────────────────────────────────────────────────────
-
-export type Tenant = {
-  id: string;
-  slug: string;
-  plan: string;
-  status: string;
-  authToken: string | null;
-  shareToken: string | null;
-  errorMessage: string | null;
-  createdAt: string;
-};
-
-export type SelfHostedConfig = {
-  url: string;
-  token: string;
-};
-
-type AuthState = {
-  session: string | null;
-  tenants: Tenant[];
-  loading: boolean;
-  error: string | null;
-  /** Self-hosted connection (bypasses cloud) */
-  selfHosted: SelfHostedConfig | null;
-};
-
-const state: AuthState = $state({
-  session: null,
-  tenants: [],
+export const auth = $state({
+  connection: null as Connection | null,
   loading: true,
-  error: null,
-  selfHosted: null,
+  error: null as string | null,
+  message: null as string | null,
 });
 
-export const auth = state;
-
-// ─── Init ────────────────────────────────────────────────────────────────────
+export function normalizeConnection(url: string, token: string): Draft {
+  let parsed: URL;
+  try {
+    const input = url.trim();
+    parsed = new URL(input.includes("://") ? input : `http://${input}`);
+  } catch {
+    throw new ConnectionError("Enter a valid server URL.");
+  }
+  if (!["http:", "https:"].includes(parsed.protocol) || !parsed.hostname ||
+      parsed.username || parsed.password || parsed.search || parsed.hash || parsed.pathname !== "/") {
+    throw new ConnectionError("Use a root HTTP or HTTPS server URL without a base path, credentials, query parameters, or a fragment.");
+  }
+  if (/\r|\n/.test(token)) throw new ConnectionError("Enter a valid auth token.");
+  return { url: parsed.origin, token: token.trim() };
+}
 
 export async function init() {
+  auth.loading = true;
+  auth.connection = null;
+  auth.error = null;
   try {
-    const s = await getStore();
-
-    // Check for self-hosted config first
-    const sh = await s.get<SelfHostedConfig>(STORE_SELF_HOSTED);
-    if (sh?.url && sh?.token) {
-      state.selfHosted = sh;
-      state.loading = false;
-      return;
-    }
-
-    // Cloud mode
-    const saved = await s.get<string>(STORE_KEY);
-    if (saved) {
-      state.session = saved;
-      await fetchTenants();
-    }
+    await invoke("clear_legacy_browser_auth");
+    const url = await invoke<string | null>("initialize_saved_connection");
+    auth.connection = url ? { url } : null;
   } catch {
-    // No saved session
+    auth.error = "Could not restore the saved connection. Unlock the OS credential store and retry.";
   } finally {
-    state.loading = false;
+    auth.loading = false;
   }
 }
 
-// ─── Cloud mode ──────────────────────────────────────────────────────────────
-
-export async function setSession(sessionId: string) {
-  state.session = sessionId;
-  state.selfHosted = null;
-  state.error = null;
-  const s = await getStore();
-  await s.set(STORE_KEY, sessionId);
-  await s.delete(STORE_SELF_HOSTED);
-  await fetchTenants();
-}
-
-export async function fetchTenants() {
-  if (!state.session) return;
-
-  state.loading = true;
-  state.error = null;
-
+async function run(action: () => Promise<void>) {
+  if (auth.loading) return false;
+  auth.loading = true;
+  auth.error = null;
+  auth.message = null;
   try {
-    const token = state.session!;
-    const url = `${CLOUD_API}/api/tenants?session=${encodeURIComponent(token)}`;
-    console.log("[auth] fetching tenants", "token:", token.slice(0, 6) + "...");
-
-    const res = await tauriFetch(url);
-    console.log("[auth] response", res.status, res.statusText);
-
-    if (res.status === 401) {
-      await logout();
-      state.error = "Session expired. Please sign in again.";
-      return;
-    }
-
-    if (!res.ok) {
-      const body = await res.text();
-      console.error("[auth] error body", body);
-      throw new Error(`API error ${res.status}: ${body.slice(0, 200)}`);
-    }
-
-    const data = await res.json();
-    console.log("[auth] tenants", data.length, data);
-    state.tenants = data;
-  } catch (err) {
-    console.error("[auth] fetch failed", err);
-    state.error = err instanceof Error ? err.message : "Failed to fetch instances";
+    await action();
+    return true;
+  } catch (error) {
+    auth.error = error instanceof ConnectionError ? error.message : "Connection operation failed. Please retry.";
+    return false;
   } finally {
-    state.loading = false;
+    auth.loading = false;
   }
 }
 
-export function instanceUrl(tenant: Tenant): string {
-  return `https://${tenant.slug}.bollyai.dev`;
-}
-
-export function connectUrl(tenant: Tenant): string {
-  return `${instanceUrl(tenant)}/auth?token=${encodeURIComponent(tenant.authToken!)}`;
-}
-
-// ─── Self-hosted mode ────────────────────────────────────────────────────────
-
-export async function connectSelfHosted(url: string, token: string) {
-  // Normalize URL
-  let normalizedUrl = url.trim().replace(/\/+$/, "");
-  if (!normalizedUrl.startsWith("http")) {
-    normalizedUrl = `http://${normalizedUrl}`;
+function normalizedSavedUrl(url: string) {
+  const normalized = normalizeConnection(url, "").url;
+  if (!auth.connection || auth.connection.url !== normalized) {
+    throw new ConnectionError("Enter the auth token when changing the server URL.");
   }
+  return normalized;
+}
 
-  // Validate by fetching /api/meta
-  state.loading = true;
-  state.error = null;
-
-  try {
-    const res = await tauriFetch(`${normalizedUrl}/api/meta`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
-
-    if (!res.ok) {
-      throw new Error(res.status === 401 ? "Invalid auth token" : `Server error ${res.status}`);
+export async function testConnection(url: string, token = "") {
+  return run(async () => {
+    const config = normalizeConnection(url, token);
+    if (config.token) {
+      await invoke("test_connection", config);
+    } else {
+      normalizedSavedUrl(config.url);
+      await invoke("test_saved_connection");
     }
-
-    const meta = await res.json();
-    console.log("[auth] self-hosted connected:", meta);
-
-    const config: SelfHostedConfig = { url: normalizedUrl, token };
-    state.selfHosted = config;
-    state.session = null;
-    state.tenants = [];
-
-    const s = await getStore();
-    await s.set(STORE_SELF_HOSTED, config);
-    await s.delete(STORE_KEY);
-  } catch (err) {
-    console.error("[auth] self-hosted connect failed:", err);
-    state.error = err instanceof Error ? err.message : "Connection failed";
-  } finally {
-    state.loading = false;
-  }
+    auth.message = "Connection test succeeded.";
+  });
 }
 
-export function selfHostedConnectUrl(config: SelfHostedConfig): string {
-  return `${config.url}/auth?token=${encodeURIComponent(config.token)}`;
+export async function saveConnection(url: string, token: string) {
+  return run(async () => {
+    const config = normalizeConnection(url, token);
+    if (!config.token) normalizedSavedUrl(config.url);
+    const savedUrl = await invoke<string>("save_connection", config);
+    auth.connection = { url: savedUrl };
+    auth.message = "Connection saved.";
+  });
 }
 
-// ─── Logout (both modes) ────────────────────────────────────────────────────
+export async function openConnection() {
+  return run(async () => {
+    if (!auth.connection) return;
+    try {
+      await invoke("open_saved_connection");
+    } catch {
+      await invoke("disconnect_computer_use").catch(() => {});
+      throw new ConnectionError("Could not open the companion. Please reconnect.");
+    }
+  });
+}
 
-export async function logout() {
-  state.session = null;
-  state.selfHosted = null;
-  state.tenants = [];
-  state.error = null;
-  const s = await getStore();
-  await s.delete(STORE_KEY);
-  await s.delete(STORE_SELF_HOSTED);
+export async function disconnect() {
+  return run(async () => {
+    let failed = false;
+    try { await invoke("disconnect_computer_use"); } catch { failed = true; }
+    try { await invoke("delete_saved_connection"); } catch { failed = true; }
+    auth.connection = null;
+    if (failed) throw new ConnectionError("Some credentials could not be removed. Unlock the OS credential store and retry Disconnect.");
+  });
 }

@@ -1,5 +1,6 @@
 // ═══════════════════════════════════════════════════════════════════════════
-// Message types — serialize directly to Anthropic API format
+// Canonical conversation types. Persisted tags remain stable for old histories.
+// Only provider adapters translate these into API payloads.
 // ═══════════════════════════════════════════════════════════════════════════
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
@@ -35,25 +36,91 @@ pub enum ContentBlock {
     #[serde(rename = "document")]
     Document { source: DocumentSource },
     #[serde(rename = "tool_use")]
-    ToolUse {
+    ToolCall {
         id: String,
         name: String,
-        input: serde_json::Value,
+        #[serde(rename = "input", alias = "arguments")]
+        arguments: serde_json::Value,
     },
     #[serde(rename = "tool_result")]
-    ToolResult {
-        tool_use_id: String,
-        content: serde_json::Value,
+    ToolOutput {
+        #[serde(rename = "tool_use_id", alias = "call_id")]
+        call_id: String,
+        content: ToolOutputContent,
     },
     #[serde(rename = "compaction")]
-    Compaction {
-        #[serde(alias = "summary")]
-        content: String,
+    ContextSummary { content: String },
+    /// Opaque continuation metadata is scoped to the originating provider.
+    #[serde(rename = "provider_data")]
+    ProviderData {
+        provider: crate::config::LlmProvider,
+        data: serde_json::Value,
     },
-    /// Catch-all for unknown content block types (e.g. from newer API versions).
+    /// Older histories used the key "summary"; retain that spelling on save.
+    #[serde(untagged)]
+    LegacyContextSummary {
+        #[serde(rename = "type")]
+        kind: SummaryTag,
+        summary: String,
+    },
+    /// Legacy catch-all for unknown content block types (e.g. from newer API versions).
     /// Preserves the raw JSON so it can be serialized back without data loss.
     #[serde(untagged)]
     Unknown(serde_json::Value),
+}
+
+// Strict input-only schema for tool-produced multimodal blocks. The persisted
+// `ContentBlock` schema remains permissive so old/unknown history round-trips,
+// but tool output must not silently discard domain fields through Serde's
+// default unknown-field behavior.
+#[derive(serde::Deserialize)]
+#[serde(tag = "type", deny_unknown_fields)]
+enum StrictToolOutputBlock {
+    #[serde(rename = "text")]
+    Text { text: String },
+    #[serde(rename = "image")]
+    Image { source: StrictSource },
+    #[serde(rename = "document")]
+    Document { source: StrictSource },
+}
+
+#[derive(serde::Deserialize)]
+#[serde(tag = "type", deny_unknown_fields)]
+enum StrictSource {
+    #[serde(rename = "base64")]
+    Base64 { media_type: String, data: String },
+    #[serde(rename = "url")]
+    Url { url: String },
+}
+
+impl StrictSource {
+    fn into_image(self) -> ImageSource {
+        match self {
+            Self::Base64 { media_type, data } => ImageSource::Base64 { media_type, data },
+            Self::Url { url } => ImageSource::Url { url },
+        }
+    }
+
+    fn into_document(self) -> DocumentSource {
+        match self {
+            Self::Base64 { media_type, data } => DocumentSource::Base64 { media_type, data },
+            Self::Url { url } => DocumentSource::Url { url },
+        }
+    }
+}
+
+impl StrictToolOutputBlock {
+    fn into_content(self) -> ContentBlock {
+        match self {
+            Self::Text { text } => ContentBlock::Text { text },
+            Self::Image { source } => ContentBlock::Image {
+                source: source.into_image(),
+            },
+            Self::Document { source } => ContentBlock::Document {
+                source: source.into_document(),
+            },
+        }
+    }
 }
 
 impl ContentBlock {
@@ -61,7 +128,7 @@ impl ContentBlock {
         ContentBlock::Text { text: text.into() }
     }
 
-    pub fn tool_result(tool_use_id: String, content: String) -> Self {
+    pub fn tool_output(call_id: String, content: String) -> Self {
         // ToolDyn blanket impl wraps String output via serde_json::to_string,
         // which adds JSON quotes: `[...]` becomes `"[...]"`. Unwrap that layer.
         let inner = if content.starts_with('"') && content.ends_with('"') {
@@ -70,29 +137,24 @@ impl ContentBlock {
             content
         };
 
-        // If content is a JSON array of Anthropic content blocks (each with a "type" field), use directly.
-        // This allows tools to return image+text results (e.g. screenshots).
-        if inner.starts_with('[') {
-            if let Ok(blocks) = serde_json::from_str::<serde_json::Value>(&inner) {
-                if let Some(arr) = blocks.as_array() {
-                    let is_content_blocks = !arr.is_empty()
-                        && arr.iter().all(|b| b.get("type").and_then(|t| t.as_str()).is_some());
-                    if is_content_blocks {
-                        return ContentBlock::ToolResult {
-                            tool_use_id,
-                            content: blocks,
-                        };
-                    }
-                }
-            }
-        }
-
-        ContentBlock::ToolResult {
-            tool_use_id,
-            content: serde_json::Value::String(inner),
-        }
+        // Only fully valid multimodal blocks are interpreted structurally.
+        // `ContentBlock::Unknown` deliberately accepts arbitrary JSON for history
+        // compatibility, so every decoded element must also be one of the block
+        // kinds providers permit inside tool output. Ordinary domain objects such
+        // as `[{"type":"expense","amount":1}]` remain exact text.
+        let content = serde_json::from_str::<Vec<StrictToolOutputBlock>>(&inner)
+            .ok()
+            .filter(|blocks| !blocks.is_empty())
+            .map(|blocks| {
+                blocks
+                    .into_iter()
+                    .map(StrictToolOutputBlock::into_content)
+                    .collect()
+            })
+            .map(ToolOutputContent::Blocks)
+            .unwrap_or(ToolOutputContent::Text(inner));
+        ContentBlock::ToolOutput { call_id, content }
     }
-
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -123,7 +185,14 @@ pub struct HistoryEntry {
 impl HistoryEntry {
     /// Wrap a Message with timestamp and ID.
     pub fn new(message: Message, ts: String, id: String) -> Self {
-        Self { message, ts: Some(ts), id: Some(id), mcp_app_html: None, mcp_app_input: None, model: None }
+        Self {
+            message,
+            ts: Some(ts),
+            id: Some(id),
+            mcp_app_html: None,
+            mcp_app_input: None,
+            model: None,
+        }
     }
 
     /// Extract just the Messages from a slice of entries.
@@ -159,12 +228,12 @@ pub struct ToolChatResult {
     pub rig_history: Option<Vec<Message>>,
     /// The message ID used during streaming (so the saved message can reuse it).
     pub message_id: Option<String>,
-    /// Total tokens used (input + output) across all turns, from API usage.
+    /// Cost-normalized token units across all turns (existing usage accounting).
     pub tokens_used: u64,
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
-// LlmBackend — direct API calls to Anthropic / OpenAI / OpenRouter
+// LlmBackend — configured facade over provider adapters
 // ═══════════════════════════════════════════════════════════════════════════
 
 pub(crate) const ANTHROPIC_BASE_URL: &str = "https://api.anthropic.com";
@@ -172,28 +241,140 @@ pub(crate) const OPENAI_BASE_URL: &str = "https://api.openai.com";
 
 #[derive(Clone)]
 pub struct LlmBackend {
+    pub profile: crate::config::ProviderProfile,
     pub http: reqwest::Client,
     pub api_key: String,
     pub model: String,
-    /// Base URL for Anthropic API calls.
+    /// Base URL for the selected adapter.
     pub base_url: String,
-    /// Provider type — Api (Anthropic) or Openai.
+    /// Provider identity; unsupported legacy selections remain typed setup errors.
     pub provider: crate::config::LlmProvider,
 }
 
-pub(crate) struct ToolUseBlock {
+#[derive(Debug)]
+pub(crate) struct ToolCall {
     pub(crate) id: String,
     pub(crate) name: String,
-    pub(crate) input: serde_json::Value,
+    pub(crate) arguments: serde_json::Value,
 }
 
-/// Result of a single streaming turn.
-pub(crate) struct StreamOnceResult {
+/// Canonical result of a completion or streaming turn.
+#[derive(Debug)]
+pub struct LlmResponse {
     pub(crate) text: String,
-    pub(crate) tool_uses: Vec<ToolUseBlock>,
-    pub(crate) stop_reason: String,
+    pub(crate) tool_calls: Vec<ToolCall>,
+    pub(crate) stop_reason: super::contract::StopReason,
+    pub(crate) usage: super::contract::Usage,
     pub(crate) tokens_used: u64,
     /// Content blocks in the order they arrived from the API.
     /// Preserves interleaving of text, server_tool_use, and server_tool_result.
     pub(crate) ordered_content: Vec<ContentBlock>,
+}
+
+/// Typed text or multimodal output. Untagged serde preserves historical JSON.
+#[derive(Clone, Debug, serde::Serialize)]
+#[serde(untagged)]
+pub enum ToolOutputContent {
+    Text(String),
+    Blocks(Vec<ContentBlock>),
+    /// Preserve unusual legacy payloads without interpreting them as content blocks.
+    Legacy(serde_json::Value),
+}
+
+impl<'de> serde::Deserialize<'de> for ToolOutputContent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let value = serde_json::Value::deserialize(deserializer)?;
+        if let serde_json::Value::String(text) = value {
+            return Ok(Self::Text(text));
+        }
+
+        if let Ok(blocks) = serde_json::from_value::<Vec<StrictToolOutputBlock>>(value.clone()) {
+            if !blocks.is_empty() {
+                return Ok(Self::Blocks(
+                    blocks
+                        .into_iter()
+                        .map(StrictToolOutputBlock::into_content)
+                        .collect(),
+                ));
+            }
+        }
+
+        Ok(Self::Legacy(value))
+    }
+}
+impl ToolOutputContent {
+    pub fn as_str(&self) -> Option<&str> {
+        if let Self::Text(s) = self {
+            Some(s)
+        } else {
+            None
+        }
+    }
+}
+impl std::fmt::Display for ToolOutputContent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Text(s) => f.write_str(s),
+            _ => write!(
+                f,
+                "{}",
+                serde_json::to_string(self).map_err(|_| std::fmt::Error)?
+            ),
+        }
+    }
+}
+
+impl ToolCall {
+    pub(crate) fn required_string(
+        value: &serde_json::Value,
+        key: &str,
+    ) -> Result<String, super::contract::LlmError> {
+        value[key]
+            .as_str()
+            .filter(|s| !s.trim().is_empty())
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                super::contract::LlmError::InvalidResponse(format!("missing or empty tool {key}"))
+            })
+    }
+    pub(crate) fn validate_arguments(
+        value: &serde_json::Value,
+    ) -> Result<(), super::contract::LlmError> {
+        if value.is_object() {
+            Ok(())
+        } else {
+            Err(super::contract::LlmError::InvalidResponse(
+                "tool arguments must be a JSON object".into(),
+            ))
+        }
+    }
+    pub(crate) fn parse_arguments(
+        value: &str,
+    ) -> Result<serde_json::Value, super::contract::LlmError> {
+        let value = serde_json::from_str(value).map_err(|e| {
+            super::contract::LlmError::InvalidResponse(format!("invalid tool arguments: {e}"))
+        })?;
+        Self::validate_arguments(&value)?;
+        Ok(value)
+    }
+    pub(crate) fn from_json_strings(
+        value: &serde_json::Value,
+        id: &str,
+        args: &str,
+    ) -> Result<Self, super::contract::LlmError> {
+        Ok(Self {
+            id: Self::required_string(value, id)?,
+            name: Self::required_string(value, "name")?,
+            arguments: Self::parse_arguments(&Self::required_string(value, args)?)?,
+        })
+    }
+}
+
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+pub enum SummaryTag {
+    #[serde(rename = "compaction")]
+    Summary,
 }

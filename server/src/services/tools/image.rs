@@ -1,8 +1,8 @@
-use crate::services::tool::{ToolDefinition, Tool};
+use crate::services::tool::{Tool, ToolDefinition};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{openai_schema, ToolExecError};
+use super::{ToolExecError, openai_schema};
 
 pub struct ViewImageTool;
 
@@ -57,6 +57,7 @@ impl Tool for ViewImageTool {
         // Return URL-based image content block — Claude fetches it directly
         Ok(serde_json::to_string(&serde_json::json!([
             {"type": "image", "source": {"type": "url", "url": url}}
-        ])).unwrap())
+        ]))
+        .unwrap())
     }
 }

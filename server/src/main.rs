@@ -68,12 +68,10 @@ async fn main() {
     // Migrate legacy memory (facts.md + episodes.md → library) for all instances
     services::memory::migrate_all_instances(&state.workspace_dir);
 
-    let addr: SocketAddr = format!("{host}:{port}")
-        .parse()
-        .unwrap_or_else(|_| {
-            log::warn!("invalid host:port {host}:{port}, falling back to 0.0.0.0:{port}");
-            SocketAddr::from(([0, 0, 0, 0], port))
-        });
+    let addr: SocketAddr = format!("{host}:{port}").parse().unwrap_or_else(|_| {
+        log::warn!("invalid host:port {host}:{port}, falling back to 0.0.0.0:{port}");
+        SocketAddr::from(([0, 0, 0, 0], port))
+    });
 
     // Notify active chats that the server restarted and spawn agent loops
     let restart_chats = services::chat::notify_restart(&state.workspace_dir, &state.events);

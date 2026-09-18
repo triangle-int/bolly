@@ -9,14 +9,25 @@ auth_token = ""
 static_dir = ""
 
 [llm]
-provider = "anthropic"       # anthropic, openai, openrouter
-model = "claude-sonnet-4-6"  # model override (optional)
+provider = "anthropic" # anthropic or openai; legacy "api" is accepted
+# model = "custom-model" # optional active model override
+
+[llm.profiles.anthropic]
+heavy = "claude-opus-4-6"
+fast = "claude-sonnet-4-6"
+cheap = "claude-haiku-4-5-20251001"
+
+[llm.profiles.openai]
+heavy = "gpt-5.4"
+fast = "gpt-5.4"
+cheap = "gpt-5.4-mini"
 
 [llm.tokens]
-ANTHROPIC = ""       # Required — Anthropic API key (sk-ant-...)
+OPEN_AI = ""         # Required when provider is openai
+ANTHROPIC = ""       # Required when provider is anthropic — API key (sk-ant-...)
 GOOGLE_AI = ""       # Optional — Google AI / Gemini (vector memory search)
 ELEVENLABS = ""      # Optional — ElevenLabs (text-to-speech)
-OPENROUTER = ""      # Optional — OpenRouter (video/music analysis)
+OPENROUTER = ""      # Optional — OpenRouter (video analysis)
 
 # Optional: set FAL_KEY env var for AI image generation via fal.ai MCP
 

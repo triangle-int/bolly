@@ -47,7 +47,13 @@ function deleteCookie(name: string) {
 	document.cookie = `${name}=; path=/; max-age=0`;
 }
 
+export function isDesktopRelay(): boolean {
+	return typeof window !== "undefined" && "__BOLLY_DESKTOP_RELAY__" in window;
+}
+
 export function getAuthToken(): string | null {
+	// Desktop authenticates in the native exact-origin relay, never in browser URLs.
+	if (isDesktopRelay()) return null;
 	if (typeof localStorage === "undefined") return getCookie(TOKEN_COOKIE);
 	// Try localStorage first, fall back to cookie (for PWA isolated storage)
 	return localStorage.getItem(TOKEN_KEY) ?? getCookie(TOKEN_COOKIE);
@@ -62,6 +68,7 @@ export function mediaUrl(slug: string, uploadId: string): string {
 }
 
 export function setAuthToken(token: string) {
+	if (isDesktopRelay()) throw new Error("Reconnect from the desktop dashboard.");
 	if (typeof localStorage !== "undefined") {
 		localStorage.setItem(TOKEN_KEY, token);
 	}
@@ -173,7 +180,8 @@ export function updateLlmConfig(req: {
 export function fetchConfigStatus(): Promise<{
 	llm_configured: boolean;
 	provider?: string;
-	model?: string;
+	setup_required?: string | null;
+	model?: string | null;
 	model_mode?: string;
 	configured_keys?: string[];
 	is_managed?: boolean;
@@ -181,7 +189,7 @@ export function fetchConfigStatus(): Promise<{
 	return json("/api/config/status");
 }
 
-export function updateProvider(provider: 'api' | 'openai'): Promise<{ status: string; provider: string }> {
+export function updateProvider(provider: 'anthropic' | 'openai'): Promise<{ status: string; provider: string }> {
 	return json("/api/config/provider", {
 		method: "PUT",
 		headers: { "Content-Type": "application/json" },
@@ -367,26 +375,6 @@ export async function cancelScheduledTask(slug: string, taskId: string): Promise
 		{ method: "DELETE" },
 	);
 	if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
-}
-
-export function fetchMusicEnabled(slug: string): Promise<{ music_enabled: boolean }> {
-	return json(`/api/instances/${encodeURIComponent(slug)}/music`);
-}
-
-export async function updateMusicEnabled(slug: string, enabled: boolean): Promise<void> {
-	const headers = {
-		...authHeaders(),
-		"Content-Type": "application/json",
-	};
-	const res = await fetch(`${BASE}/api/instances/${encodeURIComponent(slug)}/music`, {
-		method: "PUT",
-		headers,
-		body: JSON.stringify({ music_enabled: enabled }),
-	});
-	if (!res.ok) {
-		const text = await res.text().catch(() => res.statusText);
-		throw new Error(text);
-	}
 }
 
 export function fetchSkin(slug: string): Promise<{ skin: string }> {

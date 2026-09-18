@@ -14,10 +14,7 @@ fn percent_decode(input: &str) -> String {
     let mut i = 0;
     while i < bytes.len() {
         if bytes[i] == b'%' && i + 2 < bytes.len() {
-            if let Ok(byte) = u8::from_str_radix(
-                &input[i + 1..i + 3],
-                16,
-            ) {
+            if let Ok(byte) = u8::from_str_radix(&input[i + 1..i + 3], 16) {
                 out.push(byte);
                 i += 3;
                 continue;
@@ -55,14 +52,11 @@ pub async fn auth_middleware(
         .map(|s| s.to_string());
 
     // Check ?token=<value> query param (for WebSocket connections)
-    let query_token = request
-        .uri()
-        .query()
-        .and_then(|q| {
-            q.split('&')
-                .find_map(|p| p.strip_prefix("token="))
-                .map(|s| s.to_string())
-        });
+    let query_token = request.uri().query().and_then(|q| {
+        q.split('&')
+            .find_map(|p| p.strip_prefix("token="))
+            .map(|s| s.to_string())
+    });
 
     // Check bolly_token cookie (for PWA standalone mode where localStorage is isolated)
     let cookie_token = request

@@ -1,5 +1,6 @@
 mod agent_loop;
 mod anthropic;
+pub mod contract;
 mod helpers;
 mod openai;
 mod types;
@@ -13,35 +14,70 @@ use crate::domain::events::ServerEvent;
 use crate::services::tool::ToolDyn;
 
 // Re-export all public types and functions that were accessible from crate::services::llm::*
+#[allow(unused_imports)]
+pub use helpers::DEFAULT_ONBOARDING_PROMPT;
 pub use helpers::{
     build_multimodal_prompt, get_real_input_tokens, history_to_chat_messages, load_system_prompt,
 };
-#[allow(unused_imports)]
-pub use helpers::DEFAULT_ONBOARDING_PROMPT;
 pub use types::{ContentBlock, HistoryEntry, LlmBackend, Message, ToolChatResult};
 #[allow(unused_imports)]
 pub use types::{DocumentSource, ImageSource};
 
 use agent_loop::{agent_loop, collect_tool_defs, streaming_agent_loop};
-use anthropic::{anthropic_complete, anthropic_headers};
+use contract::{LlmError, LlmRequest, ProviderAdapter};
 use helpers::retry_on_rate_limit;
-use openai::openai_complete;
+
+pub(crate) use anthropic::messages_to_anthropic;
 use types::{ANTHROPIC_BASE_URL, OPENAI_BASE_URL};
 
+pub fn provider_capabilities(
+    provider: crate::config::LlmProvider,
+) -> Option<contract::Capabilities> {
+    match provider {
+        crate::config::LlmProvider::Anthropic => Some(anthropic::CAPABILITIES),
+        crate::config::LlmProvider::Openai => Some(openai::CAPABILITIES),
+        crate::config::LlmProvider::Codex => None,
+    }
+}
+
 impl LlmBackend {
+    pub(crate) fn adapter(&self) -> Result<Box<dyn ProviderAdapter>, LlmError> {
+        match self.provider {
+            crate::config::LlmProvider::Anthropic => {
+                Ok(Box::new(anthropic::AnthropicAdapter(self.clone())))
+            }
+            crate::config::LlmProvider::Openai => Ok(Box::new(openai::OpenaiAdapter(self.clone()))),
+            crate::config::LlmProvider::Codex => Err(LlmError::SetupRequired(
+                "Codex is not supported yet; select Anthropic or OpenAI".into(),
+            )),
+        }
+    }
+
     pub fn from_config(config: &Config) -> Option<Self> {
         let http = reqwest::Client::new();
         let model = config.llm.model_name().to_string();
 
         match config.llm.provider {
-            crate::config::LlmProvider::Api => {
+            crate::config::LlmProvider::Codex => {
+                log::warn!("{}", config.llm.setup_required().unwrap());
+                Some(Self {
+                    profile: config.llm.profile().clone(),
+                    http,
+                    api_key: String::new(),
+                    model: String::new(),
+                    base_url: String::new(),
+                    provider: crate::config::LlmProvider::Codex,
+                })
+            }
+            crate::config::LlmProvider::Anthropic => {
                 let api_key = config.llm.api_key()?.to_string();
                 Some(Self {
+                    profile: config.llm.profile().clone(),
                     http,
                     api_key,
                     model,
                     base_url: ANTHROPIC_BASE_URL.to_string(),
-                    provider: crate::config::LlmProvider::Api,
+                    provider: crate::config::LlmProvider::Anthropic,
                 })
             }
             crate::config::LlmProvider::Openai => {
@@ -51,6 +87,7 @@ impl LlmBackend {
                     config.llm.tokens.open_ai.clone()
                 };
                 Some(Self {
+                    profile: config.llm.profile().clone(),
                     http,
                     api_key,
                     model,
@@ -64,11 +101,12 @@ impl LlmBackend {
     /// Create a variant using the fast model.
     pub fn fast_variant_with(&self, override_model: Option<&str>) -> Self {
         Self {
+            profile: self.profile.clone(),
             http: self.http.clone(),
             api_key: self.api_key.clone(),
             model: override_model
                 .filter(|s| !s.is_empty())
-                .unwrap_or(self.provider.fast_model())
+                .unwrap_or(&self.profile.fast)
                 .to_string(),
             base_url: self.base_url.clone(),
             provider: self.provider,
@@ -78,9 +116,10 @@ impl LlmBackend {
     /// Create a variant using the cheapest model for background tasks.
     pub fn cheap_variant(&self) -> Self {
         Self {
+            profile: self.profile.clone(),
             http: self.http.clone(),
             api_key: self.api_key.clone(),
-            model: self.provider.cheap_model().to_string(),
+            model: self.profile.cheap.clone(),
             base_url: self.base_url.clone(),
             provider: self.provider,
         }
@@ -89,9 +128,10 @@ impl LlmBackend {
     /// Create a variant using the heavy model for deep reflection.
     pub fn heavy_variant(&self) -> Self {
         Self {
+            profile: self.profile.clone(),
             http: self.http.clone(),
             api_key: self.api_key.clone(),
-            model: self.provider.heavy_model().to_string(),
+            model: self.profile.heavy.clone(),
             base_url: self.base_url.clone(),
             provider: self.provider,
         }
@@ -144,33 +184,12 @@ impl LlmBackend {
             async move {
                 let mut messages = history;
                 messages.push(Message::user(&prompt));
-                if backend.provider.is_openai_format() {
-                    openai_complete(
-                        &backend.http,
-                        &backend.api_key,
-                        &backend.model,
-                        &[&system],
-                        &[],
-                        &messages,
-                        16384,
-                        &backend.base_url,
-                    )
-                    .await
-                    .map(|(text, _, _, tokens)| (text, tokens))
-                } else {
-                    anthropic_complete(
-                        &backend.http,
-                        &backend.api_key,
-                        &backend.model,
-                        &[&system],
-                        &[],
-                        &messages,
-                        16384,
-                        &backend.base_url,
-                    )
-                    .await
-                    .map(|(text, _, _, tokens)| (text, tokens))
-                }
+                let adapter = backend.adapter()?;
+                let system = [system.as_str()];
+                let response = adapter
+                    .complete(LlmRequest::new(&system, &messages, &[]))
+                    .await?;
+                Ok((response.text, response.tokens_used))
             }
         })
         .await
@@ -183,119 +202,13 @@ impl LlmBackend {
         prompt: &str,
         schema: serde_json::Value,
     ) -> anyhow::Result<(String, u64)> {
-        if self.provider.is_openai_format() {
-            let backend = self.clone();
-            let system = system_prompt.to_string();
-            let prompt = prompt.to_string();
-            return retry_on_rate_limit(|| {
-                let backend = backend.clone();
-                let system = system.clone();
-                let prompt = prompt.clone();
-                let schema = schema.clone();
-                async move {
-                    // Include schema in prompt — Responses API uses text.format for structured output
-                    let schema_str = serde_json::to_string(&schema).unwrap_or_default();
-                    let req = serde_json::json!({
-                        "model": &backend.model,
-                        "max_output_tokens": 16384,
-                        "stream": false,
-                        "store": false,
-                        "instructions": format!("{system}\n\nRespond with ONLY valid JSON matching this schema:\n{schema_str}"),
-                        "input": &prompt,
-                        "text": { "format": { "type": "json_object" } },
-                    });
-                    let resp = backend.http
-                        .post(&format!("{}/v1/responses", backend.base_url))
-                        .header("Authorization", format!("Bearer {}", backend.api_key))
-                        .header("Content-Type", "application/json")
-                        .json(&req)
-                        .send()
-                        .await?;
-                    let status = resp.status();
-                    let resp_text = resp.text().await?;
-                    if !status.is_success() {
-                        return Err(anyhow::anyhow!("OpenAI API error {status}: {resp_text}"));
-                    }
-                    let resp_json: serde_json::Value = serde_json::from_str(&resp_text)?;
-                    let tokens = resp_json["usage"]["input_tokens"].as_u64().unwrap_or(0)
-                        + resp_json["usage"]["output_tokens"].as_u64().unwrap_or(0);
-                    // Extract text from output_text helper or first message content
-                    let text = resp_json["output_text"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string();
-                    Ok((text, tokens))
-                }
-            }).await;
-        }
-        let backend = self.clone();
-        let system = system_prompt.to_string();
-        let prompt = prompt.to_string();
-        retry_on_rate_limit(|| {
-            let backend = backend.clone();
-            let system = system.clone();
-            let prompt = prompt.clone();
-            let schema = schema.clone();
-            async move {
-                let messages = vec![Message::user(&prompt)];
-                let system_blocks =
-                    vec![serde_json::json!({"type": "text", "text": &system})];
-                let msgs =
-                    serde_json::to_value(&messages).unwrap_or(serde_json::json!([]));
-
-                let req = serde_json::json!({
-                    "model": &backend.model,
-                    "max_tokens": 16384,
-                    "system": system_blocks,
-                    "messages": msgs,
-                    "output_config": {
-                        "format": {
-                            "type": "json_schema",
-                            "schema": schema,
-                        }
-                    }
-                });
-
-                let resp = backend
-                    .http
-                    .post(&format!("{}/v1/messages", backend.base_url))
-                    .headers(anthropic_headers(&backend.api_key))
-                    .json(&req)
-                    .send()
-                    .await?;
-
-                let status = resp.status();
-                let resp_text = resp.text().await?;
-                if !status.is_success() {
-                    return Err(anyhow::anyhow!(
-                        "Anthropic API error {status}: {resp_text}"
-                    ));
-                }
-
-                let resp_json: serde_json::Value = serde_json::from_str(&resp_text)?;
-                let tokens = resp_json
-                    .pointer("/usage/input_tokens")
-                    .and_then(|v| v.as_u64())
-                    .unwrap_or(0)
-                    + resp_json
-                        .pointer("/usage/output_tokens")
-                        .and_then(|v| v.as_u64())
-                        .unwrap_or(0);
-
-                // Find first text block (may be preceded by thinking blocks)
-                let text = resp_json
-                    .pointer("/content")
-                    .and_then(|v| v.as_array())
-                    .and_then(|arr| {
-                        arr.iter()
-                            .find(|b| b["type"].as_str() == Some("text"))
-                    })
-                    .and_then(|b| b["text"].as_str())
-                    .unwrap_or("")
-                    .to_string();
-
-                Ok((text, tokens))
-            }
+        retry_on_rate_limit(|| async {
+            let messages = [Message::user(prompt)];
+            let system = [system_prompt];
+            let mut request = LlmRequest::new(&system, &messages, &[]);
+            request.json_schema = Some(&schema);
+            let response = self.adapter()?.complete(request).await?;
+            Ok((response.text, response.tokens_used))
         })
         .await
     }
@@ -402,46 +315,44 @@ mod tests {
     use crate::services::tool::ToolDefinition;
     use types::Message;
 
-    // ── Provider properties ──────────────────────────────────────────────
-
-    #[test]
-    fn provider_api_uses_anthropic_format() {
-        assert!(!LlmProvider::Api.is_openai_format());
-    }
-
-    #[test]
-    fn provider_openai_uses_openai_format() {
-        assert!(LlmProvider::Openai.is_openai_format());
-    }
-
     // ── Model selection per provider ─────────────────────────────────────
 
     #[test]
     fn anthropic_provider_uses_claude_models() {
-        let p = LlmProvider::Api;
-        assert!(p.heavy_model().starts_with("claude-"), "heavy");
-        assert!(p.fast_model().starts_with("claude-"), "fast");
-        assert!(p.cheap_model().starts_with("claude-"), "cheap");
+        let p = LlmProvider::Anthropic;
+        assert!(profile(p).heavy.starts_with("claude-"), "heavy");
+        assert!(profile(p).fast.starts_with("claude-"), "fast");
+        assert!(profile(p).cheap.starts_with("claude-"), "cheap");
     }
 
     #[test]
     fn openai_provider_uses_gpt_models() {
         let p = LlmProvider::Openai;
-        assert!(p.heavy_model().starts_with("gpt-"), "heavy");
-        assert!(p.fast_model().starts_with("gpt-"), "fast");
-        assert!(p.cheap_model().starts_with("gpt-"), "cheap");
+        assert!(profile(p).heavy.starts_with("gpt-"), "heavy");
+        assert!(profile(p).fast.starts_with("gpt-"), "fast");
+        assert!(profile(p).cheap.starts_with("gpt-"), "cheap");
     }
 
     // ── Backend construction ─────────────────────────────────────────────
 
+    fn profile(provider: LlmProvider) -> crate::config::ProviderProfile {
+        let profiles = crate::config::ProviderProfiles::default();
+        match provider {
+            LlmProvider::Openai => profiles.openai,
+            _ => profiles.anthropic,
+        }
+    }
+
     fn make_backend(provider: LlmProvider) -> LlmBackend {
         LlmBackend {
+            profile: profile(provider),
             http: reqwest::Client::new(),
             api_key: "test-key".to_string(),
-            model: provider.heavy_model().to_string(),
+            model: profile(provider).heavy.to_string(),
             base_url: match provider {
-                LlmProvider::Api => ANTHROPIC_BASE_URL.to_string(),
+                LlmProvider::Anthropic => ANTHROPIC_BASE_URL.to_string(),
                 LlmProvider::Openai => OPENAI_BASE_URL.to_string(),
+                LlmProvider::Codex => unreachable!(),
             },
             provider,
         }
@@ -449,7 +360,7 @@ mod tests {
 
     #[test]
     fn backend_api_points_to_anthropic() {
-        let b = make_backend(LlmProvider::Api);
+        let b = make_backend(LlmProvider::Anthropic);
         assert_eq!(b.base_url, "https://api.anthropic.com");
         assert!(b.model.starts_with("claude-"));
     }
@@ -465,10 +376,10 @@ mod tests {
 
     #[test]
     fn fast_variant_uses_fast_model() {
-        for provider in [LlmProvider::Api, LlmProvider::Openai] {
+        for provider in [LlmProvider::Anthropic, LlmProvider::Openai] {
             let b = make_backend(provider);
             let fast = b.fast_variant_with(None);
-            assert_eq!(fast.model, provider.fast_model(), "{provider:?}");
+            assert_eq!(fast.model, profile(provider).fast, "{provider:?}");
             assert_eq!(fast.base_url, b.base_url, "{provider:?} base_url preserved");
         }
     }
@@ -484,24 +395,24 @@ mod tests {
     fn fast_variant_ignores_empty_override() {
         let b = make_backend(LlmProvider::Openai);
         let fast = b.fast_variant_with(Some(""));
-        assert_eq!(fast.model, LlmProvider::Openai.fast_model());
+        assert_eq!(fast.model, profile(LlmProvider::Openai).fast);
     }
 
     #[test]
     fn cheap_variant_uses_cheap_model() {
-        for provider in [LlmProvider::Api, LlmProvider::Openai] {
+        for provider in [LlmProvider::Anthropic, LlmProvider::Openai] {
             let b = make_backend(provider);
             let cheap = b.cheap_variant();
-            assert_eq!(cheap.model, provider.cheap_model(), "{provider:?}");
+            assert_eq!(cheap.model, profile(provider).cheap, "{provider:?}");
         }
     }
 
     #[test]
     fn heavy_variant_uses_heavy_model() {
-        for provider in [LlmProvider::Api, LlmProvider::Openai] {
+        for provider in [LlmProvider::Anthropic, LlmProvider::Openai] {
             let b = make_backend(provider);
             let heavy = b.heavy_variant();
-            assert_eq!(heavy.model, provider.heavy_model(), "{provider:?}");
+            assert_eq!(heavy.model, profile(provider).heavy, "{provider:?}");
         }
     }
 
@@ -537,11 +448,13 @@ mod tests {
     fn openai_messages_convert_tool_use_to_function_call() {
         let msgs = vec![Message::Assistant {
             content: vec![
-                types::ContentBlock::Text { text: "Let me search.".into() },
-                types::ContentBlock::ToolUse {
+                types::ContentBlock::Text {
+                    text: "Let me search.".into(),
+                },
+                types::ContentBlock::ToolCall {
                     id: "call_1".into(),
                     name: "web_search".into(),
-                    input: serde_json::json!({"query": "rust"}),
+                    arguments: serde_json::json!({"query": "rust"}),
                 },
             ],
         }];
@@ -559,9 +472,9 @@ mod tests {
     #[test]
     fn openai_messages_convert_tool_result() {
         let msgs = vec![Message::User {
-            content: vec![types::ContentBlock::ToolResult {
-                tool_use_id: "call_1".into(),
-                content: serde_json::json!("result text"),
+            content: vec![types::ContentBlock::ToolOutput {
+                call_id: "call_1".into(),
+                content: types::ToolOutputContent::Text("result text".into()),
             }],
         }];
         let (_instructions, input) = openai::messages_to_openai(&[], &msgs);
@@ -608,7 +521,13 @@ mod tests {
     fn anthropic_request_uses_max_tokens() {
         let msgs = vec![Message::user("hi")];
         let req = anthropic::build_anthropic_request(
-            "claude-sonnet-4-6", &["system prompt"], &[], &msgs, 4096, false, "key",
+            "claude-sonnet-4-6",
+            &["system prompt"],
+            &[],
+            &msgs,
+            4096,
+            false,
+            "key",
         );
         assert_eq!(req["max_tokens"], 4096);
         // Anthropic should NOT have max_completion_tokens
@@ -619,7 +538,13 @@ mod tests {
     fn anthropic_request_has_system_blocks_with_cache_control() {
         let msgs = vec![Message::user("hi")];
         let req = anthropic::build_anthropic_request(
-            "claude-sonnet-4-6", &["block1", "block2"], &[], &msgs, 4096, false, "key",
+            "claude-sonnet-4-6",
+            &["block1", "block2"],
+            &[],
+            &msgs,
+            4096,
+            false,
+            "key",
         );
         let system = req["system"].as_array().unwrap();
         assert_eq!(system.len(), 2);
@@ -635,7 +560,13 @@ mod tests {
     fn anthropic_request_skips_empty_system_blocks() {
         let msgs = vec![Message::user("hi")];
         let req = anthropic::build_anthropic_request(
-            "claude-sonnet-4-6", &["", "actual content", ""], &[], &msgs, 4096, false, "key",
+            "claude-sonnet-4-6",
+            &["", "actual content", ""],
+            &[],
+            &msgs,
+            4096,
+            false,
+            "key",
         );
         let system = req["system"].as_array().unwrap();
         assert_eq!(system.len(), 1);
@@ -651,7 +582,13 @@ mod tests {
         }];
         let msgs = vec![Message::user("hi")];
         let req = anthropic::build_anthropic_request(
-            "claude-sonnet-4-6", &["sys"], &tools, &msgs, 4096, false, "key",
+            "claude-sonnet-4-6",
+            &["sys"],
+            &tools,
+            &msgs,
+            4096,
+            false,
+            "key",
         );
         let t = &req["tools"][0];
         assert_eq!(t["name"], "search");
@@ -669,12 +606,21 @@ mod tests {
         }];
         let msgs = vec![Message::user("hi")];
         let req = anthropic::build_anthropic_request(
-            "claude-sonnet-4-6", &["sys"], &tools, &msgs, 4096, true, "key",
+            "claude-sonnet-4-6",
+            &["sys"],
+            &tools,
+            &msgs,
+            4096,
+            true,
+            "key",
         );
         let all_tools = req["tools"].as_array().unwrap();
         // my_tool + web_search + web_fetch
         assert_eq!(all_tools.len(), 3);
-        let names: Vec<&str> = all_tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
+        let names: Vec<&str> = all_tools
+            .iter()
+            .map(|t| t["name"].as_str().unwrap())
+            .collect();
         assert!(names.contains(&"my_tool"));
         assert!(names.contains(&"web_search"));
         assert!(names.contains(&"web_fetch"));
@@ -689,7 +635,13 @@ mod tests {
         }];
         let msgs = vec![Message::user("hi")];
         let req = anthropic::build_anthropic_request(
-            "claude-sonnet-4-6", &["sys"], &tools, &msgs, 4096, false, "key",
+            "claude-sonnet-4-6",
+            &["sys"],
+            &tools,
+            &msgs,
+            4096,
+            false,
+            "key",
         );
         let all_tools = req["tools"].as_array().unwrap();
         assert_eq!(all_tools.len(), 1);
@@ -699,24 +651,35 @@ mod tests {
     #[test]
     fn anthropic_request_merges_consecutive_same_role() {
         // Two consecutive user messages should get merged
-        let msgs = vec![
-            Message::user("first"),
-            Message::user("second"),
-        ];
+        let msgs = vec![Message::user("first"), Message::user("second")];
         let req = anthropic::build_anthropic_request(
-            "claude-sonnet-4-6", &["sys"], &[], &msgs, 4096, false, "key",
+            "claude-sonnet-4-6",
+            &["sys"],
+            &[],
+            &msgs,
+            4096,
+            false,
+            "key",
         );
         let api_msgs = req["messages"].as_array().unwrap();
-        assert_eq!(api_msgs.len(), 1, "consecutive same-role messages should merge");
+        assert_eq!(
+            api_msgs.len(),
+            1,
+            "consecutive same-role messages should merge"
+        );
         let content = api_msgs[0]["content"].as_array().unwrap();
-        assert_eq!(content.len(), 2, "merged message should have 2 content blocks");
+        assert_eq!(
+            content.len(),
+            2,
+            "merged message should have 2 content blocks"
+        );
     }
 
     // ── Anthropic headers ────────────────────────────────────────────────
 
     #[test]
     fn anthropic_headers_include_required_fields() {
-        let h = anthropic::anthropic_headers("test-api-key");
+        let h = anthropic::anthropic_headers("test-api-key").unwrap();
         assert_eq!(h.get("x-api-key").unwrap(), "test-api-key");
         assert!(h.get("anthropic-version").is_some());
         assert!(h.get("anthropic-beta").is_some());
@@ -727,16 +690,16 @@ mod tests {
 
     #[test]
     fn all_providers_have_distinct_model_tiers() {
-        for provider in [LlmProvider::Api, LlmProvider::Openai] {
-            let heavy = provider.heavy_model();
-            let cheap = provider.cheap_model();
+        for provider in [LlmProvider::Anthropic, LlmProvider::Openai] {
+            let heavy = profile(provider).heavy;
+            let cheap = profile(provider).cheap;
             assert_ne!(heavy, cheap, "{provider:?}: heavy and cheap should differ");
         }
     }
 
     #[test]
     fn providers_use_official_urls() {
-        let api = make_backend(LlmProvider::Api);
+        let api = make_backend(LlmProvider::Anthropic);
         assert_eq!(api.base_url, ANTHROPIC_BASE_URL);
         let oai = make_backend(LlmProvider::Openai);
         assert_eq!(oai.base_url, OPENAI_BASE_URL);
@@ -756,10 +719,10 @@ mod tests {
     #[test]
     fn tool_result_unwraps_json_string_quoting() {
         // serde_json::to_string wraps strings in quotes: "foo" -> "\"foo\""
-        let block = types::ContentBlock::tool_result("id1".into(), "\"hello world\"".into());
+        let block = types::ContentBlock::tool_output("id1".into(), "\"hello world\"".into());
         match block {
-            types::ContentBlock::ToolResult { content, .. } => {
-                assert_eq!(content, serde_json::json!("hello world"));
+            types::ContentBlock::ToolOutput { content, .. } => {
+                assert_eq!(content.as_str(), Some("hello world"));
             }
             _ => panic!("expected ToolResult"),
         }
@@ -768,14 +731,48 @@ mod tests {
     #[test]
     fn tool_result_passes_content_block_arrays_directly() {
         let json_blocks = r#"[{"type":"text","text":"result"}]"#;
-        let block = types::ContentBlock::tool_result("id1".into(), json_blocks.into());
+        let block = types::ContentBlock::tool_output("id1".into(), json_blocks.into());
         match block {
-            types::ContentBlock::ToolResult { content, .. } => {
-                assert!(content.is_array());
-                assert_eq!(content[0]["type"], "text");
+            types::ContentBlock::ToolOutput { content, .. } => {
+                assert!(matches!(content, types::ToolOutputContent::Blocks(_)));
+                assert_eq!(serde_json::to_value(content).unwrap()[0]["type"], "text");
             }
             _ => panic!("expected ToolResult"),
         }
+    }
+
+    #[test]
+    fn tool_result_preserves_ordinary_json_arrays_as_text() {
+        for json in [
+            r#"[{"title":"result"}]"#,
+            r#"[{"type":"expense","amount":1}]"#,
+            r#"[{"type":"text"}]"#,
+            r#"[{"type":"text","text":"ok"},{"title":"result"}]"#,
+            r#"[{"type":"text","text":"memo","amount":1}]"#,
+            r#"[{"type":"image","source":{"type":"url","url":"https://example.com/a.png","tracking":"x"}}]"#,
+            r#"[]"#,
+        ] {
+            let block = types::ContentBlock::tool_output("id1".into(), json.into());
+            match block {
+                types::ContentBlock::ToolOutput { content, .. } => {
+                    assert!(
+                        matches!(content, types::ToolOutputContent::Text(ref value) if value == json)
+                    );
+                }
+                _ => panic!("expected ToolOutput"),
+            }
+        }
+    }
+
+    #[test]
+    fn persisted_tool_output_does_not_drop_domain_fields() {
+        let json = r#"[{"type":"text","text":"memo","amount":1}]"#;
+        let content: types::ToolOutputContent = serde_json::from_str(json).unwrap();
+        assert!(matches!(content, types::ToolOutputContent::Legacy(_)));
+        assert_eq!(
+            serde_json::to_value(content).unwrap(),
+            serde_json::from_str::<serde_json::Value>(json).unwrap()
+        );
     }
 
     // ═════════════════════════════════════════════════════════════════════
@@ -785,19 +782,25 @@ mod tests {
     // ═════════════════════════════════════════════════════════════════════
 
     fn anthropic_backend(model: &str) -> Option<LlmBackend> {
-        let key = std::env::var("ANTHROPIC_API_KEY").ok().filter(|k| !k.is_empty())?;
+        let key = std::env::var("ANTHROPIC_API_KEY")
+            .ok()
+            .filter(|k| !k.is_empty())?;
         Some(LlmBackend {
+            profile: profile(LlmProvider::Anthropic),
             http: reqwest::Client::new(),
             api_key: key,
             model: model.to_string(),
             base_url: ANTHROPIC_BASE_URL.to_string(),
-            provider: LlmProvider::Api,
+            provider: LlmProvider::Anthropic,
         })
     }
 
     fn openai_backend(model: &str) -> Option<LlmBackend> {
-        let key = std::env::var("OPENAI_API_KEY").ok().filter(|k| !k.is_empty())?;
+        let key = std::env::var("OPENAI_API_KEY")
+            .ok()
+            .filter(|k| !k.is_empty())?;
         Some(LlmBackend {
+            profile: profile(LlmProvider::Openai),
             http: reqwest::Client::new(),
             api_key: key,
             model: model.to_string(),
@@ -811,11 +814,14 @@ mod tests {
     #[tokio::test]
     #[ignore] // requires ANTHROPIC_API_KEY
     async fn network_anthropic_haiku_chat() {
-        let Some(b) = anthropic_backend(LlmProvider::Api.cheap_model()) else {
+        let Some(b) = anthropic_backend(&profile(LlmProvider::Anthropic).cheap) else {
             eprintln!("SKIP: ANTHROPIC_API_KEY not set");
             return;
         };
-        let (text, tokens) = b.chat("Reply with exactly one word: hello", "say it", vec![]).await.unwrap();
+        let (text, tokens) = b
+            .chat("Reply with exactly one word: hello", "say it", vec![])
+            .await
+            .unwrap();
         assert!(!text.is_empty(), "expected non-empty response");
         assert!(tokens > 0, "expected token usage > 0");
     }
@@ -823,11 +829,14 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn network_anthropic_sonnet_chat() {
-        let Some(b) = anthropic_backend(LlmProvider::Api.fast_model()) else {
+        let Some(b) = anthropic_backend(&profile(LlmProvider::Anthropic).fast) else {
             eprintln!("SKIP: ANTHROPIC_API_KEY not set");
             return;
         };
-        let (text, tokens) = b.chat("Reply with exactly one word: pong", "ping", vec![]).await.unwrap();
+        let (text, tokens) = b
+            .chat("Reply with exactly one word: pong", "ping", vec![])
+            .await
+            .unwrap();
         assert!(!text.is_empty());
         assert!(tokens > 0);
     }
@@ -835,7 +844,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn network_anthropic_chat_with_history() {
-        let Some(b) = anthropic_backend(LlmProvider::Api.cheap_model()) else {
+        let Some(b) = anthropic_backend(&profile(LlmProvider::Anthropic).cheap) else {
             eprintln!("SKIP: ANTHROPIC_API_KEY not set");
             return;
         };
@@ -843,15 +852,25 @@ mod tests {
             Message::user("My name is TestBot."),
             Message::assistant("Nice to meet you, TestBot!"),
         ];
-        let (text, _) = b.chat("You remember names. Reply with the user's name only.", "What's my name?", history).await.unwrap();
+        let (text, _) = b
+            .chat(
+                "You remember names. Reply with the user's name only.",
+                "What's my name?",
+                history,
+            )
+            .await
+            .unwrap();
         let lower = text.to_lowercase();
-        assert!(lower.contains("testbot"), "expected model to recall name, got: {text}");
+        assert!(
+            lower.contains("testbot"),
+            "expected model to recall name, got: {text}"
+        );
     }
 
     #[tokio::test]
     #[ignore]
     async fn network_anthropic_json_output() {
-        let Some(b) = anthropic_backend(LlmProvider::Api.cheap_model()) else {
+        let Some(b) = anthropic_backend(&profile(LlmProvider::Anthropic).cheap) else {
             eprintln!("SKIP: ANTHROPIC_API_KEY not set");
             return;
         };
@@ -860,9 +879,19 @@ mod tests {
             "properties": { "color": { "type": "string" } },
             "required": ["color"]
         });
-        let (text, _) = b.chat_json("Return JSON with a color field.", "What color is the sky?", schema).await.unwrap();
+        let (text, _) = b
+            .chat_json(
+                "Return JSON with a color field.",
+                "What color is the sky?",
+                schema,
+            )
+            .await
+            .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&text).expect("should be valid JSON");
-        assert!(parsed["color"].is_string(), "expected color field, got: {text}");
+        assert!(
+            parsed["color"].is_string(),
+            "expected color field, got: {text}"
+        );
     }
 
     // ── OpenAI (direct API) ──────────────────────────────────────────
@@ -870,11 +899,14 @@ mod tests {
     #[tokio::test]
     #[ignore] // requires OPENAI_API_KEY
     async fn network_openai_mini_chat() {
-        let Some(b) = openai_backend(LlmProvider::Openai.cheap_model()) else {
+        let Some(b) = openai_backend(&profile(LlmProvider::Openai).cheap) else {
             eprintln!("SKIP: OPENAI_API_KEY not set");
             return;
         };
-        let (text, tokens) = b.chat("Reply with exactly one word: hello", "say it", vec![]).await.unwrap();
+        let (text, tokens) = b
+            .chat("Reply with exactly one word: hello", "say it", vec![])
+            .await
+            .unwrap();
         assert!(!text.is_empty(), "expected non-empty response");
         assert!(tokens > 0, "expected token usage > 0");
     }
@@ -882,11 +914,14 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn network_openai_heavy_chat() {
-        let Some(b) = openai_backend(LlmProvider::Openai.heavy_model()) else {
+        let Some(b) = openai_backend(&profile(LlmProvider::Openai).heavy) else {
             eprintln!("SKIP: OPENAI_API_KEY not set");
             return;
         };
-        let (text, tokens) = b.chat("Reply with exactly one word: pong", "ping", vec![]).await.unwrap();
+        let (text, tokens) = b
+            .chat("Reply with exactly one word: pong", "ping", vec![])
+            .await
+            .unwrap();
         assert!(!text.is_empty());
         assert!(tokens > 0);
     }
@@ -894,7 +929,7 @@ mod tests {
     #[tokio::test]
     #[ignore]
     async fn network_openai_chat_with_history() {
-        let Some(b) = openai_backend(LlmProvider::Openai.cheap_model()) else {
+        let Some(b) = openai_backend(&profile(LlmProvider::Openai).cheap) else {
             eprintln!("SKIP: OPENAI_API_KEY not set");
             return;
         };
@@ -902,15 +937,25 @@ mod tests {
             Message::user("My name is TestBot."),
             Message::assistant("Nice to meet you, TestBot!"),
         ];
-        let (text, _) = b.chat("You remember names. Reply with the user's name only.", "What's my name?", history).await.unwrap();
+        let (text, _) = b
+            .chat(
+                "You remember names. Reply with the user's name only.",
+                "What's my name?",
+                history,
+            )
+            .await
+            .unwrap();
         let lower = text.to_lowercase();
-        assert!(lower.contains("testbot"), "expected model to recall name, got: {text}");
+        assert!(
+            lower.contains("testbot"),
+            "expected model to recall name, got: {text}"
+        );
     }
 
     #[tokio::test]
     #[ignore]
     async fn network_openai_json_output() {
-        let Some(b) = openai_backend(LlmProvider::Openai.cheap_model()) else {
+        let Some(b) = openai_backend(&profile(LlmProvider::Openai).cheap) else {
             eprintln!("SKIP: OPENAI_API_KEY not set");
             return;
         };
@@ -919,21 +964,35 @@ mod tests {
             "properties": { "color": { "type": "string" } },
             "required": ["color"]
         });
-        let (text, _) = b.chat_json("Return JSON with a color field.", "What color is the sky?", schema).await.unwrap();
+        let (text, _) = b
+            .chat_json(
+                "Return JSON with a color field.",
+                "What color is the sky?",
+                schema,
+            )
+            .await
+            .unwrap();
         let parsed: serde_json::Value = serde_json::from_str(&text).expect("should be valid JSON");
-        assert!(parsed["color"].is_string(), "expected color field, got: {text}");
+        assert!(
+            parsed["color"].is_string(),
+            "expected color field, got: {text}"
+        );
     }
 
     #[tokio::test]
     #[ignore]
     async fn network_openai_max_completion_tokens_accepted() {
         // Regression test: gpt-5.x rejects max_tokens, requires max_completion_tokens
-        let Some(b) = openai_backend(LlmProvider::Openai.heavy_model()) else {
+        let Some(b) = openai_backend(&profile(LlmProvider::Openai).heavy) else {
             eprintln!("SKIP: OPENAI_API_KEY not set");
             return;
         };
         let result = b.chat("Reply with one word.", "hi", vec![]).await;
-        assert!(result.is_ok(), "gpt-5.x should accept max_completion_tokens: {}", result.unwrap_err());
+        assert!(
+            result.is_ok(),
+            "gpt-5.x should accept max_completion_tokens: {}",
+            result.unwrap_err()
+        );
     }
 
     // ── Cross-provider: same prompt, both formats ─���───────���──────────
@@ -941,16 +1000,30 @@ mod tests {
     #[tokio::test]
     #[ignore] // requires both ANTHROPIC_API_KEY and OPENAI_API_KEY
     async fn network_cross_provider_same_prompt() {
-        let anthropic = anthropic_backend(LlmProvider::Api.cheap_model());
-        let openai = openai_backend(LlmProvider::Openai.cheap_model());
+        let anthropic = anthropic_backend(&profile(LlmProvider::Anthropic).cheap);
+        let openai = openai_backend(&profile(LlmProvider::Openai).cheap);
         if anthropic.is_none() || openai.is_none() {
             eprintln!("SKIP: need both ANTHROPIC_API_KEY and OPENAI_API_KEY");
             return;
         }
         let prompt = "What is 2+2? Reply with just the number.";
-        let (a_text, _) = anthropic.unwrap().chat("Answer math questions.", prompt, vec![]).await.unwrap();
-        let (o_text, _) = openai.unwrap().chat("Answer math questions.", prompt, vec![]).await.unwrap();
-        assert!(a_text.contains('4'), "anthropic should answer 4, got: {a_text}");
-        assert!(o_text.contains('4'), "openai should answer 4, got: {o_text}");
+        let (a_text, _) = anthropic
+            .unwrap()
+            .chat("Answer math questions.", prompt, vec![])
+            .await
+            .unwrap();
+        let (o_text, _) = openai
+            .unwrap()
+            .chat("Answer math questions.", prompt, vec![])
+            .await
+            .unwrap();
+        assert!(
+            a_text.contains('4'),
+            "anthropic should answer 4, got: {a_text}"
+        );
+        assert!(
+            o_text.contains('4'),
+            "openai should answer 4, got: {o_text}"
+        );
     }
 }

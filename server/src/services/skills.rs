@@ -2,7 +2,7 @@ use std::{fs, io, path::Path};
 
 use serde::Deserialize;
 
-use crate::domain::skill::{parse_skill_md, RegistryEntry, Skill, SkillSource};
+use crate::domain::skill::{RegistryEntry, Skill, SkillSource, parse_skill_md};
 
 /// The built-in "skill_creator" skill that is always present.
 fn builtin_skill_creator() -> Skill {
@@ -209,9 +209,7 @@ pub fn is_installed(workspace_dir: &Path, skill_id: &str) -> bool {
 }
 
 /// Fetch the remote skills registry index.
-pub async fn fetch_registry(
-    registry_url: &str,
-) -> anyhow::Result<Vec<RegistryEntry>> {
+pub async fn fetch_registry(registry_url: &str) -> anyhow::Result<Vec<RegistryEntry>> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()?;
@@ -263,7 +261,8 @@ pub async fn install_from_registry(
     fs::write(skill_dir.join(".source.json"), &source_json)?;
 
     // Read back the installed skill
-    let skill = read_skill_dir(&skill_dir).ok_or_else(|| anyhow::anyhow!("failed to read installed skill"))?;
+    let skill = read_skill_dir(&skill_dir)
+        .ok_or_else(|| anyhow::anyhow!("failed to read installed skill"))?;
     Ok(skill)
 }
 
@@ -298,7 +297,11 @@ async fn download_github_dir(
         .await?;
 
     if !resp.status().is_success() {
-        return Err(anyhow::anyhow!("GitHub API returned {} for {}", resp.status(), url));
+        return Err(anyhow::anyhow!(
+            "GitHub API returned {} for {}",
+            resp.status(),
+            url
+        ));
     }
 
     let items: Vec<GitHubContent> = resp.json().await?;
@@ -322,8 +325,10 @@ async fn download_github_dir(
                 let sub_dir = local_dir.join(&item.name);
                 fs::create_dir_all(&sub_dir)?;
                 let sub_path = format!("/{}", item.path);
-                Box::pin(download_github_dir(client, repo, git_ref, &sub_path, &sub_dir))
-                    .await?;
+                Box::pin(download_github_dir(
+                    client, repo, git_ref, &sub_path, &sub_dir,
+                ))
+                .await?;
             }
             _ => {}
         }

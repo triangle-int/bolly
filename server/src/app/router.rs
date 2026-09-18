@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use axum::{middleware, Router};
+use axum::{Router, middleware};
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::{app::state::AppState, routes};
@@ -28,7 +28,10 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::memory_import::router())
         .merge(routes::agents::router())
         .merge(routes::machine_agents::router())
-        .layer(middleware::from_fn_with_state(state.clone(), auth_middleware));
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            auth_middleware,
+        ));
 
     // Public routes — no auth
     let health = routes::health::router();

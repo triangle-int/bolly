@@ -6,7 +6,10 @@ use crate::domain::daily_stats::DailyStats;
 
 /// Directory for daily stats files.
 fn stats_dir(workspace_dir: &Path, instance_slug: &str) -> std::path::PathBuf {
-    workspace_dir.join("instances").join(instance_slug).join("stats")
+    workspace_dir
+        .join("instances")
+        .join(instance_slug)
+        .join("stats")
 }
 
 /// Record a user message: increment today's stats file.
@@ -48,7 +51,9 @@ pub fn load_all(workspace_dir: &Path, instance_slug: &str) -> Vec<DailyStats> {
     if let Ok(entries) = fs::read_dir(&dir) {
         for entry in entries.filter_map(Result::ok) {
             let path = entry.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("json") { continue; }
+            if path.extension().and_then(|e| e.to_str()) != Some("json") {
+                continue;
+            }
             if let Ok(raw) = fs::read_to_string(&path) {
                 if let Ok(day) = serde_json::from_str::<DailyStats>(&raw) {
                     days.push(day);

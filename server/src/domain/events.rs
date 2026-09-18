@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 use crate::domain::{chat::ChatMessage, drop::Drop, instance::InstanceSummary, thought::Thought};
-use crate::services::memory_import::{ImportStage};
+use crate::services::memory_import::ImportStage;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -104,16 +104,6 @@ pub enum ServerEvent {
         instance_slug: String,
         stage: ImportStage,
         detail: String,
-    },
-    /// Agent requests music playback control on the client.
-    MusicControl {
-        instance_slug: String,
-        /// Action: "play", "pause", "set_volume"
-        action: String,
-        /// Track name: "ambient", "intro", "loop", or a URL for custom audio.
-        track: Option<String>,
-        /// Volume 0.0–1.0 (for "play" and "set_volume").
-        volume: Option<f64>,
     },
 }
 

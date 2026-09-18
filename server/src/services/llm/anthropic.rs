@@ -1,25 +1,36 @@
 use std::time::Duration;
 
 use futures::StreamExt;
-use tokio::sync::broadcast;
 
-use crate::domain::events::ServerEvent;
 use crate::services::tool::ToolDefinition;
 
-use super::helpers::cache_real_input_tokens;
-use super::types::{ContentBlock, Message, ToolUseBlock, StreamOnceResult};
+use super::contract::{
+    Capabilities, EventSink, LlmError, LlmEvent, LlmRequest, ProviderAdapter, StopReason, Usage,
+};
+use super::types::LlmBackend;
+use super::types::{ContentBlock, LlmResponse, Message, ToolCall};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Anthropic API
 // ═══════════════════════════════════════════════════════════════════════════
 
-pub(crate) fn anthropic_headers(api_key: &str) -> reqwest::header::HeaderMap {
+pub(crate) fn anthropic_headers(api_key: &str) -> Result<reqwest::header::HeaderMap, LlmError> {
     let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert("x-api-key", api_key.parse().unwrap());
-    headers.insert("anthropic-beta", "interleaved-thinking-2025-05-14,compact-2026-01-12".parse().unwrap());
+    headers.insert(
+        "x-api-key",
+        api_key
+            .parse()
+            .map_err(|_| LlmError::SetupRequired("invalid Anthropic API key header".into()))?,
+    );
+    headers.insert(
+        "anthropic-beta",
+        "interleaved-thinking-2025-05-14,compact-2026-01-12"
+            .parse()
+            .unwrap(),
+    );
     headers.insert("anthropic-version", "2023-06-01".parse().unwrap());
     headers.insert("content-type", "application/json".parse().unwrap());
-    headers
+    Ok(headers)
 }
 
 pub(crate) fn build_anthropic_request(
@@ -42,7 +53,11 @@ pub(crate) fn build_anthropic_request(
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             s.hash(&mut hasher);
             let hash = hasher.finish();
-            log::info!("[llm] system block[{i}]: {} chars, hash={:x}", s.len(), hash);
+            log::info!(
+                "[llm] system block[{i}]: {} chars, hash={:x}",
+                s.len(),
+                hash
+            );
             serde_json::json!({
                 "type": "text",
                 "text": *s,
@@ -71,7 +86,7 @@ pub(crate) fn build_anthropic_request(
         .collect();
 
     // Messages — strip any legacy oversized base64 images
-    let mut msgs = serde_json::to_value(messages).unwrap_or(serde_json::json!([]));
+    let mut msgs = messages_to_anthropic(messages);
     if let Some(arr) = msgs.as_array_mut() {
         for msg in arr.iter_mut() {
             if let Some(content_arr) = msg.get_mut("content").and_then(|c| c.as_array_mut()) {
@@ -83,7 +98,10 @@ pub(crate) fn build_anthropic_request(
                     if block_type == Some("image") {
                         if let Some(data) = block.pointer("/source/data").and_then(|d| d.as_str()) {
                             if data.len() > 5 * 1024 * 1024 {
-                                log::info!("stripping oversized base64 image ({} bytes)", data.len());
+                                log::info!(
+                                    "stripping oversized base64 image ({} bytes)",
+                                    data.len()
+                                );
                                 return false;
                             }
                         }
@@ -150,7 +168,8 @@ pub(crate) fn build_anthropic_request(
         let mut merged: Vec<serde_json::Value> = Vec::with_capacity(arr.len());
         for msg in arr.drain(..) {
             let role = msg.get("role").and_then(|r| r.as_str()).unwrap_or("");
-            let last_role = merged.last()
+            let last_role = merged
+                .last()
                 .and_then(|m| m.get("role"))
                 .and_then(|r| r.as_str())
                 .unwrap_or("");
@@ -208,13 +227,12 @@ pub(crate) fn build_anthropic_request(
             "name": "web_fetch",
             "allowed_callers": ["direct"]
         }));
-
     }
     req["stream"] = serde_json::json!(stream);
     req
 }
 
-/// Non-streaming Anthropic call. Returns (text, tool_uses, stop_reason, tokens_used).
+/// Non-streaming Anthropic call. Returns (text, tool_calls, stop_reason, tokens_used).
 pub(crate) async fn anthropic_complete(
     http: &reqwest::Client,
     api_key: &str,
@@ -224,12 +242,19 @@ pub(crate) async fn anthropic_complete(
     messages: &[Message],
     max_tokens: u64,
     base_url: &str,
-) -> anyhow::Result<(String, Vec<ToolUseBlock>, String, u64)> {
-    let body = build_anthropic_request(model, system, tool_defs, messages, max_tokens, false, api_key);
+    json_schema: Option<&serde_json::Value>,
+) -> anyhow::Result<LlmResponse> {
+    let mut body = build_anthropic_request(
+        model, system, tool_defs, messages, max_tokens, false, api_key,
+    );
+    if let Some(schema) = json_schema {
+        body["output_config"] =
+            serde_json::json!({"format": {"type": "json_schema", "schema": schema}});
+    }
 
     let resp = http
         .post(&format!("{}/v1/messages", base_url))
-        .headers(anthropic_headers(api_key))
+        .headers(anthropic_headers(api_key)?)
         .json(&body)
         .send()
         .await?;
@@ -242,13 +267,20 @@ pub(crate) async fn anthropic_complete(
             messages.len(),
             serde_json::to_string(&body).map(|s| s.len()).unwrap_or(0),
         );
-        return Err(anyhow::anyhow!("Anthropic API error {status}: {resp_text}"));
+        return Err(LlmError::Http {
+            status: status.as_u16(),
+            message: resp_text,
+        }
+        .into());
     }
 
     let resp_json: serde_json::Value = serde_json::from_str(&resp_text)?;
+    if !resp_json["content"].is_array() {
+        return Err(LlmError::InvalidResponse("missing response content".into()).into());
+    }
     let stop_reason = resp_json["stop_reason"]
         .as_str()
-        .unwrap_or("end_turn")
+        .ok_or_else(|| LlmError::InvalidResponse("missing stop reason".into()))?
         .to_string();
 
     let tokens_used = if let Some(usage) = resp_json.get("usage") {
@@ -258,7 +290,10 @@ pub(crate) async fn anthropic_complete(
         let cache_write = usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
         log::info!(
             "anthropic usage: input={} cache_read={} cache_write={} output={}",
-            input, cache_read, cache_write, output,
+            input,
+            cache_read,
+            cache_write,
+            output,
         );
         // Normalize to output-equivalent tokens by cost ratio (Sonnet 4.6 pricing):
         // Output: $15/M (1.0x), Input: $3/M (0.2x), Cache write: $3.75/M (0.25x), Cache read: $0.30/M (0.02x)
@@ -266,13 +301,17 @@ pub(crate) async fn anthropic_complete(
             + (input as f64 * 0.2)
             + (cache_write as f64 * 0.25)
             + (cache_read as f64 * 0.02);
-        normalized as u64
+        if json_schema.is_some() {
+            input + output
+        } else {
+            normalized as u64
+        }
     } else {
         0
     };
 
     let mut text = String::new();
-    let mut tool_uses = Vec::new();
+    let mut tool_calls = Vec::new();
 
     if let Some(blocks) = resp_json["content"].as_array() {
         for b in blocks {
@@ -287,23 +326,41 @@ pub(crate) async fn anthropic_complete(
                     log::info!("[compaction] non-streaming compaction block received");
                 }
                 Some("tool_use") => {
-                    if let (Some(id), Some(name)) = (b["id"].as_str(), b["name"].as_str()) {
-                        tool_uses.push(ToolUseBlock {
-                            id: id.to_string(),
-                            name: name.to_string(),
-                            input: b["input"].clone(),
-                        });
-                    }
+                    let id = ToolCall::required_string(b, "id")?;
+                    let name = ToolCall::required_string(b, "name")?;
+                    let arguments = b["input"].clone();
+                    ToolCall::validate_arguments(&arguments)?;
+                    tool_calls.push(ToolCall {
+                        id,
+                        name,
+                        arguments,
+                    });
                 }
                 _ => {}
             }
         }
     }
 
-    Ok((text, tool_uses, stop_reason, tokens_used))
+    let raw = &resp_json["usage"];
+    let usage = Usage {
+        input_tokens: raw["input_tokens"].as_u64().unwrap_or(0)
+            + raw["cache_read_input_tokens"].as_u64().unwrap_or(0)
+            + raw["cache_creation_input_tokens"].as_u64().unwrap_or(0),
+        output_tokens: raw["output_tokens"].as_u64().unwrap_or(0),
+        cache_read_tokens: raw["cache_read_input_tokens"].as_u64().unwrap_or(0),
+        cache_write_tokens: raw["cache_creation_input_tokens"].as_u64().unwrap_or(0),
+    };
+    Ok(LlmResponse {
+        ordered_content: vec![ContentBlock::text(&text)],
+        text,
+        tool_calls,
+        stop_reason: anthropic_stop_reason(&stop_reason)?,
+        tokens_used,
+        usage,
+    })
 }
 
-/// Streaming Anthropic call. Broadcasts text deltas, returns (text, tool_uses, stop_reason, tokens_used, ordered_content).
+/// Streaming Anthropic call. Broadcasts text deltas, returns (text, tool_calls, stop_reason, tokens_used, ordered_content).
 pub(crate) async fn anthropic_stream(
     http: &reqwest::Client,
     api_key: &str,
@@ -312,16 +369,14 @@ pub(crate) async fn anthropic_stream(
     tool_defs: &[ToolDefinition],
     messages: &[Message],
     max_tokens: u64,
-    events: &broadcast::Sender<ServerEvent>,
-    instance_slug: &str,
-    chat_id: &str,
-    message_id: &str,
-    mcp_snapshot: Option<&crate::services::mcp::McpAppSnapshot>,
+    events: &EventSink<'_>,
     base_url: &str,
-) -> anyhow::Result<StreamOnceResult> {
-    let body = build_anthropic_request(model, system, tool_defs, messages, max_tokens, true, api_key);
+) -> anyhow::Result<LlmResponse> {
+    let body = build_anthropic_request(
+        model, system, tool_defs, messages, max_tokens, true, api_key,
+    );
 
-    let headers = anthropic_headers(api_key);
+    let headers = anthropic_headers(api_key)?;
     let resp = http
         .post(&format!("{}/v1/messages", base_url))
         .headers(headers)
@@ -342,22 +397,30 @@ pub(crate) async fn anthropic_stream(
                 Message::User { content } => ("user", content),
                 Message::Assistant { content } => ("assistant", content),
             };
-            let types: Vec<&str> = blocks.iter().map(|b| match b {
-                ContentBlock::Text { .. } => "text",
-                ContentBlock::Image { .. } => "image",
-                ContentBlock::Document { .. } => "document",
-                ContentBlock::ToolUse { .. } => "tool_use",
-                ContentBlock::ToolResult { .. } => "tool_result",
-                ContentBlock::Compaction { .. } => "compaction",
-                ContentBlock::Unknown(_) => "unknown",
-            }).collect();
+            let types: Vec<&str> = blocks
+                .iter()
+                .map(|b| match b {
+                    ContentBlock::Text { .. } => "text",
+                    ContentBlock::Image { .. } => "image",
+                    ContentBlock::Document { .. } => "document",
+                    ContentBlock::ToolCall { .. } => "tool_use",
+                    ContentBlock::ToolOutput { .. } => "tool_result",
+                    ContentBlock::ContextSummary { .. }
+                    | ContentBlock::LegacyContextSummary { .. } => "compaction",
+                    ContentBlock::Unknown(_) | ContentBlock::ProviderData { .. } => "provider_data",
+                })
+                .collect();
             log::error!("[llm] msg[{i}] {role}: {:?}", types);
         }
-        return Err(anyhow::anyhow!("Anthropic API error {status}: {err_text}"));
+        return Err(LlmError::Http {
+            status: status.as_u16(),
+            message: err_text,
+        }
+        .into());
     }
 
     let mut text = String::new();
-    let mut tool_uses: Vec<ToolUseBlock> = Vec::new();
+    let mut tool_calls: Vec<ToolCall> = Vec::new();
     let mut stop_reason = String::new();
     let mut input_tokens: u64 = 0;
     let mut output_tokens: u64 = 0;
@@ -374,12 +437,12 @@ pub(crate) async fn anthropic_stream(
     let mut current_tool_id = String::new();
     let mut current_tool_name = String::new();
     let mut current_tool_input_json = String::new();
-    let mut streaming_mcp_app = false;
 
     // SSE parser
     let mut stream = resp.bytes_stream();
     let mut buf = Vec::new();
     let mut event_type = String::new();
+    let mut completed = false;
 
     const STREAM_TIMEOUT: Duration = Duration::from_secs(480);
 
@@ -391,7 +454,7 @@ pub(crate) async fn anthropic_stream(
             Ok(None) => break,
             Err(_) => {
                 log::warn!("stream timed out after {}s", STREAM_TIMEOUT.as_secs());
-                break;
+                return Err(LlmError::Timeout.into());
             }
         };
 
@@ -418,33 +481,41 @@ pub(crate) async fn anthropic_stream(
                 continue;
             };
 
-            let Ok(ev) = serde_json::from_str::<serde_json::Value>(data) else {
-                continue;
-            };
+            let ev: serde_json::Value = serde_json::from_str(data)?;
 
             match event_type.as_str() {
                 "message_start" => {
                     if let Some(msg) = ev.get("message") {
                         if let Some(usage) = msg.get("usage") {
                             input_tokens = usage["input_tokens"].as_u64().unwrap_or(0);
-                            cache_read_tokens = usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
-                            cache_write_tokens = usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
+                            cache_read_tokens =
+                                usage["cache_read_input_tokens"].as_u64().unwrap_or(0);
+                            cache_write_tokens =
+                                usage["cache_creation_input_tokens"].as_u64().unwrap_or(0);
                             let real_total = input_tokens + cache_read_tokens + cache_write_tokens;
                             log::info!(
                                 "anthropic cache: read={} write={} input={} real_total={}",
-                                cache_read_tokens, cache_write_tokens, input_tokens, real_total,
+                                cache_read_tokens,
+                                cache_write_tokens,
+                                input_tokens,
+                                real_total,
                             );
-                            cache_real_input_tokens(instance_slug, chat_id, real_total);
                         }
                     }
                 }
                 "content_block_start" => {
+                    if current_block_type == "tool_use" {
+                        return Err(LlmError::InvalidResponse(
+                            "tool call missing block stop".into(),
+                        )
+                        .into());
+                    }
                     if let Some(block) = ev.get("content_block") {
-                        current_block_type =
-                            block["type"].as_str().unwrap_or("").to_string();
+                        current_block_type = block["type"].as_str().unwrap_or("").to_string();
 
                         // Flush accumulated text before server tool blocks
-                        if (current_block_type == "server_tool_use" || current_block_type.ends_with("_tool_result"))
+                        if (current_block_type == "server_tool_use"
+                            || current_block_type.ends_with("_tool_result"))
                             && !current_text_block.is_empty()
                         {
                             ordered_content.push(ContentBlock::text(&current_text_block));
@@ -464,28 +535,17 @@ pub(crate) async fn anthropic_stream(
                             let summary = match tool_name {
                                 "web_search" => "searching the web".to_string(),
                                 "web_fetch" => "fetching web page".to_string(),
-                                "bash_code_execution" | "code_execution" => "executing code".to_string(),
-                                "text_editor_code_execution" => "editing file in sandbox".to_string(),
+                                "bash_code_execution" | "code_execution" => {
+                                    "executing code".to_string()
+                                }
+                                "text_editor_code_execution" => {
+                                    "editing file in sandbox".to_string()
+                                }
                                 other => format!("server: {other}"),
                             };
-                            let msg = crate::domain::chat::ChatMessage {
-                                id: format!("srvtool_{}",
-                                    std::time::SystemTime::now()
-                                        .duration_since(std::time::UNIX_EPOCH)
-                                        .unwrap().as_millis()),
-                                role: crate::domain::chat::ChatRole::Assistant,
-                                content: summary,
-                                created_at: std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .unwrap().as_millis().to_string(),
-                                kind: crate::domain::chat::MessageKind::ToolCall,
-                                tool_name: Some(tool_name.to_string()),
-                                mcp_app_html: None, mcp_app_input: None, model: None,
-                            };
-                            let _ = events.send(ServerEvent::ChatMessageCreated {
-                                instance_slug: instance_slug.to_string(),
-                                chat_id: chat_id.to_string(),
-                                message: msg,
+                            events(LlmEvent::Activity {
+                                name: tool_name.to_string(),
+                                description: summary,
                             });
                         }
 
@@ -501,33 +561,14 @@ pub(crate) async fn anthropic_stream(
                         }
 
                         if current_block_type == "tool_use" {
-                            current_tool_id =
-                                block["id"].as_str().unwrap_or("").to_string();
-                            current_tool_name =
-                                block["name"].as_str().unwrap_or("").to_string();
+                            current_tool_id = ToolCall::required_string(block, "id")?;
+                            current_tool_name = ToolCall::required_string(block, "name")?;
                             current_tool_input_json.clear();
 
-                            // MCP app streaming
-                            if let Some(snap) = mcp_snapshot {
-                                if snap.is_app_tool(&current_tool_name) {
-                                    streaming_mcp_app = true;
-                                    if let Some(html) =
-                                        snap.get_html(&current_tool_name).cloned()
-                                    {
-                                        let _ =
-                                            events.send(ServerEvent::McpAppStart {
-                                                instance_slug: instance_slug
-                                                    .to_string(),
-                                                chat_id: chat_id.to_string(),
-                                                tool_name: current_tool_name
-                                                    .clone(),
-                                                html,
-                                            });
-                                    }
-                                } else {
-                                    streaming_mcp_app = false;
-                                }
-                            }
+                            events(LlmEvent::ToolCallStarted {
+                                id: current_tool_id.clone(),
+                                name: current_tool_name.clone(),
+                            });
                         }
                     }
                 }
@@ -540,29 +581,20 @@ pub(crate) async fn anthropic_stream(
                                     // Compaction text is metadata, not user-visible
                                     if current_block_type != "compaction" {
                                         text.push_str(t);
-                                        let _ = events.send(ServerEvent::ChatStreamDelta {
-                                            instance_slug: instance_slug.to_string(),
-                                            chat_id: chat_id.to_string(),
-                                            message_id: message_id.to_string(),
-                                            delta: t.to_string(),
-                                        });
+                                        events(LlmEvent::TextDelta(t.to_string()));
                                     }
                                 }
                             }
                             Some("input_json_delta") => {
-                                if let Some(partial) = delta["partial_json"].as_str() {
-                                    current_tool_input_json.push_str(partial);
-                                    if streaming_mcp_app {
-                                        let _ = events.send(
-                                            ServerEvent::McpAppInputDelta {
-                                                instance_slug: instance_slug
-                                                    .to_string(),
-                                                chat_id: chat_id.to_string(),
-                                                delta: partial.to_string(),
-                                            },
-                                        );
-                                    }
-                                }
+                                let partial = delta["partial_json"].as_str().ok_or_else(|| {
+                                    LlmError::InvalidResponse("missing tool argument delta".into())
+                                })?;
+                                current_tool_input_json.push_str(partial);
+                                events(LlmEvent::ToolArgumentsDelta {
+                                    id: current_tool_id.clone(),
+                                    name: current_tool_name.clone(),
+                                    delta: partial.to_string(),
+                                });
                             }
                             _ => {}
                         }
@@ -571,36 +603,28 @@ pub(crate) async fn anthropic_stream(
                 "content_block_stop" => {
                     // Commit completed server tool block (preserves order)
                     if let Some(block) = current_server_block.take() {
-                        ordered_content.push(ContentBlock::Unknown(block));
+                        ordered_content.push(ContentBlock::ProviderData {
+                            provider: crate::config::LlmProvider::Anthropic,
+                            data: block,
+                        });
                     }
                     // Compaction block complete — flush accumulated text as Compaction
                     if current_block_type == "compaction" {
                         let summary = std::mem::take(&mut current_text_block);
                         if !summary.is_empty() {
                             log::info!("[compaction] server-side summary: {} chars", summary.len());
-                            ordered_content.push(ContentBlock::Compaction { content: summary });
+                            ordered_content.push(ContentBlock::ContextSummary { content: summary });
                         }
                         // Don't include compaction text in the response text
                         // (it's metadata, not user-visible content)
                         current_block_type.clear();
                     }
                     if current_block_type == "tool_use" {
-                        let input: serde_json::Value =
-                            match serde_json::from_str(&current_tool_input_json) {
-                                Ok(v) => v,
-                                Err(e) => {
-                                    log::warn!(
-                                        "[llm] truncated tool call JSON for '{}': {e} (input len={})",
-                                        current_tool_name,
-                                        current_tool_input_json.len()
-                                    );
-                                    serde_json::json!({})
-                                }
-                            };
-                        tool_uses.push(ToolUseBlock {
+                        let arguments = ToolCall::parse_arguments(&current_tool_input_json)?;
+                        tool_calls.push(ToolCall {
                             id: current_tool_id.clone(),
                             name: current_tool_name.clone(),
-                            input,
+                            arguments,
                         });
                         current_block_type.clear();
                     }
@@ -617,17 +641,19 @@ pub(crate) async fn anthropic_stream(
                     }
                 }
                 "message_stop" => {
-                    // Stream complete
+                    completed = true;
                 }
                 "error" => {
-                    let error_msg = ev["error"]["message"]
-                        .as_str()
-                        .unwrap_or("unknown error");
+                    let error_msg = ev["error"]["message"].as_str().unwrap_or("unknown error");
                     return Err(anyhow::anyhow!("Anthropic stream error: {error_msg}"));
                 }
                 _ => {}
             }
         }
+    }
+
+    if !completed {
+        return Err(LlmError::InvalidResponse("stream ended before message_stop".into()).into());
     }
 
     // Normalize to output-equivalent tokens by cost ratio
@@ -643,5 +669,130 @@ pub(crate) async fn anthropic_stream(
         ordered_content.push(ContentBlock::text(&current_text_block));
     }
 
-    Ok(StreamOnceResult { text, tool_uses, stop_reason, tokens_used, ordered_content })
+    if current_block_type == "tool_use" {
+        return Err(LlmError::InvalidResponse("unfinished tool call".into()).into());
+    }
+    let usage = Usage {
+        input_tokens: input_tokens + cache_read_tokens + cache_write_tokens,
+        output_tokens,
+        cache_read_tokens,
+        cache_write_tokens,
+    };
+    events(LlmEvent::Usage(usage));
+    Ok(LlmResponse {
+        text,
+        tool_calls,
+        stop_reason: anthropic_stop_reason(&stop_reason)?,
+        tokens_used,
+        ordered_content,
+        usage,
+    })
+}
+
+pub(super) const CAPABILITIES: Capabilities = Capabilities {
+    vision: true,
+    documents: true,
+    tools: true,
+    streaming: true,
+    reasoning_controls: false,
+    model_discovery: false,
+};
+
+/// The transport implementation is private to this adapter.
+pub(super) struct AnthropicAdapter(pub LlmBackend);
+impl ProviderAdapter for AnthropicAdapter {
+    fn capabilities(&self) -> Capabilities {
+        CAPABILITIES
+    }
+    fn complete<'a>(
+        &'a self,
+        request: LlmRequest<'a>,
+    ) -> futures::future::BoxFuture<'a, Result<LlmResponse, LlmError>> {
+        Box::pin(async move {
+            request.validate(self.capabilities(), false)?;
+            let b = &self.0;
+            tokio::select! {
+                biased;
+                _ = request.cancellation.cancelled() => Err(LlmError::Cancelled),
+                result = anthropic_complete(&b.http, &b.api_key, &b.model, request.system, request.tools, request.messages, request.max_tokens, &b.base_url, request.json_schema) => result.map_err(LlmError::from),
+            }
+        })
+    }
+    fn stream<'a>(
+        &'a self,
+        request: LlmRequest<'a>,
+        events: &'a EventSink<'a>,
+    ) -> futures::future::BoxFuture<'a, Result<LlmResponse, LlmError>> {
+        Box::pin(async move {
+            request.validate(self.capabilities(), true)?;
+            let b = &self.0;
+            tokio::select! {
+                biased;
+                _ = request.cancellation.cancelled() => Err(LlmError::Cancelled),
+                result = anthropic_stream(&b.http, &b.api_key, &b.model, request.system, request.tools, request.messages, request.max_tokens, events, &b.base_url) => result.map_err(LlmError::from),
+            }
+        })
+    }
+}
+
+/// Explicit wire conversion: persisted history is not an API request schema.
+pub(crate) fn messages_to_anthropic(messages: &[Message]) -> serde_json::Value {
+    use crate::config::LlmProvider;
+    use serde_json::json;
+    fn block_to_wire(block: &ContentBlock) -> Option<serde_json::Value> {
+        Some(match block {
+            ContentBlock::Text { text } => json!({"type": "text", "text": text}),
+            ContentBlock::Image { source } => json!({"type": "image", "source": source}),
+            ContentBlock::Document { source } => json!({"type": "document", "source": source}),
+            ContentBlock::ToolCall {
+                id,
+                name,
+                arguments,
+            } => json!({"type": "tool_use", "id": id, "name": name, "input": arguments}),
+            ContentBlock::ToolOutput { call_id, content } => {
+                json!({"type": "tool_result", "tool_use_id": call_id, "content": content})
+            }
+            ContentBlock::ContextSummary { content }
+            | ContentBlock::LegacyContextSummary {
+                summary: content, ..
+            } => json!({"type": "compaction", "content": content}),
+            ContentBlock::ProviderData {
+                provider: LlmProvider::Anthropic,
+                data,
+            } => data.clone(),
+            ContentBlock::ProviderData { .. } => return None,
+            // Before provider tagging existed, unknown blocks came from Anthropic.
+            ContentBlock::Unknown(data) => data.clone(),
+        })
+    }
+    json!(
+        messages
+            .iter()
+            .filter_map(|message| {
+                let (role, blocks) = match message {
+                    Message::User { content } => ("user", content),
+                    Message::Assistant { content } => ("assistant", content),
+                };
+                let content: Vec<_> = blocks.iter().filter_map(block_to_wire).collect();
+                if content.is_empty() {
+                    None
+                } else {
+                    Some(json!({"role": role, "content": content}))
+                }
+            })
+            .collect::<Vec<_>>()
+    )
+}
+
+fn anthropic_stop_reason(value: &str) -> Result<StopReason, LlmError> {
+    match value {
+        "end_turn" | "stop_sequence" => Ok(StopReason::Complete),
+        "tool_use" => Ok(StopReason::ToolCalls),
+        "max_tokens" => Ok(StopReason::OutputLimit),
+        "pause_turn" => Ok(StopReason::Continue),
+        "compaction" => Ok(StopReason::ContextUpdated),
+        _ => Err(LlmError::InvalidResponse(format!(
+            "unknown stop reason: {value}"
+        ))),
+    }
 }

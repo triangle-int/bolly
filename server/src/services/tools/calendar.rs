@@ -1,8 +1,8 @@
-use crate::services::tool::{ToolDefinition, Tool};
+use crate::services::tool::{Tool, ToolDefinition};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{openai_schema, ToolExecError};
+use super::{ToolExecError, openai_schema};
 use crate::services::google::GoogleClient;
 
 // ---------------------------------------------------------------------------
@@ -53,7 +53,10 @@ impl Tool for ListEventsTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let (token, _) = self.google.access_token(&self.instance_slug, args.account.as_deref()).await
+        let (token, _) = self
+            .google
+            .access_token(&self.instance_slug, args.account.as_deref())
+            .await
             .map_err(|e| ToolExecError(e))?;
 
         let days = args.days_ahead.min(30).max(1);
@@ -89,7 +92,9 @@ impl Tool for ListEventsTool {
             return Err(ToolExecError(format!("Calendar API error: {body}")));
         }
 
-        let data: serde_json::Value = res.json().await
+        let data: serde_json::Value = res
+            .json()
+            .await
             .map_err(|e| ToolExecError(format!("Calendar parse failed: {e}")))?;
 
         let items = match data["items"].as_array() {
@@ -111,7 +116,9 @@ impl Tool for ListEventsTool {
             let location = event["location"].as_str().unwrap_or("");
             let description = event["description"].as_str().unwrap_or("");
 
-            result.push_str(&format!("--- event ---\ntitle: {summary}\nstart: {start}\nend: {end}\n"));
+            result.push_str(&format!(
+                "--- event ---\ntitle: {summary}\nstart: {start}\nend: {end}\n"
+            ));
             if !location.is_empty() {
                 result.push_str(&format!("location: {location}\n"));
             }
@@ -121,7 +128,8 @@ impl Tool for ListEventsTool {
             }
 
             if let Some(attendees) = event["attendees"].as_array() {
-                let names: Vec<&str> = attendees.iter()
+                let names: Vec<&str> = attendees
+                    .iter()
                     .filter_map(|a| a["email"].as_str())
                     .take(10)
                     .collect();
@@ -187,7 +195,10 @@ impl Tool for CreateEventTool {
     }
 
     async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let (token, _) = self.google.access_token(&self.instance_slug, args.account.as_deref()).await
+        let (token, _) = self
+            .google
+            .access_token(&self.instance_slug, args.account.as_deref())
+            .await
             .map_err(|e| ToolExecError(e))?;
 
         let mut event = serde_json::json!({

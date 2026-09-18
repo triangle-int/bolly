@@ -53,7 +53,10 @@ pub fn prepare_text_for_voice(text: &str, mood: &str) -> String {
         if let Some(end) = s[start + 3..].find("```") {
             let inner = &s[start + 3..start + 3 + end];
             // Drop the language identifier on the first line
-            let clean = inner.split_once('\n').map(|(_, rest)| rest).unwrap_or(inner);
+            let clean = inner
+                .split_once('\n')
+                .map(|(_, rest)| rest)
+                .unwrap_or(inner);
             s = format!("{}{}{}", &s[..start], clean.trim(), &s[start + 6 + end..]);
         } else {
             break;
@@ -190,7 +193,10 @@ async fn synthesize(
     };
 
     if api_key.is_empty() {
-        return Err((StatusCode::SERVICE_UNAVAILABLE, "ElevenLabs API key not configured".into()));
+        return Err((
+            StatusCode::SERVICE_UNAVAILABLE,
+            "ElevenLabs API key not configured".into(),
+        ));
     }
     if request.text.is_empty() {
         return Err((StatusCode::BAD_REQUEST, "text is required".into()));
@@ -199,9 +205,15 @@ async fn synthesize(
     let voice_id = resolve_voice_id(&state.workspace_dir, &request.instance_slug);
 
     // HTTP endpoint doesn't have mood context — use neutral
-    let bytes = synthesize_bytes(&state.http_client, &api_key, &voice_id, &request.text, "calm")
-        .await
-        .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
+    let bytes = synthesize_bytes(
+        &state.http_client,
+        &api_key,
+        &voice_id,
+        &request.text,
+        "calm",
+    )
+    .await
+    .map_err(|e| (StatusCode::BAD_GATEWAY, e))?;
 
     let mut headers = HeaderMap::new();
     headers.insert("content-type", HeaderValue::from_static("audio/mpeg"));

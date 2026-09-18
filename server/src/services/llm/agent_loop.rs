@@ -6,10 +6,10 @@ use crate::domain::chat::{ChatMessage, ChatRole};
 use crate::domain::events::ServerEvent;
 use crate::services::tool::{ToolDefinition, ToolDyn};
 
-use super::anthropic::{anthropic_complete, anthropic_stream};
+use super::contract::{LlmEvent, LlmRequest, StopReason};
 use super::helpers::strip_context_blocks;
-use super::openai::{openai_complete, openai_stream};
-use super::types::{ContentBlock, HistoryEntry, LlmBackend, Message, StreamOnceResult, ToolUseBlock};
+
+use super::types::{ContentBlock, HistoryEntry, LlmBackend, LlmResponse, Message, ToolCall};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Agent loops (tool call -> execute -> send back)
@@ -33,7 +33,8 @@ pub(crate) async fn agent_loop(
 ) -> anyhow::Result<(String, u64)> {
     let mut total_tokens: u64 = 0;
     loop {
-        let (text, tool_uses, stop_reason, tokens) = complete_once(backend, system, tool_defs, messages).await?;
+        let (text, tool_calls, stop_reason, tokens) =
+            complete_once(backend, system, tool_defs, messages).await?;
         total_tokens += tokens;
 
         // Build assistant message
@@ -41,18 +42,18 @@ pub(crate) async fn agent_loop(
         if !text.is_empty() {
             assistant_content.push(ContentBlock::text(&text));
         }
-        for tu in &tool_uses {
-            assistant_content.push(ContentBlock::ToolUse {
+        for tu in &tool_calls {
+            assistant_content.push(ContentBlock::ToolCall {
                 id: tu.id.clone(),
                 name: tu.name.clone(),
-                input: tu.input.clone(),
+                arguments: tu.arguments.clone(),
             });
         }
         messages.push(Message::Assistant {
             content: assistant_content,
         });
 
-        if stop_reason == "max_tokens" {
+        if stop_reason == StopReason::OutputLimit {
             log::warn!("[llm] response truncated (max_tokens reached) — requesting continuation");
             messages.push(Message::User {
                 content: vec![ContentBlock::text(
@@ -62,26 +63,26 @@ pub(crate) async fn agent_loop(
             continue;
         }
 
-        if stop_reason == "pause_turn" {
+        if stop_reason == StopReason::Continue {
             log::info!("[llm] pause_turn — code execution in progress, continuing...");
             continue;
         }
 
         // Server-side compaction completed — continue with compacted context
-        if stop_reason == "compaction" {
+        if stop_reason == StopReason::ContextUpdated {
             log::info!("[llm] server-side compaction in non-streaming loop — continuing");
             continue;
         }
 
-        if stop_reason != "tool_use" || tool_uses.is_empty() {
+        if stop_reason != StopReason::ToolCalls || tool_calls.is_empty() {
             return Ok((text, total_tokens));
         }
 
-        // Execute tools — images stay inside tool_result content per Anthropic API spec
+        // Execute validated tool calls; outputs retain typed text and image content.
         let mut results = Vec::new();
-        for tu in &tool_uses {
-            let content = execute_tool(tools, &tu.name, &tu.input).await;
-            results.push(ContentBlock::tool_result(tu.id.clone(), content));
+        for tu in &tool_calls {
+            let content = execute_tool(tools, &tu.name, &tu.arguments).await;
+            results.push(ContentBlock::tool_output(tu.id.clone(), content));
         }
         messages.push(Message::User { content: results });
     }
@@ -107,33 +108,40 @@ pub(crate) async fn streaming_agent_loop(
 
     loop {
         let turn = stream_once(
-            backend, system, tool_defs, messages, events,
-            instance_slug, chat_id, &current_message_id, mcp_snapshot,
-        ).await?;
+            backend,
+            system,
+            tool_defs,
+            messages,
+            events,
+            instance_slug,
+            chat_id,
+            &current_message_id,
+            mcp_snapshot,
+        )
+        .await?;
 
         total_tokens += turn.tokens_used;
         let turn_text = turn.text;
-        let tool_uses = turn.tool_uses;
+        let tool_calls = turn.tool_calls;
         let stop_reason = turn.stop_reason;
-
 
         // Build assistant message — use ordered_content which preserves
         // the interleaving of text, server_tool_use, and server_tool_result.
         let mut assistant_content = Vec::new();
         // Ordered content: text and server tool blocks in their original order
         assistant_content.extend(turn.ordered_content.into_iter());
-        for tu in &tool_uses {
-            assistant_content.push(ContentBlock::ToolUse {
+        for tu in &tool_calls {
+            assistant_content.push(ContentBlock::ToolCall {
                 id: tu.id.clone(),
                 name: tu.name.clone(),
-                input: tu.input.clone(),
+                arguments: tu.arguments.clone(),
             });
         }
         messages.push(Message::Assistant {
             content: assistant_content,
         });
 
-        if stop_reason == "max_tokens" {
+        if stop_reason == StopReason::OutputLimit {
             log::warn!("[llm] response truncated (max_tokens reached) — requesting continuation");
             all_text.push_str(&turn_text);
             messages.push(Message::User {
@@ -145,14 +153,14 @@ pub(crate) async fn streaming_agent_loop(
         }
 
         // pause_turn: code execution skill is still running — continue with same messages
-        if stop_reason == "pause_turn" {
+        if stop_reason == StopReason::Continue {
             log::info!("[llm] pause_turn — code execution in progress, continuing...");
             all_text.push_str(&turn_text);
             continue;
         }
 
         // compaction: server-side compaction completed — continue with compacted context
-        if stop_reason == "compaction" {
+        if stop_reason == StopReason::ContextUpdated {
             log::info!("[llm] server-side compaction — continuing with compacted context");
             all_text.push_str(&turn_text);
 
@@ -164,15 +172,22 @@ pub(crate) async fn streaming_agent_loop(
             });
 
             // Persist compacted history to disk
-            let rig_path = crate::services::chat::rig_history_path(workspace_dir, instance_slug, chat_id);
+            let rig_path =
+                crate::services::chat::rig_history_path(workspace_dir, instance_slug, chat_id);
             let ts = crate::services::tools::unix_millis().to_string();
-            let entries: Vec<HistoryEntry> = messages.iter().enumerate().map(|(i, msg)| {
-                HistoryEntry::new(msg.clone(), ts.clone(), format!("compact_{i}_{ts}"))
-            }).collect();
+            let entries: Vec<HistoryEntry> = messages
+                .iter()
+                .enumerate()
+                .map(|(i, msg)| {
+                    HistoryEntry::new(msg.clone(), ts.clone(), format!("compact_{i}_{ts}"))
+                })
+                .collect();
             crate::services::chat::save_rig_history(&rig_path, &entries);
 
             // Broadcast snapshot so UI reflects the compacted state
-            if let Ok(resp) = crate::services::chat::load_messages(workspace_dir, instance_slug, chat_id) {
+            if let Ok(resp) =
+                crate::services::chat::load_messages(workspace_dir, instance_slug, chat_id)
+            {
                 let _ = events.send(ServerEvent::ChatSnapshot {
                     instance_slug: instance_slug.to_string(),
                     chat_id: chat_id.to_string(),
@@ -186,7 +201,7 @@ pub(crate) async fn streaming_agent_loop(
         // For the final turn (no more tool use), only keep this turn's text.
         all_text = turn_text.clone();
 
-        if stop_reason != "tool_use" || tool_uses.is_empty() {
+        if stop_reason != StopReason::ToolCalls || tool_calls.is_empty() {
             break;
         }
 
@@ -201,7 +216,8 @@ pub(crate) async fn streaming_agent_loop(
                 kind: Default::default(),
                 tool_name: None,
                 mcp_app_html: None,
-                mcp_app_input: None, model: None,
+                mcp_app_input: None,
+                model: None,
             };
             let _ = events.send(ServerEvent::ChatMessageCreated {
                 instance_slug: instance_slug.to_string(),
@@ -212,29 +228,42 @@ pub(crate) async fn streaming_agent_loop(
             current_message_id = crate::services::chat::next_id();
         }
 
-        // Execute tools — images stay inside tool_result content per Anthropic API spec
+        // Execute validated tool calls; outputs retain typed text and image content.
         let mut results = Vec::new();
-        for tu in &tool_uses {
-            let content = execute_tool(tools, &tu.name, &tu.input).await;
-            results.push(ContentBlock::tool_result(tu.id.clone(), content));
+        for tu in &tool_calls {
+            let content = execute_tool(tools, &tu.name, &tu.arguments).await;
+            results.push(ContentBlock::tool_output(tu.id.clone(), content));
         }
         let tool_result_msg = Message::User { content: results };
         messages.push(tool_result_msg.clone());
 
         // Append new messages to rig_history (append-only, no merge).
-        let rig_path = crate::services::chat::rig_history_path(workspace_dir, instance_slug, chat_id);
+        let rig_path =
+            crate::services::chat::rig_history_path(workspace_dir, instance_slug, chat_id);
         let ts = crate::services::tools::unix_millis().to_string();
         // The assistant message (with tool_use) was pushed to messages a few lines above
         let assistant_msg = &messages[messages.len() - 2]; // assistant before tool_result
-        crate::services::chat::append_to_rig_history(&rig_path, &HistoryEntry::new(
-            strip_context_blocks(assistant_msg), ts.clone(), format!("tool_{}", crate::services::tools::unix_millis()),
-        ));
-        crate::services::chat::append_to_rig_history(&rig_path, &HistoryEntry::new(
-            strip_context_blocks(&tool_result_msg), ts, format!("tool_{}", crate::services::tools::unix_millis()),
-        ));
+        crate::services::chat::append_to_rig_history(
+            &rig_path,
+            &HistoryEntry::new(
+                strip_context_blocks(assistant_msg),
+                ts.clone(),
+                format!("tool_{}", crate::services::tools::unix_millis()),
+            ),
+        );
+        crate::services::chat::append_to_rig_history(
+            &rig_path,
+            &HistoryEntry::new(
+                strip_context_blocks(&tool_result_msg),
+                ts,
+                format!("tool_{}", crate::services::tools::unix_millis()),
+            ),
+        );
 
         // Snapshot after each tool cycle — all clients converge to ground truth
-        if let Ok(resp) = crate::services::chat::load_messages(workspace_dir, instance_slug, chat_id) {
+        if let Ok(resp) =
+            crate::services::chat::load_messages(workspace_dir, instance_slug, chat_id)
+        {
             let _ = events.send(ServerEvent::ChatSnapshot {
                 instance_slug: instance_slug.to_string(),
                 chat_id: chat_id.to_string(),
@@ -242,7 +271,6 @@ pub(crate) async fn streaming_agent_loop(
                 agent_running: true,
             });
         }
-
     }
 
     // -- Final assembly: file markers from send_file accumulated during the agent loop --
@@ -292,7 +320,11 @@ pub(crate) async fn streaming_agent_loop(
     Ok((all_text, Some(current_message_id), total_tokens))
 }
 
-pub(crate) async fn execute_tool(tools: &[Box<dyn ToolDyn>], name: &str, input: &serde_json::Value) -> String {
+pub(crate) async fn execute_tool(
+    tools: &[Box<dyn ToolDyn>],
+    name: &str,
+    input: &serde_json::Value,
+) -> String {
     if let Some(tool) = tools.iter().find(|t| t.name() == name) {
         let args = serde_json::to_string(input).unwrap_or_default();
         match tool.call(args).await {
@@ -308,18 +340,24 @@ pub(crate) async fn execute_tool(tools: &[Box<dyn ToolDyn>], name: &str, input: 
 // Provider dispatch — route to Anthropic or OpenAI
 // ═══════════════════════════════════════════════════════════════════════════
 
-/// Non-streaming completion. Returns (text, tool_uses, stop_reason, tokens).
+/// Non-streaming completion. Returns (text, tool_calls, stop_reason, tokens).
 pub(crate) async fn complete_once(
     backend: &LlmBackend,
     system: &[&str],
     tool_defs: &[ToolDefinition],
     messages: &[Message],
-) -> anyhow::Result<(String, Vec<ToolUseBlock>, String, u64)> {
-    if backend.provider.is_openai_format() {
-        openai_complete(&backend.http, &backend.api_key, &backend.model, system, tool_defs, messages, 16384, &backend.base_url).await
-    } else {
-        anthropic_complete(&backend.http, &backend.api_key, &backend.model, system, tool_defs, messages, 16384, &backend.base_url).await
-    }
+) -> anyhow::Result<(String, Vec<ToolCall>, StopReason, u64)> {
+    let response = backend
+        .adapter()?
+        .complete(LlmRequest::new(system, messages, tool_defs))
+        .await?;
+    log::debug!("LLM completion usage: {:?}", response.usage);
+    Ok((
+        response.text,
+        response.tool_calls,
+        response.stop_reason,
+        response.tokens_used,
+    ))
 }
 
 /// Streaming dispatch: route to provider-specific streaming.
@@ -333,16 +371,69 @@ pub(crate) async fn stream_once(
     chat_id: &str,
     message_id: &str,
     mcp_snapshot: Option<&crate::services::mcp::McpAppSnapshot>,
-) -> anyhow::Result<StreamOnceResult> {
-    if backend.provider.is_openai_format() {
-        openai_stream(
-            &backend.http, &backend.api_key, &backend.model, system, tool_defs, messages,
-            16384, events, instance_slug, chat_id, message_id, &backend.base_url,
-        ).await
-    } else {
-        anthropic_stream(
-            &backend.http, &backend.api_key, &backend.model, system, tool_defs, messages,
-            16384, events, instance_slug, chat_id, message_id, mcp_snapshot, &backend.base_url,
-        ).await
-    }
+) -> anyhow::Result<LlmResponse> {
+    let sink = |event: LlmEvent| match event {
+        LlmEvent::TextDelta(delta) => {
+            let _ = events.send(ServerEvent::ChatStreamDelta {
+                instance_slug: instance_slug.into(),
+                chat_id: chat_id.into(),
+                message_id: message_id.into(),
+                delta,
+            });
+        }
+        LlmEvent::ToolCallStarted { id, name } => {
+            log::debug!("LLM tool call started: {id} ({name})");
+            if let Some(snapshot) = mcp_snapshot {
+                if let Some(html) = snapshot.get_html(&name).cloned() {
+                    let _ = events.send(ServerEvent::McpAppStart {
+                        instance_slug: instance_slug.into(),
+                        chat_id: chat_id.into(),
+                        tool_name: name.clone(),
+                        html,
+                    });
+                }
+            }
+        }
+        LlmEvent::ToolArgumentsDelta { id, name, delta } => {
+            log::debug!("LLM tool arguments: {id} ({} bytes)", delta.len());
+            if mcp_snapshot.is_some_and(|s| s.is_app_tool(&name)) {
+                let _ = events.send(ServerEvent::McpAppInputDelta {
+                    instance_slug: instance_slug.into(),
+                    chat_id: chat_id.into(),
+                    delta,
+                });
+            }
+        }
+        LlmEvent::Activity { name, description } => {
+            let _ = events.send(ServerEvent::ChatMessageCreated {
+                instance_slug: instance_slug.into(),
+                chat_id: chat_id.into(),
+                message: ChatMessage {
+                    id: crate::services::chat::next_id(),
+                    role: ChatRole::Assistant,
+                    content: description,
+                    created_at: chrono::Utc::now().timestamp_millis().to_string(),
+                    kind: crate::domain::chat::MessageKind::ToolCall,
+                    tool_name: Some(name),
+                    mcp_app_html: None,
+                    mcp_app_input: None,
+                    model: None,
+                },
+            });
+        }
+        LlmEvent::Usage(usage) => {
+            log::debug!(
+                "LLM usage: input={} output={} cache_read={} cache_write={}",
+                usage.input_tokens,
+                usage.output_tokens,
+                usage.cache_read_tokens,
+                usage.cache_write_tokens
+            );
+            super::helpers::cache_real_input_tokens(instance_slug, chat_id, usage.input_tokens);
+        }
+    };
+    Ok(backend
+        .adapter()?
+        .stream(LlmRequest::new(system, messages, tool_defs), &sink)
+        .await?)
 }

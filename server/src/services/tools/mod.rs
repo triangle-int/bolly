@@ -37,41 +37,40 @@ pub fn public_memory_url(base: &str, instance_slug: &str, path: &str, token: &st
 pub mod calendar;
 pub mod communication;
 pub mod companion;
+pub mod computer;
 pub mod drive;
 pub mod files;
-pub mod memory_tools;
-pub mod project;
-pub mod skills;
-pub mod system;
 pub mod image;
 pub mod import_data;
 pub mod media;
-pub mod computer;
+pub mod memory_tools;
+pub mod project;
 pub mod screen;
+pub mod skills;
+pub mod system;
 
 // Re-export public items so external code uses `tools::FooTool` paths
 pub use calendar::{CreateEventTool, ListEventsTool};
-pub use communication::{
-    ReachOutTool, ReadEmailTool, ScheduledTask, SendEmailTool,
-};
+pub use communication::{ReachOutTool, ReadEmailTool, ScheduledTask, SendEmailTool};
 pub use companion::{
-    ALLOWED_MOODS, EditSoulTool, PlayMusicTool, SetVoiceTool,
-    get_voice_override, load_mood_state, save_mood_state,
+    get_voice_override, load_mood_state, save_mood_state, EditSoulTool, SetVoiceTool, ALLOWED_MOODS,
 };
+pub use computer::{ComputerUseTool, ListMachinesTool, RemoteBashTool, RemoteFilesTool};
 pub use drive::{ListDriveFilesTool, ReadDriveFileTool, UploadDriveFileTool};
 pub use files::{EditFileTool, ListFilesTool, ReadFileTool, UploadFileTool, WriteFileTool};
-pub use memory_tools::{MemoryConnectTool, MemoryForgetTool, MemoryListTool, MemoryReadTool, MemorySearchTool, MemoryWriteTool};
+pub use image::ViewImageTool;
+pub use media::WatchVideoTool;
+pub use memory_tools::{
+    MemoryConnectTool, MemoryForgetTool, MemoryListTool, MemoryReadTool, MemorySearchTool,
+    MemoryWriteTool,
+};
 pub use project::{TaskItem, TaskStatus};
 pub use skills::{ActivateSkillTool, ListSkillsTool, ReadSkillReferenceTool};
 pub use system::{
-    CallAgentTool, ClearContextTool, CreateDropTool, ExportProfileTool,
-    GetSettingsTool, GetTimeTool, ImportProfileTool, InteractiveSessionTool, RequestSecretTool,
-    RestartMachineTool, RunCommandTool, UpdateConfigTool,
+    CallAgentTool, ClearContextTool, CreateDropTool, ExportProfileTool, GetSettingsTool,
+    GetTimeTool, ImportProfileTool, InteractiveSessionTool, RequestSecretTool, RestartMachineTool,
+    RunCommandTool, UpdateConfigTool,
 };
-pub use image::ViewImageTool;
-pub use media::{WatchVideoTool, ListenMusicTool};
-pub use computer::{ListMachinesTool, ComputerUseTool, RemoteBashTool, RemoteFilesTool};
-
 // ---------------------------------------------------------------------------
 // Cached tool definitions snapshot (populated by build_tools, read by stats)
 // ---------------------------------------------------------------------------
@@ -263,14 +262,13 @@ pub fn tool_summary(name: &str, args: &str) -> String {
             v["file_id"].as_str().unwrap_or("?")
         ),
         "upload_drive_file" => format!("uploading {}", v["name"].as_str().unwrap_or("?")),
-        "play_music" => {
-            let action = v["action"].as_str().unwrap_or("?");
-            let track = v["track"].as_str().unwrap_or("");
-            if track.is_empty() { format!("music {action}") } else { format!("{action} {track}") }
-        }
         "set_voice" => {
             let vid = v["voice_id"].as_str().unwrap_or("");
-            if vid.is_empty() { "resetting voice to default".into() } else { format!("voice → {vid}") }
+            if vid.is_empty() {
+                "resetting voice to default".into()
+            } else {
+                format!("voice → {vid}")
+            }
         }
         "request_secret" => format!("requesting secret: {}", v["prompt"].as_str().unwrap_or("?")),
         "read_skill_reference" => format!(
@@ -343,7 +341,8 @@ impl ToolDyn for ObservableTool {
             kind: crate::domain::chat::MessageKind::ToolCall,
             tool_name: Some(tool_name.clone()),
             mcp_app_html: None,
-            mcp_app_input: None, model: None,
+            mcp_app_input: None,
+            model: None,
         };
         // Tool activity is already captured in rig_history via ToolUse/ToolResult blocks.
         // Only broadcast via WebSocket for real-time UI updates.
@@ -416,9 +415,7 @@ impl ToolDyn for ObservableTool {
                     tool_output,
                 });
             }
-            if tool_name == "run_command"
-                || tool_name == "interactive_session"
-            {
+            if tool_name == "run_command" || tool_name == "interactive_session" {
                 let output = match &result {
                     Ok(s) => s.clone(),
                     Err(e) => format!("error: {e}"),
@@ -432,7 +429,8 @@ impl ToolDyn for ObservableTool {
                         kind: crate::domain::chat::MessageKind::ToolOutput,
                         tool_name: Some(tool_name.clone()),
                         mcp_app_html: None,
-                        mcp_app_input: None, model: None,
+                        mcp_app_input: None,
+                        model: None,
                     };
                     let _ = events.send(ServerEvent::ChatMessageCreated {
                         instance_slug,
@@ -485,34 +483,95 @@ pub fn build_tools(
 
     // ── Core ──
     let mut tools: Vec<Box<dyn ToolDyn>> = vec![
-        wrap(Box::new(ReadFileTool::new(workspace_dir, instance_slug, public_url))),
+        wrap(Box::new(ReadFileTool::new(
+            workspace_dir,
+            instance_slug,
+            public_url,
+        ))),
         wrap(Box::new(WriteFileTool::new(workspace_dir, instance_slug))),
         wrap(Box::new(EditFileTool::new(workspace_dir, instance_slug))),
-        wrap(Box::new(UploadFileTool::new(workspace_dir, instance_slug, public_url))),
+        wrap(Box::new(UploadFileTool::new(
+            workspace_dir,
+            instance_slug,
+            public_url,
+        ))),
         wrap(Box::new(ListFilesTool::new(workspace_dir, instance_slug))),
-        wrap(Box::new(MemoryWriteTool::new(workspace_dir, instance_slug, vector_store.clone(), google_ai_key))),
-        wrap(Box::new(MemoryReadTool::new(workspace_dir, instance_slug, public_url))),
+        wrap(Box::new(MemoryWriteTool::new(
+            workspace_dir,
+            instance_slug,
+            vector_store.clone(),
+            google_ai_key,
+        ))),
+        wrap(Box::new(MemoryReadTool::new(
+            workspace_dir,
+            instance_slug,
+            public_url,
+        ))),
         wrap(Box::new(MemoryListTool::new(workspace_dir, instance_slug))),
-        wrap(Box::new(MemoryForgetTool::new(workspace_dir, instance_slug, vector_store.clone(), google_ai_key))),
-        wrap(Box::new(MemorySearchTool::new(workspace_dir, instance_slug, vector_store.clone(), google_ai_key, public_url))),
-        wrap(Box::new(MemoryConnectTool::new(workspace_dir, instance_slug))),
+        wrap(Box::new(MemoryForgetTool::new(
+            workspace_dir,
+            instance_slug,
+            vector_store.clone(),
+            google_ai_key,
+        ))),
+        wrap(Box::new(MemorySearchTool::new(
+            workspace_dir,
+            instance_slug,
+            vector_store.clone(),
+            google_ai_key,
+            public_url,
+        ))),
+        wrap(Box::new(MemoryConnectTool::new(
+            workspace_dir,
+            instance_slug,
+        ))),
         // Mood is managed by background sentiment extraction + heartbeat, not tools.
         wrap(Box::new(EditSoulTool::new(workspace_dir, instance_slug))),
-        wrap(Box::new(PlayMusicTool::new(workspace_dir, instance_slug, events.clone()))),
         wrap(Box::new(SetVoiceTool::new(workspace_dir, instance_slug))),
-        wrap(Box::new(RunCommandTool::new(workspace_dir, instance_slug, chat_id, events.clone(), github_token))),
-        wrap(Box::new(ClearContextTool::new(workspace_dir, instance_slug, chat_id, events.clone()))),
+        wrap(Box::new(RunCommandTool::new(
+            workspace_dir,
+            instance_slug,
+            chat_id,
+            events.clone(),
+            github_token,
+        ))),
+        wrap(Box::new(ClearContextTool::new(
+            workspace_dir,
+            instance_slug,
+            chat_id,
+            events.clone(),
+        ))),
     ];
 
     // ── System ──
-    tools.push(wrap(Box::new(InteractiveSessionTool::new(workspace_dir, instance_slug))));
+    tools.push(wrap(Box::new(InteractiveSessionTool::new(
+        workspace_dir,
+        instance_slug,
+    ))));
     // send_file removed — images from tool results are auto-attached (see llm.rs)
-    tools.push(wrap(Box::new(GetTimeTool::new(workspace_dir, instance_slug))));
-    tools.push(wrap(Box::new(GetSettingsTool::new(config_path, workspace_dir, instance_slug, google.clone()))));
-    tools.push(wrap(Box::new(UpdateConfigTool::new(config_path, workspace_dir, instance_slug, machine_registry.clone()))));
+    tools.push(wrap(Box::new(GetTimeTool::new(
+        workspace_dir,
+        instance_slug,
+    ))));
+    tools.push(wrap(Box::new(GetSettingsTool::new(
+        config_path,
+        workspace_dir,
+        instance_slug,
+        google.clone(),
+    ))));
+    tools.push(wrap(Box::new(UpdateConfigTool::new(
+        config_path,
+        workspace_dir,
+        instance_slug,
+        machine_registry.clone(),
+    ))));
     if let Some(ps) = pending_secrets {
         tools.push(wrap(Box::new(RequestSecretTool::new(
-            workspace_dir, instance_slug, config_path, events.clone(), ps,
+            workspace_dir,
+            instance_slug,
+            config_path,
+            events.clone(),
+            ps,
         ))));
     }
 
@@ -520,8 +579,14 @@ pub fn build_tools(
     tools.push(wrap(Box::new(RestartMachineTool)));
 
     // ── Skills ──
-    tools.push(wrap(Box::new(ListSkillsTool::new(workspace_dir, &llm.api_key))));
-    tools.push(wrap(Box::new(ActivateSkillTool::new(workspace_dir, &llm.api_key))));
+    tools.push(wrap(Box::new(ListSkillsTool::new(
+        workspace_dir,
+        &llm.api_key,
+    ))));
+    tools.push(wrap(Box::new(ActivateSkillTool::new(
+        workspace_dir,
+        &llm.api_key,
+    ))));
     tools.push(wrap(Box::new(ReadSkillReferenceTool::new(workspace_dir))));
 
     // ── Web ──
@@ -531,59 +596,108 @@ pub fn build_tools(
         let cfg = crate::config::load_config().ok();
         let auth_token = cfg.as_ref().map(|c| c.auth_token.as_str()).unwrap_or("");
         tools.push(wrap(Box::new(WatchVideoTool::new(
-            google_ai_key, workspace_dir, instance_slug, public_url, auth_token,
-        ))));
-        tools.push(wrap(Box::new(ListenMusicTool::new(
-            google_ai_key, workspace_dir, instance_slug, public_url, auth_token,
+            google_ai_key,
+            workspace_dir,
+            instance_slug,
+            public_url,
+            auth_token,
         ))));
     }
     // ── Agents ──
     tools.push(wrap(Box::new(CallAgentTool::new(
-        workspace_dir, instance_slug, llm.clone(), events.clone(), vector_store.clone(), google_ai_key,
+        workspace_dir,
+        instance_slug,
+        llm.clone(),
+        events.clone(),
+        vector_store.clone(),
+        google_ai_key,
     ))));
 
     // ── Creative ──
-    tools.push(wrap(Box::new(CreateDropTool::new(workspace_dir, instance_slug, events.clone()))));
+    tools.push(wrap(Box::new(CreateDropTool::new(
+        workspace_dir,
+        instance_slug,
+        events.clone(),
+    ))));
     // schedule_agent merged into call_agent (delay_seconds param)
 
     // ── Data ──
-    tools.push(wrap(Box::new(ExportProfileTool::new(workspace_dir, instance_slug, events.clone()))));
-    tools.push(wrap(Box::new(ImportProfileTool::new(workspace_dir, instance_slug))));
+    tools.push(wrap(Box::new(ExportProfileTool::new(
+        workspace_dir,
+        instance_slug,
+        events.clone(),
+    ))));
+    tools.push(wrap(Box::new(ImportProfileTool::new(
+        workspace_dir,
+        instance_slug,
+    ))));
     {
         let api_key = llm.api_key.clone();
         tools.push(wrap(Box::new(import_data::ImportDataTool::new(
-            workspace_dir, instance_slug, llm.http.clone(), &api_key,
-            events.clone(), vector_store.clone(), google_ai_key,
+            workspace_dir,
+            instance_slug,
+            llm.http.clone(),
+            &api_key,
+            events.clone(),
+            vector_store.clone(),
+            google_ai_key,
         ))));
     }
 
     // ── Email (unified: Gmail + SMTP/IMAP) ──
     let has_email = google.is_some() || !email_accounts.is_empty();
     if has_email {
-        tools.push(wrap(Box::new(SendEmailTool::new(google.clone(), instance_slug, email_accounts.clone()))));
-        tools.push(wrap(Box::new(ReadEmailTool::new(google.clone(), instance_slug, email_accounts))));
+        tools.push(wrap(Box::new(SendEmailTool::new(
+            google.clone(),
+            instance_slug,
+            email_accounts.clone(),
+        ))));
+        tools.push(wrap(Box::new(ReadEmailTool::new(
+            google.clone(),
+            instance_slug,
+            email_accounts,
+        ))));
     }
 
     // ── Google (calendar, drive) ──
     if let Some(g) = google {
-        tools.push(wrap(Box::new(ListEventsTool::new(g.clone(), instance_slug))));
-        tools.push(wrap(Box::new(CreateEventTool::new(g.clone(), instance_slug))));
-        tools.push(wrap(Box::new(ListDriveFilesTool::new(g.clone(), instance_slug))));
-        tools.push(wrap(Box::new(ReadDriveFileTool::new(g.clone(), instance_slug))));
+        tools.push(wrap(Box::new(ListEventsTool::new(
+            g.clone(),
+            instance_slug,
+        ))));
+        tools.push(wrap(Box::new(CreateEventTool::new(
+            g.clone(),
+            instance_slug,
+        ))));
+        tools.push(wrap(Box::new(ListDriveFilesTool::new(
+            g.clone(),
+            instance_slug,
+        ))));
+        tools.push(wrap(Box::new(ReadDriveFileTool::new(
+            g.clone(),
+            instance_slug,
+        ))));
         tools.push(wrap(Box::new(UploadDriveFileTool::new(g, instance_slug))));
     }
 
-
     // ── Computer use (multi-machine routing) ──
-    tools.push(wrap(Box::new(ListMachinesTool::new(machine_registry.clone()))));
+    tools.push(wrap(Box::new(ListMachinesTool::new(
+        machine_registry.clone(),
+    ))));
     {
         let cfg = crate::config::load_config().ok();
         let auth_token = cfg.as_ref().map(|c| c.auth_token.as_str()).unwrap_or("");
         tools.push(wrap(Box::new(ComputerUseTool::new(
-            machine_registry.clone(), workspace_dir, instance_slug, public_url, auth_token,
+            machine_registry.clone(),
+            workspace_dir,
+            instance_slug,
+            public_url,
+            auth_token,
         ))));
     }
-    tools.push(wrap(Box::new(RemoteBashTool::new(machine_registry.clone()))));
+    tools.push(wrap(Box::new(RemoteBashTool::new(
+        machine_registry.clone(),
+    ))));
     tools.push(wrap(Box::new(RemoteFilesTool::new(machine_registry))));
 
     // MCP tools

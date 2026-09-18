@@ -1,7 +1,5 @@
 use base64::{engine::general_purpose::STANDARD, Engine};
-use enigo::{
-    Axis, Button, Coordinate, Direction, Enigo, Keyboard, Mouse, Settings,
-};
+use enigo::{Axis, Button, Coordinate, Direction, Enigo, Keyboard, Mouse, Settings};
 use image::DynamicImage;
 use serde::Serialize;
 use std::io::Cursor;
@@ -38,8 +36,8 @@ pub fn computer_screenshot() -> Result<ScreenshotResult, String> {
     let real_h = capture.height();
     let raw = capture.into_raw();
 
-    let rgba = image::RgbaImage::from_raw(real_w, real_h, raw)
-        .ok_or("failed to create image buffer")?;
+    let rgba =
+        image::RgbaImage::from_raw(real_w, real_h, raw).ok_or("failed to create image buffer")?;
     let img = DynamicImage::ImageRgba8(rgba);
 
     // Scale so the longest edge ≤ MAX_SCREENSHOT_EDGE
@@ -87,7 +85,10 @@ pub fn computer_screenshot() -> Result<ScreenshotResult, String> {
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 fn scale_coords(x: i32, y: i32, scale: f64) -> (i32, i32) {
-    ((x as f64 * scale).round() as i32, (y as f64 * scale).round() as i32)
+    (
+        (x as f64 * scale).round() as i32,
+        (y as f64 * scale).round() as i32,
+    )
 }
 
 fn new_enigo() -> Result<Enigo, String> {
@@ -100,7 +101,9 @@ fn new_enigo() -> Result<Enigo, String> {
 pub fn computer_click(x: i32, y: i32, scale: f64, button: String) -> Result<(), String> {
     let (rx, ry) = scale_coords(x, y, scale);
     let mut enigo = new_enigo()?;
-    enigo.move_mouse(rx, ry, Coordinate::Abs).map_err(|e| e.to_string())?;
+    enigo
+        .move_mouse(rx, ry, Coordinate::Abs)
+        .map_err(|e| e.to_string())?;
     thread::sleep(Duration::from_millis(50));
 
     let btn = match button.as_str() {
@@ -108,39 +111,61 @@ pub fn computer_click(x: i32, y: i32, scale: f64, button: String) -> Result<(), 
         "middle" => Button::Middle,
         _ => Button::Left,
     };
-    enigo.button(btn, Direction::Click).map_err(|e| e.to_string())
+    enigo
+        .button(btn, Direction::Click)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn computer_double_click(x: i32, y: i32, scale: f64) -> Result<(), String> {
     let (rx, ry) = scale_coords(x, y, scale);
     let mut enigo = new_enigo()?;
-    enigo.move_mouse(rx, ry, Coordinate::Abs).map_err(|e| e.to_string())?;
+    enigo
+        .move_mouse(rx, ry, Coordinate::Abs)
+        .map_err(|e| e.to_string())?;
     thread::sleep(Duration::from_millis(50));
-    enigo.button(Button::Left, Direction::Click).map_err(|e| e.to_string())?;
+    enigo
+        .button(Button::Left, Direction::Click)
+        .map_err(|e| e.to_string())?;
     thread::sleep(Duration::from_millis(80));
-    enigo.button(Button::Left, Direction::Click).map_err(|e| e.to_string())
+    enigo
+        .button(Button::Left, Direction::Click)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 pub fn computer_mouse_move(x: i32, y: i32, scale: f64) -> Result<(), String> {
     let (rx, ry) = scale_coords(x, y, scale);
     let mut enigo = new_enigo()?;
-    enigo.move_mouse(rx, ry, Coordinate::Abs).map_err(|e| e.to_string())
+    enigo
+        .move_mouse(rx, ry, Coordinate::Abs)
+        .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
-pub fn computer_scroll(x: i32, y: i32, scale: f64, delta_x: i32, delta_y: i32) -> Result<(), String> {
+pub fn computer_scroll(
+    x: i32,
+    y: i32,
+    scale: f64,
+    delta_x: i32,
+    delta_y: i32,
+) -> Result<(), String> {
     let (rx, ry) = scale_coords(x, y, scale);
     let mut enigo = new_enigo()?;
-    enigo.move_mouse(rx, ry, Coordinate::Abs).map_err(|e| e.to_string())?;
+    enigo
+        .move_mouse(rx, ry, Coordinate::Abs)
+        .map_err(|e| e.to_string())?;
     thread::sleep(Duration::from_millis(50));
 
     if delta_y != 0 {
-        enigo.scroll(delta_y, Axis::Vertical).map_err(|e| e.to_string())?;
+        enigo
+            .scroll(delta_y, Axis::Vertical)
+            .map_err(|e| e.to_string())?;
     }
     if delta_x != 0 {
-        enigo.scroll(delta_x, Axis::Horizontal).map_err(|e| e.to_string())?;
+        enigo
+            .scroll(delta_x, Axis::Horizontal)
+            .map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -183,7 +208,9 @@ pub fn computer_key(key: String) -> Result<(), String> {
     }
 
     for m in modifiers.iter().rev() {
-        enigo.key(*m, Direction::Release).map_err(|e| e.to_string())?;
+        enigo
+            .key(*m, Direction::Release)
+            .map_err(|e| e.to_string())?;
     }
 
     Ok(())
