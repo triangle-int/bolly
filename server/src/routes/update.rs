@@ -1,8 +1,8 @@
 use crate::app::state::AppState;
 use axum::{
+    Json, Router,
     extract::State,
     routing::{get, post},
-    Json, Router,
 };
 use std::sync::Mutex;
 
@@ -100,13 +100,6 @@ async fn check_update(State(state): State<AppState>) -> Json<UpdateCheck> {
 }
 
 async fn apply_update(State(state): State<AppState>) -> Json<serde_json::Value> {
-    if std::env::var_os("BOLLY_CONTAINER").is_some() {
-        return Json(serde_json::json!({
-            "ok": false,
-            "error": "Pull the desired ghcr.io/triangle-int/bolly image and recreate the container to update."
-        }));
-    }
-
     // Find update script — check multiple locations
     let bolly_home = std::env::var("BOLLY_HOME")
         .unwrap_or_else(|_| state.workspace_dir.to_string_lossy().to_string());

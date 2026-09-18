@@ -216,81 +216,18 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
-  # ── Docker image (parallel with everything) ──
-  docker:
-    needs: create-release
-    runs-on: ubuntu-latest
-    # Serialize the check and push across reruns of the same version.
-    concurrency:
-      group: ghcr-version-${{ github.ref_name }}
-      cancel-in-progress: false
-    outputs:
-      digest: ${{ steps.digest.outputs.digest }}
-    permissions:
-      contents: read
-      packages: write
-    steps:
-      - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v4
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Inspect versioned image
-        id: existing
-        env:
-          RELEASE_TAG: ${{ github.ref_name }}
-        run: bash scripts/release-workflow.sh inspect
-
-      - name: Build and push versioned image
-        if: steps.existing.outputs.absent == 'true'
-        id: image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          push: true
-          platforms: linux/amd64
-          tags: ghcr.io/triangle-int/bolly:${{ github.ref_name }}
-          build-args: |
-            GIT_HASH=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-
-      - name: Expose image digest
-        id: digest
-        env:
-          IMAGE_DIGEST: ${{ steps.existing.outputs.digest || steps.image.outputs.digest }}
-        run: bash scripts/release-workflow.sh digest
-
-  # Publication and latest promotion must share one lock across all release tags.
+  # Publish only after every native artifact has been uploaded.
   publish:
-    needs: [server, desktop, docker]
+    needs: [server, desktop]
     runs-on: ubuntu-latest
-    concurrency:
-      group: ghcr-latest
-      cancel-in-progress: false
     permissions:
       contents: write
-      packages: write
     steps:
       - uses: actions/checkout@v4
-      - uses: docker/setup-buildx-action@v4
 
-      - name: Log in to GHCR
-        uses: docker/login-action@v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Publish release and promote if still latest
+      - name: Publish release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_TAG: ${{ github.ref_name }}
           GH_REPO: ${{ github.repository }}
-          IMAGE_DIGEST: ${{ needs.docker.outputs.digest }}
         run: bash scripts/release-workflow.sh publish
