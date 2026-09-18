@@ -59,16 +59,20 @@
     }
   });
 
-  onMount(async () => {
-    try {
-      const isRec = await invoke<boolean>("get_screen_recording_allowed");
-      if (isRec) recording = true;
-    } catch {}
+  onMount(() => {
+    let disposed = false;
+    void (async () => {
+      try {
+        const isRec = await invoke<boolean>("get_screen_recording_allowed");
+        if (!disposed && isRec) recording = true;
+      } catch {}
 
-    // Get server URL for video source
-    try {
-      serverUrl = await invoke<string>("get_server_url");
-    } catch {}
+      // Get server URL for video source
+      try {
+        const url = await invoke<string>("get_server_url");
+        if (!disposed) serverUrl = url;
+      } catch {}
+    })();
 
     const unlistenAction = listen<string>("computer-use-action", (e) => {
       try {
@@ -96,6 +100,7 @@
     });
 
     return () => {
+      disposed = true;
       unlistenAction.then(fn => fn());
       unlistenDone.then(fn => fn());
       unlistenRec.then(fn => fn());

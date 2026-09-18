@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { setAuthToken } from "$lib/api/client.js";
+	import { setAuthToken, isDesktopRelay } from "$lib/api/client.js";
 
 	let { onauth }: { onauth: () => void } = $props();
 
@@ -21,6 +21,9 @@
 <div class="auth-gate">
 	<div class="auth-card">
 		<div class="auth-icon">~</div>
+		{#if isDesktopRelay()}
+			<p class="auth-label">Return to the desktop dashboard to update your token and reconnect.</p>
+		{:else}
 		<p class="auth-label">this companion requires a token</p>
 		<input
 			type="password"
@@ -33,6 +36,7 @@
 			<p class="auth-error">invalid token</p>
 		{/if}
 		<button onclick={submit} class="auth-button">connect</button>
+		{/if}
 	</div>
 </div>
 

@@ -1,9 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
-  import { load, type Store } from "@tauri-apps/plugin-store";
 
-  const SCREEN_REC_KEY = "screen_recording_allowed";
 
   type Permissions = {
     screen_recording: boolean;
@@ -13,24 +11,15 @@
   let permissions = $state<Permissions | null>(null);
   let checking = $state(false);
   let screenRecording = $state(false);
-  let settingsStore: Store | null = null;
 
-  async function getStore(): Promise<Store> {
-    if (!settingsStore) {
-      settingsStore = await load("settings.json", { autoSave: true });
-    }
-    return settingsStore;
-  }
 
   onMount(async () => {
     refresh();
     // Load persisted preference and sync to Rust static
     try {
-      const s = await getStore();
-      const saved = await s.get<boolean>(SCREEN_REC_KEY);
+      const saved = await invoke<boolean>("get_screen_recording_allowed");
       if (saved === true) {
         screenRecording = true;
-        await invoke("set_screen_recording_allowed", { allowed: true });
       }
     } catch (e) {
       console.error("failed to load screen recording preference", e);
@@ -57,8 +46,6 @@
     screenRecording = !screenRecording;
     try {
       await invoke("set_screen_recording_allowed", { allowed: screenRecording });
-      const s = await getStore();
-      await s.set(SCREEN_REC_KEY, screenRecording);
       // Stop recording immediately when turning off
       if (!screenRecording) {
         await invoke("stop_screen_recording");
