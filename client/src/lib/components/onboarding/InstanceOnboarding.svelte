@@ -49,7 +49,7 @@
 	let nameInputEl: HTMLInputElement | undefined = $state();
 	let apiKeyInputEl: HTMLInputElement | undefined = $state();
 	let chosenLanguage = $state(
-		typeof localStorage !== "undefined" ? (localStorage.getItem("bolly:language") ?? "english") : "english",
+		typeof localStorage !== "undefined" ? (localStorage.getItem("nolune:language") ?? "english") : "english",
 	);
 	let lines = $state<{ text: string; revealed: string; done: boolean }[]>([]);
 	let soulTemplates = $state<SoulTemplate[]>([]);
@@ -103,7 +103,7 @@
 		revealed = true;
 		stage = "intro";
 		await pause(400);
-		const userName = typeof localStorage !== "undefined" ? localStorage.getItem("bolly:preferredName") || slug : slug;
+		const userName = typeof localStorage !== "undefined" ? localStorage.getItem("nolune:preferredName") || slug : slug;
 		await typewrite(`hey, ${userName}.`);
 		await pause(400);
 		await typewrite("a new space, just for us.");
@@ -115,7 +115,7 @@
 
 	async function pickLanguage(langId: string) {
 		chosenLanguage = langId;
-		localStorage.setItem("bolly:language", langId);
+		localStorage.setItem("nolune:language", langId);
 		stage = "intro";
 		await pause(300);
 		const lang = LANGUAGES.find((l) => l.id === langId);
@@ -253,7 +253,7 @@
 		if (!content) return;
 		stage = "sending";
 		const langLabel = LANGUAGES.find((l) => l.id === chosenLanguage)?.label ?? chosenLanguage;
-		const preferredName = typeof localStorage !== "undefined" ? localStorage.getItem("bolly:preferredName") || slug : slug;
+		const preferredName = typeof localStorage !== "undefined" ? localStorage.getItem("nolune:preferredName") || slug : slug;
 		const combined = `my name is ${preferredName}. please speak to me in ${langLabel}.\n\n${content}`;
 		try {
 			await sendMessage(slug, combined);

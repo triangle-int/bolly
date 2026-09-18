@@ -1,15 +1,15 @@
 #!/bin/bash
 # ╔══════════════════════════════════════════════╗
-# ║          bolly — AI companion installer       ║
-# ║        https://github.com/triangle-int/bolly  ║
+# ║          nolune — AI companion installer       ║
+# ║        https://github.com/triangle-int/nolune  ║
 # ╚══════════════════════════════════════════════╝
 #
 # Usage:
-#   curl -fsSL https://bollyai.dev/install.sh | bash
+#   curl -fsSL https://nolune.dev/install.sh | bash
 #
 # Options (env vars):
-#   BOLLY_CHANNEL=nightly    Install nightly instead of stable
-#   BOLLY_DIR=/custom/path   Install to custom directory (default: ~/.bolly)
+#   NOLUNE_CHANNEL=nightly    Install nightly instead of stable
+#   NOLUNE_DIR=/custom/path   Install to custom directory (default: ~/.nolune)
 #
 set -e
 
@@ -119,7 +119,7 @@ animate_orb() {
            .:+******+++++**+***:.
           .+%***+::::··::+++**%%:.
           :%%***+::······:++*%***·
-          :%#%**+::·······:+*%%+*:          bolly
+          :%#%**+::·······:+*%%+*:          nolune
           :*#%%%*::::·····:+%%#*+:          your AI companion
           ·+*%%%**+:::::::+*%#%++·
            ·:+%%%**++::++*%%#%+:·.
@@ -138,7 +138,7 @@ fi
 # ─── Banner ───────────────────────────────────────────────────────────────────
 echo ""
 echo -e "${BOLD}  ┌─────────────────────────────┐${NC}"
-echo -e "${BOLD}  │${NC}     ${CYAN}bolly${NC} installer         ${BOLD}│${NC}"
+echo -e "${BOLD}  │${NC}     ${CYAN}nolune${NC} installer        ${BOLD}│${NC}"
 echo -e "${BOLD}  │${NC}     ${DIM}your AI companion${NC}       ${BOLD}│${NC}"
 echo -e "${BOLD}  └─────────────────────────────┘${NC}"
 
@@ -149,7 +149,7 @@ ARCH="$(uname -m)"
 case "$OS" in
     Linux)   PLATFORM="linux" ;;
     Darwin)  PLATFORM="macos" ;;
-    *)       fail "unsupported OS: $OS (bolly supports Linux and macOS)" ;;
+    *)       fail "unsupported OS: $OS (nolune supports Linux and macOS)" ;;
 esac
 
 case "$ARCH" in
@@ -162,32 +162,31 @@ case "$PLATFORM-$ARCH" in
     linux-x86_64)    TARGET="x86_64-unknown-linux-gnu" ;;
     linux-aarch64)   TARGET="aarch64-unknown-linux-gnu" ;;
     macos-aarch64)   TARGET="aarch64-apple-darwin" ;;
-    macos-x86_64)    fail "Intel Macs are not supported — bolly requires Apple Silicon (M1+)" ;;
+    macos-x86_64)    fail "Intel Macs are not supported — nolune requires Apple Silicon (M1+)" ;;
     *)               fail "unsupported platform: $PLATFORM-$ARCH" ;;
 esac
 
 # ─── Config ───────────────────────────────────────────────────────────────────
-REPO="triangle-int/bolly"
-CHANNEL="${BOLLY_CHANNEL:-stable}"
-BOLLY_DIR="${BOLLY_DIR:-$HOME/.bolly}"
-BIN_DIR="$BOLLY_DIR/bin"
-BIN="$BIN_DIR/bolly"
+REPO="triangle-int/nolune"
+CHANNEL="${NOLUNE_CHANNEL:-stable}"
+NOLUNE_DIR="${NOLUNE_DIR:-$HOME/.nolune}"
+BIN_DIR="$NOLUNE_DIR/bin"
+BIN="$BIN_DIR/nolune"
 
 step "detecting environment"
 log "platform: ${BOLD}$PLATFORM $ARCH${NC}"
 log "channel: ${BOLD}$CHANNEL${NC}"
-log "install dir: ${BOLD}$BOLLY_DIR${NC}"
+log "install dir: ${BOLD}$NOLUNE_DIR${NC}"
 
 # ─── Download binary ─────────────────────────────────────────────────────────
-step "downloading bolly"
+step "downloading nolune"
 
 AUTH_HEADER=""
 if [ -n "${GITHUB_TOKEN:-}" ]; then
     AUTH_HEADER="Authorization: token $GITHUB_TOKEN"
 fi
 
-ASSET_NAME="bolly-server-$TARGET"
-ASSET_NAME_LEGACY="bolly-$TARGET"
+ASSET_NAME="nolune-server-$TARGET"
 
 if [ "$CHANNEL" = "nightly" ]; then
     # Nightly: must use API to get tag
@@ -198,21 +197,15 @@ if [ "$CHANNEL" = "nightly" ]; then
         fail "could not find a nightly release"
     fi
     DOWNLOAD_URL="https://github.com/$REPO/releases/download/$TAG/$ASSET_NAME"
-    DOWNLOAD_URL_LEGACY="https://github.com/$REPO/releases/download/$TAG/$ASSET_NAME_LEGACY"
 else
     # Stable: use redirect URL — no API call, no rate limit
     DOWNLOAD_URL="https://github.com/$REPO/releases/latest/download/$ASSET_NAME"
-    DOWNLOAD_URL_LEGACY="https://github.com/$REPO/releases/latest/download/$ASSET_NAME_LEGACY"
     TAG="latest"
 fi
 
-mkdir -p "$BIN_DIR" "$BOLLY_DIR"
+mkdir -p "$BIN_DIR" "$NOLUNE_DIR"
 
 info "downloading ${BOLD}$CHANNEL${NC} for $TARGET..."
-# Try new asset name first, fall back to legacy for older releases
-if ! curl -fsSL --head "$DOWNLOAD_URL" >/dev/null 2>&1; then
-    DOWNLOAD_URL="$DOWNLOAD_URL_LEGACY"
-fi
 curl -fL --progress-bar "$DOWNLOAD_URL" -o "$BIN" || \
     fail "download failed — check https://github.com/$REPO/releases"
 
@@ -228,11 +221,11 @@ echo "$TAG" > "$BIN_DIR/.version"
 log "downloaded ${BOLD}$TAG${NC}"
 
 # ─── Config file ──────────────────────────────────────────────────────────────
-if [ ! -f "$BOLLY_DIR/config.toml" ]; then
+if [ ! -f "$NOLUNE_DIR/config.toml" ]; then
     step "creating config"
     # Generate a secure random auth token (32 chars, a-z0-9)
     AUTH_TOKEN=$(head -c 256 /dev/urandom | LC_ALL=C tr -dc 'a-z0-9' | head -c 32)
-    cat > "$BOLLY_DIR/config.toml" <<CONF
+    cat > "$NOLUNE_DIR/config.toml" <<CONF
 host = "0.0.0.0"
 port = 26559
 auth_token = "$AUTH_TOKEN"
@@ -245,16 +238,16 @@ ANTHROPIC = ""       # Required — get key at https://console.anthropic.com
 GOOGLE_AI = ""       # Optional — embeddings + media analysis
 ELEVENLABS = ""      # Optional — text-to-speech
 CONF
-    log "created $BOLLY_DIR/config.toml"
-    info "authentication token saved in $BOLLY_DIR/config.toml"
+    log "created $NOLUNE_DIR/config.toml"
+    info "authentication token saved in $NOLUNE_DIR/config.toml"
 else
     log "config already exists, skipping"
     # Backfill auth_token if empty (upgrade from older install)
-    EXISTING_TOKEN=$(grep -E '^auth_token\s*=' "$BOLLY_DIR/config.toml" | head -1 | sed 's/[^=]*=\s*//' | tr -d ' "')
+    EXISTING_TOKEN=$(grep -E '^auth_token\s*=' "$NOLUNE_DIR/config.toml" | head -1 | sed 's/[^=]*=\s*//' | tr -d ' "')
     if [ -z "$EXISTING_TOKEN" ]; then
         AUTH_TOKEN=$(head -c 256 /dev/urandom | LC_ALL=C tr -dc 'a-z0-9' | head -c 32)
-        sed -i.bak "s/^auth_token\s*=.*/auth_token = \"$AUTH_TOKEN\"/" "$BOLLY_DIR/config.toml"
-        rm -f "$BOLLY_DIR/config.toml.bak"
+        sed -i.bak "s/^auth_token\s*=.*/auth_token = \"$AUTH_TOKEN\"/" "$NOLUNE_DIR/config.toml"
+        rm -f "$NOLUNE_DIR/config.toml.bak"
         log "generated auth token for existing install"
     fi
 fi
@@ -265,21 +258,18 @@ cat > "$BIN_DIR/update" <<UPDATESCRIPT
 set -e
 REPO="$REPO"
 BIN="$BIN"
-CHANNEL="\${BOLLY_CHANNEL:-$CHANNEL}"
+CHANNEL="\${NOLUNE_CHANNEL:-$CHANNEL}"
 TARGET="$TARGET"
 # Use redirect URL for stable — no API call, no rate limit
-DOWNLOAD_URL="https://github.com/\$REPO/releases/latest/download/bolly-server-\$TARGET"
-DOWNLOAD_URL_LEGACY="https://github.com/\$REPO/releases/latest/download/bolly-\$TARGET"
+DOWNLOAD_URL="https://github.com/\$REPO/releases/latest/download/nolune-server-\$TARGET"
 if [ "\$CHANNEL" = "nightly" ]; then
     API_URL="https://api.github.com/repos/\$REPO/releases/tags/nightly"
     RELEASE_JSON=\$(curl -fsSL "\$API_URL") || { echo "could not fetch release info"; exit 1; }
     TAG=\$(echo "\$RELEASE_JSON" | grep '"tag_name"' | head -1 | sed 's/.*: "//;s/".*//')
-    DOWNLOAD_URL="https://github.com/\$REPO/releases/download/\$TAG/bolly-server-\$TARGET"
-    DOWNLOAD_URL_LEGACY="https://github.com/\$REPO/releases/download/\$TAG/bolly-\$TARGET"
+    DOWNLOAD_URL="https://github.com/\$REPO/releases/download/\$TAG/nolune-server-\$TARGET"
 fi
 echo "checking for updates..."
 curl -fsSL "\$DOWNLOAD_URL" -o "\$BIN.tmp" 2>/dev/null || \
-    curl -fsSL "\$DOWNLOAD_URL_LEGACY" -o "\$BIN.tmp" || \
     { echo "download failed"; exit 1; }
 # Resolve version from redirect
 TAG=\$(curl -fsSIL "\$DOWNLOAD_URL" 2>/dev/null | grep -i '^location:' | tail -1 | sed 's|.*/download/\([^/]*\)/.*|\1|' | tr -d '\r')
@@ -293,7 +283,7 @@ fi
 chmod +x "\$BIN.tmp"
 mv "\$BIN.tmp" "\$BIN"
 echo "\$TAG" > "$BIN_DIR/.version"
-echo "updated to \$TAG — restart bolly to apply"
+echo "updated to \$TAG — restart nolune to apply"
 UPDATESCRIPT
 chmod +x "$BIN_DIR/update"
 
@@ -304,19 +294,19 @@ SERVICE_KIND="none"
 if [ "$PLATFORM" = "linux" ]; then
     # ── systemd ──
     if command -v systemctl &>/dev/null && [ "$(id -u)" -eq 0 ]; then
-        SYSTEMD_SYSTEM_DIR="${BOLLY_SYSTEMD_SYSTEM_DIR:-/etc/systemd/system}"
+        SYSTEMD_SYSTEM_DIR="${NOLUNE_SYSTEMD_SYSTEM_DIR:-/etc/systemd/system}"
         mkdir -p "$SYSTEMD_SYSTEM_DIR"
-        SERVICE_FILE="$SYSTEMD_SYSTEM_DIR/bolly.service"
+        SERVICE_FILE="$SYSTEMD_SYSTEM_DIR/nolune.service"
         cat > "$SERVICE_FILE" <<EOF
 [Unit]
-Description=Bolly AI Companion
+Description=Nolune AI Companion
 After=network.target
 
 [Service]
 Type=simple
 User=$(whoami)
-WorkingDirectory=$BOLLY_DIR
-Environment=BOLLY_HOME=$BOLLY_DIR
+WorkingDirectory=$NOLUNE_DIR
+Environment=NOLUNE_HOME=$NOLUNE_DIR
 Environment=RUST_LOG=info
 ExecStart=$BIN
 Restart=always
@@ -328,21 +318,21 @@ EOF
         systemctl daemon-reload
         SERVICE_KIND="systemd-system"
         log "systemd service created"
-        info "start:   sudo systemctl start bolly"
-        info "logs:    sudo journalctl -u bolly -f"
+        info "start:   sudo systemctl start nolune"
+        info "logs:    sudo journalctl -u nolune -f"
     elif command -v systemctl &>/dev/null; then
         # User-level systemd (no root)
         SYSTEMD_DIR="$HOME/.config/systemd/user"
         mkdir -p "$SYSTEMD_DIR"
-        cat > "$SYSTEMD_DIR/bolly.service" <<EOF
+        cat > "$SYSTEMD_DIR/nolune.service" <<EOF
 [Unit]
-Description=Bolly AI Companion
+Description=Nolune AI Companion
 After=network.target
 
 [Service]
 Type=simple
-WorkingDirectory=$BOLLY_DIR
-Environment=BOLLY_HOME=$BOLLY_DIR
+WorkingDirectory=$NOLUNE_DIR
+Environment=NOLUNE_HOME=$NOLUNE_DIR
 Environment=RUST_LOG=info
 ExecStart=$BIN
 Restart=always
@@ -354,8 +344,8 @@ EOF
         systemctl --user daemon-reload
         SERVICE_KIND="systemd-user"
         log "user systemd service created"
-        info "start:   systemctl --user start bolly"
-        info "logs:    journalctl --user -u bolly -f"
+        info "start:   systemctl --user start nolune"
+        info "logs:    journalctl --user -u nolune -f"
     else
         log "no systemd found — run manually: $BIN"
     fi
@@ -363,7 +353,7 @@ EOF
 elif [ "$PLATFORM" = "macos" ]; then
     # ── launchd ──
     PLIST_DIR="$HOME/Library/LaunchAgents"
-    PLIST="$PLIST_DIR/dev.bollyai.bolly.plist"
+    PLIST="$PLIST_DIR/dev.nolune.nolune.plist"
     mkdir -p "$PLIST_DIR"
     cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -371,17 +361,17 @@ elif [ "$PLATFORM" = "macos" ]; then
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>dev.bollyai.bolly</string>
+    <string>dev.nolune.nolune</string>
     <key>ProgramArguments</key>
     <array>
         <string>$BIN</string>
     </array>
     <key>WorkingDirectory</key>
-    <string>$BOLLY_DIR</string>
+    <string>$NOLUNE_DIR</string>
     <key>EnvironmentVariables</key>
     <dict>
-        <key>BOLLY_HOME</key>
-        <string>$BOLLY_DIR</string>
+        <key>NOLUNE_HOME</key>
+        <string>$NOLUNE_DIR</string>
         <key>RUST_LOG</key>
         <string>info</string>
     </dict>
@@ -390,17 +380,17 @@ elif [ "$PLATFORM" = "macos" ]; then
     <key>RunAtLoad</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>$BOLLY_DIR/bolly.log</string>
+    <string>$NOLUNE_DIR/nolune.log</string>
     <key>StandardErrorPath</key>
-    <string>$BOLLY_DIR/bolly.log</string>
+    <string>$NOLUNE_DIR/nolune.log</string>
 </dict>
 </plist>
 EOF
     SERVICE_KIND="launchd"
     log "launchd service created"
     info "start:   launchctl bootstrap gui/$(id -u) $PLIST"
-    info "stop:    launchctl bootout gui/$(id -u)/dev.bollyai.bolly"
-    info "logs:    tail -f $BOLLY_DIR/bolly.log"
+    info "stop:    launchctl bootout gui/$(id -u)/dev.nolune.nolune"
+    info "logs:    tail -f $NOLUNE_DIR/nolune.log"
 fi
 
 # ─── Add to PATH ──────────────────────────────────────────────────────────────
@@ -412,7 +402,7 @@ if ! echo "$PATH" | grep -q "$BIN_DIR"; then
     if [ -f "$RC_FILE" ] && ! grep -q "$BIN_DIR" "$RC_FILE"; then
         {
             echo ""
-            echo "# bolly"
+            echo "# nolune"
             echo "$EXPORT_LINE"
         } >> "$RC_FILE"
         log "added to PATH in $RC_FILE"
@@ -420,21 +410,21 @@ if ! echo "$PATH" | grep -q "$BIN_DIR"; then
 fi
 
 # ─── Doctor: stop old instance, fix config, restart ──────────────────────────
-step "starting bolly"
+step "starting nolune"
 
 export PATH="$BIN_DIR:$PATH"
 
 # Read port from config (default 26559)
-BOLLY_PORT=26559
-if [ -f "$BOLLY_DIR/config.toml" ]; then
-    CFG_PORT=$(grep -E '^port\s*=' "$BOLLY_DIR/config.toml" | head -1 | sed 's/.*=\s*//' | tr -d ' ')
+NOLUNE_PORT=26559
+if [ -f "$NOLUNE_DIR/config.toml" ]; then
+    CFG_PORT=$(grep -E '^port\s*=' "$NOLUNE_DIR/config.toml" | head -1 | sed 's/.*=\s*//' | tr -d ' ')
     if [ -n "$CFG_PORT" ]; then
-        BOLLY_PORT="$CFG_PORT"
+        NOLUNE_PORT="$CFG_PORT"
     fi
 fi
-BOLLY_URL="http://localhost:$BOLLY_PORT"
+NOLUNE_URL="http://localhost:$NOLUNE_PORT"
 
-find_exact_bolly_pids() {
+find_exact_nolune_pids() {
     ps -axo pid=,command= | while read -r pid command; do
         if [ "$command" = "$BIN" ]; then
             printf '%s\n' "$pid"
@@ -442,23 +432,23 @@ find_exact_bolly_pids() {
     done
 }
 
-stop_stray_bolly() {
+stop_stray_nolune() {
     local pids remaining pid
-    pids=$(find_exact_bolly_pids)
+    pids=$(find_exact_nolune_pids)
     [ -z "$pids" ] && return 0
 
     for pid in $pids; do
-        info "stopping unmanaged bolly process (PID: $pid)..."
+        info "stopping unmanaged nolune process (PID: $pid)..."
         kill "$pid" 2>/dev/null || true
     done
 
     for _ in $(seq 1 20); do
-        remaining=$(find_exact_bolly_pids)
+        remaining=$(find_exact_nolune_pids)
         [ -z "$remaining" ] && return 0
         sleep 0.1
     done
 
-    fail "could not stop the existing Bolly process (PID: $remaining)"
+    fail "could not stop the existing Nolune process (PID: $remaining)"
 }
 
 # Start through the native service manager so the installed service is the
@@ -466,47 +456,47 @@ stop_stray_bolly() {
 case "$SERVICE_KIND" in
     launchd)
         LAUNCH_DOMAIN="gui/$(id -u)"
-        LAUNCH_SERVICE="$LAUNCH_DOMAIN/dev.bollyai.bolly"
+        LAUNCH_SERVICE="$LAUNCH_DOMAIN/dev.nolune.nolune"
         launchctl bootout "$LAUNCH_SERVICE" >/dev/null 2>&1 || true
-        stop_stray_bolly
+        stop_stray_nolune
         launchctl bootstrap "$LAUNCH_DOMAIN" "$PLIST"
         launchctl kickstart -k "$LAUNCH_SERVICE"
         launchctl print "$LAUNCH_SERVICE" >/dev/null
         ;;
     systemd-system)
-        systemctl stop bolly >/dev/null 2>&1 || true
-        stop_stray_bolly
-        systemctl enable bolly >/dev/null
-        systemctl restart bolly
-        systemctl is-active --quiet bolly
+        systemctl stop nolune >/dev/null 2>&1 || true
+        stop_stray_nolune
+        systemctl enable nolune >/dev/null
+        systemctl restart nolune
+        systemctl is-active --quiet nolune
         ;;
     systemd-user)
-        systemctl --user stop bolly >/dev/null 2>&1 || true
-        stop_stray_bolly
-        systemctl --user enable bolly >/dev/null
-        systemctl --user restart bolly
-        systemctl --user is-active --quiet bolly
+        systemctl --user stop nolune >/dev/null 2>&1 || true
+        stop_stray_nolune
+        systemctl --user enable nolune >/dev/null
+        systemctl --user restart nolune
+        systemctl --user is-active --quiet nolune
         ;;
     none)
-        stop_stray_bolly
+        stop_stray_nolune
         "$BIN" &>/dev/null &
         ;;
 esac
 
-info "waiting for bolly to start..."
+info "waiting for nolune to start..."
 for _ in $(seq 1 30); do
-    if curl -sf "$BOLLY_URL/healthz" >/dev/null 2>&1; then
+    if curl -sf "$NOLUNE_URL/healthz" >/dev/null 2>&1; then
         break
     fi
     sleep 0.5
 done
 
     # Read auth token from config for browser URL
-AUTH_TOKEN=$(grep -E '^auth_token\s*=' "$BOLLY_DIR/config.toml" | head -1 | sed 's/[^=]*=\s*//' | tr -d ' "')
-AUTH_URL="$BOLLY_URL/auth?token=$AUTH_TOKEN"
+AUTH_TOKEN=$(grep -E '^auth_token\s*=' "$NOLUNE_DIR/config.toml" | head -1 | sed 's/[^=]*=\s*//' | tr -d ' "')
+AUTH_URL="$NOLUNE_URL/auth?token=$AUTH_TOKEN"
 
-if curl -sf "$BOLLY_URL/healthz" >/dev/null 2>&1; then
-    log "bolly is running on port $BOLLY_PORT"
+if curl -sf "$NOLUNE_URL/healthz" >/dev/null 2>&1; then
+    log "nolune is running on port $NOLUNE_PORT"
 
     # Open browser with auth
     if [ "$PLATFORM" = "macos" ]; then
@@ -517,11 +507,11 @@ if curl -sf "$BOLLY_URL/healthz" >/dev/null 2>&1; then
 
     echo ""
     echo -e "${BOLD}  ┌─────────────────────────────┐${NC}"
-    echo -e "${BOLD}  │${NC}  ${GREEN}bolly is ready!${NC}            ${BOLD}│${NC}"
+    echo -e "${BOLD}  │${NC}  ${GREEN}nolune is ready!${NC}           ${BOLD}│${NC}"
     echo -e "${BOLD}  └─────────────────────────────┘${NC}"
     echo ""
-    echo -e "  ${CYAN}${BOLLY_URL}${NC}"
+    echo -e "  ${CYAN}${NOLUNE_URL}${NC}"
     echo ""
 else
-    fail "bolly service did not become healthy — check $BOLLY_DIR/bolly.log"
+    fail "nolune service did not become healthy — check $NOLUNE_DIR/nolune.log"
 fi

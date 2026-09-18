@@ -30,7 +30,7 @@ impl std::error::Error for McpToolError {}
 
 fn client_info() -> ClientInfo {
     let mut info = ClientInfo::default();
-    info.client_info = Implementation::new("bolly", env!("CARGO_PKG_VERSION"));
+    info.client_info = Implementation::new("nolune", env!("CARGO_PKG_VERSION"));
     info
 }
 

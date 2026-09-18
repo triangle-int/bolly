@@ -4,7 +4,7 @@ use crate::services::tool::{Tool, ToolDefinition};
 use schemars::JsonSchema;
 use serde::Deserialize;
 
-use super::{openai_schema, ToolExecError};
+use super::{ToolExecError, openai_schema};
 
 const GEMINI_MODEL: &str = "gemini-2.5-flash";
 const MAX_MEDIA_SIZE: u64 = 45 * 1024 * 1024; // 45 MB

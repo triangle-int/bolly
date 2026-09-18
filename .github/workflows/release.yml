@@ -45,11 +45,11 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            artifact: bolly-server-x86_64-unknown-linux-gnu
+            artifact: nolune-server-x86_64-unknown-linux-gnu
             ext: ''
           - os: macos-latest
             target: aarch64-apple-darwin
-            artifact: bolly-server-aarch64-apple-darwin
+            artifact: nolune-server-aarch64-apple-darwin
             ext: ''
 
     runs-on: ${{ matrix.os }}
@@ -107,7 +107,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cp target/${{ matrix.target }}/release/server${{ matrix.ext }} ${{ matrix.artifact }}
+          cp target/${{ matrix.target }}/release/nolune${{ matrix.ext }} ${{ matrix.artifact }}
           chmod +x ${{ matrix.artifact }} 2>/dev/null || true
           gh release upload "${{ github.ref_name }}" ${{ matrix.artifact }} --clobber
 
@@ -194,7 +194,7 @@ jobs:
         with:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
-          releaseName: 'Bolly ${{ github.ref_name }}'
+          releaseName: 'Nolune ${{ github.ref_name }}'
           releaseBody: ''
           releaseDraft: true
           prerelease: false
@@ -210,7 +210,7 @@ jobs:
         with:
           projectPath: desktop
           tagName: ${{ github.ref_name }}
-          releaseName: 'Bolly ${{ github.ref_name }}'
+          releaseName: 'Nolune ${{ github.ref_name }}'
           releaseBody: ''
           releaseDraft: true
           prerelease: false

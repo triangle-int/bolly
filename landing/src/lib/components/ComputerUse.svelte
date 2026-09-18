@@ -1,16 +1,16 @@
 <script lang="ts">
 	import Reveal from './Reveal.svelte';
 	const nodes = [
-		{ n: '01', title: 'A home for one persistent mind', text: 'Your Mac mini or home server keeps Bolly’s identity, memory, tools, and routines running around the clock.' },
+		{ n: '01', title: 'A home for one persistent mind', text: 'Your Mac mini or home server keeps Nolune’s identity, memory, tools, and routines running around the clock.' },
 		{ n: '02', title: 'Eyes and hands where you work', text: 'Desktop apps connect the screen, apps, files, and terminal on your MacBook or desktop — only on machines you choose.' },
-		{ n: '03', title: 'One interface across all of it', text: 'Talk to the same Bolly, select a connected computer, and follow each action from request to completion.' }
+		{ n: '03', title: 'One interface across all of it', text: 'Talk to the same Nolune, select a connected computer, and follow each action from request to completion.' }
 	];
 </script>
 <section id="computer-use" class="system-section">
 	<div class="section-shell">
-		<Reveal><p class="eyebrow">One mind · many surfaces</p><h2 class="section-title">Bolly lives at home.<br />Its reach travels with you.</h2><p class="section-copy">The always-on server is Bolly’s brain. Native desktop apps are secure bridges to the computers where your work actually happens.</p></Reveal>
-		<div class="topology" aria-label="Diagram of Bolly connecting its home server to desktop computers">
-			<div class="node primary"><div class="node-head"><span class="light"></span><span>MAC MINI · HOME</span></div><strong>Bolly brain</strong><p>identity / memory / schedules</p><small>ONLINE · 18D 04H</small></div>
+		<Reveal><p class="eyebrow">One mind · many surfaces</p><h2 class="section-title">Nolune lives at home.<br />Its reach travels with you.</h2><p class="section-copy">The always-on server is Nolune’s brain. Native desktop apps are secure bridges to the computers where your work actually happens.</p></Reveal>
+		<div class="topology" aria-label="Diagram of Nolune connecting its home server to desktop computers">
+			<div class="node primary"><div class="node-head"><span class="light"></span><span>MAC MINI · HOME</span></div><strong>Nolune brain</strong><p>identity / memory / schedules</p><small>ONLINE · 18D 04H</small></div>
 			<div class="route"><span>encrypted connection</span><i></i></div>
 			<div class="endpoints"><div class="node"><div class="node-head"><span class="light amber"></span><span>MACBOOK · WORK</span></div><strong>Desktop app</strong><p>screen / Xcode / files / terminal</p><small>CONNECTED</small></div><div class="node muted"><div class="node-head"><span class="light"></span><span>LINUX · STUDIO</span></div><strong>Desktop app</strong><p>browser / files / terminal</p><small>AVAILABLE</small></div></div>
 		</div>

@@ -1284,7 +1284,7 @@ mod tests {
     async fn cancellation_kills_subprocess_and_descendants_and_drains_work() {
         let session = Session::new();
         let active = work(&session).await;
-        let marker = std::env::temp_dir().join(format!("bolly-cancel-{}", uuid::Uuid::new_v4()));
+        let marker = std::env::temp_dir().join(format!("nolune-cancel-{}", uuid::Uuid::new_v4()));
         let command = format!("touch '{}'; sleep 30 & wait", marker.display());
         let task = tokio::task::spawn_blocking(move || {
             active.run(|session| execute_bash(&command, None, session))
@@ -1373,7 +1373,7 @@ mod tests {
 
     #[test]
     fn machine_auth_uses_header_and_rejects_base_paths() {
-        assert!(machine_request("https://example.org:8443/bolly/", "secret").is_err());
+        assert!(machine_request("https://example.org:8443/nolune/", "secret").is_err());
         let request = machine_request("https://example.org:8443/", "secret").unwrap();
         assert_eq!(
             request.uri().to_string(),

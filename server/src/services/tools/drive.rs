@@ -318,7 +318,7 @@ impl Tool for UploadDriveFileTool {
         }
 
         // Use multipart upload
-        let boundary = "bolly_upload_boundary";
+        let boundary = "nolune_upload_boundary";
         let body = format!(
             "--{boundary}\r\n\
              Content-Type: application/json; charset=UTF-8\r\n\r\n\

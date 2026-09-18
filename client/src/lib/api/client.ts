@@ -26,8 +26,8 @@ const BASE = "";
 // Auth token management
 // ---------------------------------------------------------------------------
 
-const TOKEN_KEY = "bolly_auth_token";
-const TOKEN_COOKIE = "bolly_token";
+const TOKEN_KEY = "nolune_auth_token";
+const TOKEN_COOKIE = "nolune_token";
 
 function getCookie(name: string): string | null {
 	if (typeof document === "undefined") return null;
@@ -48,7 +48,7 @@ function deleteCookie(name: string) {
 }
 
 export function isDesktopRelay(): boolean {
-	return typeof window !== "undefined" && "__BOLLY_DESKTOP_RELAY__" in window;
+	return typeof window !== "undefined" && "__NOLUNE_DESKTOP_RELAY__" in window;
 }
 
 export function getAuthToken(): string | null {

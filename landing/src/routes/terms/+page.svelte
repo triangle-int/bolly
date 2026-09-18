@@ -3,7 +3,7 @@
 </script>
 
 <svelte:head>
-	<title>Terms of Service — Bolly</title>
+	<title>Terms of Service — Nolune</title>
 </svelte:head>
 
 <div class="legal-page">
@@ -11,7 +11,7 @@
 		<div class="legal-header-inner">
 			<a href="/" class="legal-brand">
 				<div class="legal-logo">b</div>
-				<span class="legal-brand-name">bolly</span>
+				<span class="legal-brand-name">nolune</span>
 			</a>
 		</div>
 	</header>
@@ -23,13 +23,13 @@
 		<div class="prose">
 			<h2>1. Agreement</h2>
 			<p>
-				By using Bolly ("the Service"), operated by Triangle Interactive ("we", "us"), you agree to these terms.
+				By using Nolune ("the Service"), operated by Triangle Interactive ("we", "us"), you agree to these terms.
 				If you don't agree, don't use the Service.
 			</p>
 
 			<h2>2. The Service</h2>
 			<p>
-				Bolly provides AI companion instances that run on dedicated servers. Each companion has persistent memory,
+				Nolune provides AI companion instances that run on dedicated servers. Each companion has persistent memory,
 				tool access, and optional integrations (Google, web browsing, etc.). The companion uses third-party LLM
 				providers to generate responses.
 			</p>
@@ -102,7 +102,7 @@
 			<p>We may update these terms. Material changes will be communicated via email. Continued use after changes take effect constitutes acceptance.</p>
 
 			<h2>13. Contact</h2>
-			<p>Questions? Email <a href="mailto:support@bollyai.dev">support@bollyai.dev</a>.</p>
+			<p>Questions? Email <a href="mailto:support@nolune.dev">support@nolune.dev</a>.</p>
 		</div>
 	</div>
 

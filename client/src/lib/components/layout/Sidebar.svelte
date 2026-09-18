@@ -41,7 +41,7 @@
 			<span class="text-sm font-bold text-warm">B</span>
 		</div>
 		<span class="font-display text-base font-bold tracking-tight text-sidebar-foreground">
-			bolly
+			nolune
 		</span>
 		<div class="ml-auto">
 			<div

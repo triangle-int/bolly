@@ -1369,7 +1369,7 @@ impl Tool for UpdateConfigTool {
                             request_id: uuid::Uuid::new_v4().to_string(),
                             action: "bash".into(),
                             params: serde_json::json!({
-                                "command": "pkill -f 'ffmpeg.*bolly_screen' 2>/dev/null; echo stopped"
+                                "command": "pkill -f 'ffmpeg.*nolune_screen' 2>/dev/null; echo stopped"
                             }),
                         };
                         let _ = registry.execute(&m.machine_id, stop).await;

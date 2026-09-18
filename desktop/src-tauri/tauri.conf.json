@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "Bolly",
+  "productName": "Nolune",
   "version": "0.33.0",
-  "identifier": "com.triangle-int.bolly-desktop",
+  "identifier": "com.triangle-int.nolune-desktop",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -21,7 +21,7 @@
     "updater": {
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDg2QzhFRjE0NUFDQzY0OQpSV1JKeHF4RjhZNXNDTi90c1o4L3JSdWtJeWdZQnFRUHR2dGV5eVk3Ull5U2ppbVhCZVd6dGhRaQo=",
       "endpoints": [
-        "https://github.com/triangle-int/bolly/releases/latest/download/latest.json"
+        "https://github.com/triangle-int/nolune/releases/latest/download/latest.json"
       ]
     }
   },

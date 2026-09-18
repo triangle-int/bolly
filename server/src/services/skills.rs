@@ -291,7 +291,7 @@ async fn download_github_dir(
 
     let resp = client
         .get(&url)
-        .header("User-Agent", "bolly-skills-installer")
+        .header("User-Agent", "nolune-skills-installer")
         .header("Accept", "application/vnd.github.v3+json")
         .send()
         .await?;
@@ -312,7 +312,7 @@ async fn download_github_dir(
                 if let Some(download_url) = &item.download_url {
                     let file_resp = client
                         .get(download_url)
-                        .header("User-Agent", "bolly-skills-installer")
+                        .header("User-Agent", "nolune-skills-installer")
                         .send()
                         .await?;
                     if file_resp.status().is_success() {

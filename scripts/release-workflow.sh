@@ -19,7 +19,7 @@ case "${1:?Expected release or publish}" in
       # A concurrent run may have created the release after our lookup.
       if ! gh release create "$RELEASE_TAG" \
         --repo "$GH_REPO" \
-        --title "Bolly $RELEASE_TAG" \
+        --title "Nolune $RELEASE_TAG" \
         --notes "$body" \
         --draft; then
         release_id > /dev/null

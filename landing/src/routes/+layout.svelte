@@ -9,7 +9,7 @@
 </script>
 
 <svelte:head>
-	<title>Bolly — Your AI, with a computer of its own</title>
+	<title>Nolune — Your AI, with a computer of its own</title>
 	<meta name="description" content="Run one persistent AI companion on an always-on computer, connect your other devices, and ask it to work across them from one interface." />
 	<meta name="theme-color" content="#090a0d" />
 	<link rel="icon" href={favicon} />

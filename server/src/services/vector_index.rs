@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
 const FORMAT_VERSION: u32 = 2;
-const MAGIC: &[u8; 8] = b"BOLLYVIX";
+const MAGIC: &[u8; 9] = b"NOLUNEVIX";
 const HEADER_BYTES: usize = MAGIC.len() + 8 + 32;
 const MAX_INDEX_FILE_BYTES: usize = 128 * 1024 * 1024;
 const MAX_PAYLOAD_BYTES: usize = MAX_INDEX_FILE_BYTES - HEADER_BYTES;

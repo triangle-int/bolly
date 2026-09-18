@@ -52,7 +52,7 @@ async fn main() {
         log::warn!(
             "public_url not set — defaulting to {}. \
              If running on a remote server, set public_url in config.toml \
-             or BOLLY_PUBLIC_URL env var to your public address.",
+             or NOLUNE_PUBLIC_URL env var to your public address.",
             config.public_url
         );
     }

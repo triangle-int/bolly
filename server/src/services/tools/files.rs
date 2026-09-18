@@ -26,7 +26,7 @@ impl ReadFileTool {
             instance_dir: workspace_dir.join("instances").join(instance_slug),
             instance_slug: instance_slug.to_string(),
             public_url: public_url.to_string(),
-            auth_token: std::env::var("BOLLY_AUTH_TOKEN").unwrap_or_default(),
+            auth_token: std::env::var("NOLUNE_AUTH_TOKEN").unwrap_or_default(),
         }
     }
 
@@ -421,7 +421,7 @@ impl UploadFileTool {
             workspace_dir: workspace_dir.to_path_buf(),
             instance_slug: instance_slug.to_string(),
             public_url: public_url.to_string(),
-            auth_token: std::env::var("BOLLY_AUTH_TOKEN").unwrap_or_default(),
+            auth_token: std::env::var("NOLUNE_AUTH_TOKEN").unwrap_or_default(),
         }
     }
 }

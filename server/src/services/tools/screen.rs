@@ -148,7 +148,7 @@ impl Tool for CollectScreenRecordingTool {
         );
 
         // 2. Write frames to temp dir
-        let tmp_dir = format!("/tmp/bolly_frames_{}", std::process::id());
+        let tmp_dir = format!("/tmp/nolune_frames_{}", std::process::id());
         let _ = std::fs::create_dir_all(&tmp_dir);
 
         for (i, frame) in frames.iter().enumerate() {

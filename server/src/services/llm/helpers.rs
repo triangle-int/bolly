@@ -553,13 +553,13 @@ pub fn load_system_prompt(workspace_dir: &Path, instance_slug: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_multimodal_prompt, ContentBlock, Message};
+    use super::{ContentBlock, Message, build_multimodal_prompt};
     use crate::services::uploads::{get_upload_file_path, save_upload};
 
     #[test]
     fn media_attachment_prompts_preserve_metadata_and_video_guidance() {
         let workspace =
-            std::env::temp_dir().join(format!("bolly-media-test-{}", uuid::Uuid::new_v4()));
+            std::env::temp_dir().join(format!("nolune-media-test-{}", uuid::Uuid::new_v4()));
         for (name, mime, kind) in [
             ("voice.mp3", "audio/mpeg", "audio"),
             ("voice.wav", "audio/wav", "audio"),

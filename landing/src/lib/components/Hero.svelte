@@ -3,16 +3,16 @@
 		<div class="copy">
 			<p class="eyebrow">Open source · self-hosted · always present</p>
 			<h1 id="hero-title">Your AI, with a computer of its own.</h1>
-			<p class="lede">Run Bolly on an always-on computer, connect your other devices, and ask it to work across them from one interface.</p>
-			<div class="actions"><a class="btn-primary" href="#install">Install Bolly <span>↓</span></a><a class="btn-secondary" href="https://github.com/triangle-int/bolly" target="_blank" rel="noopener">View on GitHub ↗</a></div>
+			<p class="lede">Run Nolune on an always-on computer, connect your other devices, and ask it to work across them from one interface.</p>
+			<div class="actions"><a class="btn-primary" href="#install">Install Nolune <span>↓</span></a><a class="btn-secondary" href="https://github.com/triangle-int/nolune" target="_blank" rel="noopener">View on GitHub ↗</a></div>
 			<div class="proof"><span>MIT licensed</span><span>macOS + Linux server</span><span>Desktop apps</span></div>
 		</div>
 
-		<div class="system" aria-label="Bolly connected computer system">
+		<div class="system" aria-label="Nolune connected computer system">
 			<div class="wire wire-a"></div><div class="wire wire-b"></div>
-			<div class="machine home"><span class="status-dot"></span><div><strong>Mac mini · home</strong><small>ONLINE · BOLLY BRAIN</small></div></div>
+			<div class="machine home"><span class="status-dot"></span><div><strong>Mac mini · home</strong><small>ONLINE · NOLUNE BRAIN</small></div></div>
 			<div class="orb-wrap">
-				<picture><source media="(prefers-reduced-motion: reduce)" srcset="/assets/hero-orb.webp" /><img class="poster" src="/assets/hero-orb.webp" alt="Bolly's amber liquid-glass orb" /></picture>
+				<picture><source media="(prefers-reduced-motion: reduce)" srcset="/assets/hero-orb.webp" /><img class="poster" src="/assets/hero-orb.webp" alt="Nolune's amber liquid-glass orb" /></picture>
 				<video class="orb-video" autoplay muted loop playsinline preload="auto" poster="/assets/hero-orb.webp" aria-hidden="true"><source src="/assets/hero-orb-connected.mp4" type="video/mp4" /></video>
 				<div class="core-label"><span></span> ONE MIND · ACTIVE</div>
 			</div>
