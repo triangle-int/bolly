@@ -99,7 +99,11 @@
 
 {#if showReborn}
 	<div class="reborn-overlay">
-		<video class="reborn-video" src={clipSrc(skinStore.skin.clips.reborn)} autoplay muted playsinline></video>
+		{#if skinStore.skin.avatar}
+			<img class="reborn-video" src={skinStore.skin.avatar.idle} alt="Nolune is ready" />
+		{:else}
+			<video class="reborn-video" src={clipSrc(skinStore.skin.clips.reborn)} autoplay muted playsinline></video>
+		{/if}
 		<div class="reborn-text">meet the new me</div>
 	</div>
 {/if}
