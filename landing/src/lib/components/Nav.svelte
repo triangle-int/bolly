@@ -32,8 +32,7 @@
 			<li><a href="/skills" class="nav-link">Skills</a></li>
 			<li><a href="/docs" class="nav-link">Docs</a></li>
 			<li><a href="https://github.com/triangle-int/bolly" target="_blank" rel="noopener" class="nav-link">GitHub</a></li>
-			<li><a href="/login" class="nav-link">Log in</a></li>
-			<li><a href="/signup" class="nav-cta">Get started</a></li>
+			<li><a href="/#pricing" class="nav-cta">Get started</a></li>
 		</ul>
 
 		<!-- mobile toggle -->
@@ -58,8 +57,7 @@
 		<a href="/docs" class="mobile-link">Docs</a>
 		<a href="https://github.com/triangle-int/bolly" target="_blank" rel="noopener" class="mobile-link">GitHub</a>
 		<div class="mobile-divider"></div>
-		<a href="/login" class="mobile-link">Log in</a>
-		<a href="/signup" class="mobile-cta">Get started</a>
+		<a href="/#pricing" class="mobile-cta">Get started</a>
 	</div>
 {/if}
 

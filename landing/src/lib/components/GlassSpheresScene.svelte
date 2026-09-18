@@ -306,16 +306,9 @@
 
 	// ── Steps data ──
 	const steps = [
-		{ num: '01', title: 'sign up', desc: 'Pick a plan. Your environment spins up in seconds.' },
+		{ num: '01', title: 'install', desc: 'Run Bolly on your own machine.' },
 		{ num: '02', title: 'shape who they are', desc: 'Choose a personality or write your own.' },
 		{ num: '03', title: 'just talk', desc: 'They remember everything. Their mood shifts. They grow.' },
-	];
-
-	// ── Plans data ──
-	const plans = [
-		{ name: 'starter', price: '$12', desc: 'See if it clicks', features: ['1M tokens/mo', '10 GB', 'Mood tracking'] },
-		{ name: 'companion', price: '$29', desc: 'For everyday life', features: ['3M tokens/mo', '20 GB', 'Web browsing', 'Email'], featured: true },
-		{ name: 'real friend', price: '$59', desc: 'No limits', features: ['10M tokens/mo', '50 GB', 'Web browsing', 'Early access'] },
 	];
 
 	// ── Scroll & mouse ──
@@ -378,7 +371,6 @@
 			}
 			backingDefs.push({ id: 'demo', x: -4, y: Y.demo + 1, s: 0.7 });
 			for (let i = 0; i < 3; i++) backingDefs.push({ id: `step-${i}`, x: -5 + i * 5, y: Y.how - 0.5, s: 0.5 });
-			for (let i = 0; i < 3; i++) backingDefs.push({ id: `price-${i}`, x: -5 + i * 5, y: Y.pricing - 0.5, s: 0.5 });
 
 			let count = 0;
 			for (const def of backingDefs) {
@@ -629,7 +621,7 @@
 <Text text="Not a chatbot. A presence that remembers your goals, notices your mood, helps you study, and checks in when you've been quiet too long." font={bricolage} fontSize={0.32} color={dim} anchorX="center" anchorY="top" position={[0, Y.hero - 1, 0]} maxWidth={11} textAlign="center" lineHeight={1.5} />
 
 <HTML transform pointerEvents="auto" position={[0, Y.hero - 3.5, 0]} scale={0.7}>
-	<a href="#pricing" style="display:inline-flex;align-items:center;gap:0.5rem;padding:0.75rem 1.75rem;border-radius:2rem;background:oklch(1 0 0 / 5%);backdrop-filter:blur(20px) saturate(160%) brightness(1.06);border:1px solid oklch(1 0 0 / 10%);color:#c4a265;font-family:'Bricolage Grotesque',sans-serif;font-size:0.875rem;font-weight:500;text-decoration:none;">Meet yours →</a>
+	<a href="/docs" style="display:inline-flex;align-items:center;gap:0.5rem;padding:0.75rem 1.75rem;border-radius:2rem;background:oklch(1 0 0 / 5%);backdrop-filter:blur(20px) saturate(160%) brightness(1.06);border:1px solid oklch(1 0 0 / 10%);color:#c4a265;font-family:'Bricolage Grotesque',sans-serif;font-size:0.875rem;font-weight:500;text-decoration:none;">Meet yours →</a>
 </HTML>
 
 <!-- ═══════════════════════════════════════
@@ -695,36 +687,6 @@
 {/each}
 
 <!-- ═══════════════════════════════════════
-     PRICING
-     ═══════════════════════════════════════ -->
-
-<Text text="Pricing" font={bricolage} fontSize={0.22} color={warm} anchorX="center" anchorY="middle" position={[0, Y.pricing + 5, 0]} letterSpacing={0.15} />
-<Text text="simple, transparent" font={fraunces} fontSize={1.0} color={text} anchorX="center" anchorY="middle" position={[0, Y.pricing + 3.5, 0]} textAlign="center" />
-
-{#each plans as plan, i}
-	<HTML transform occlude="blending" pointerEvents="auto" position={[-5 + i * 5, Y.pricing - 0.5, 0]} scale={0.5}>
-		<div data-backing="price-{i}" style="width:300px;padding:1.75rem;border-radius:0;background:rgba(255,255,255,{plan.featured ? '0.05' : '0.03'});border:1px solid {plan.featured ? 'oklch(0.78 0.12 75 / 15%)' : 'rgba(255,255,255,0.06)'};backdrop-filter:blur(12px);position:relative;">
-			{#if plan.featured}
-				<div style="position:absolute;top:0.4rem;left:50%;transform:translateX(-50%);font-size:0.7rem;letter-spacing:0.1em;text-transform:uppercase;padding:0.2rem 0.7rem;border-radius:0;background:oklch(0.78 0.12 75 / 10%);border:1px solid oklch(0.78 0.12 75 / 15%);color:#c4a265;font-family:'Bricolage Grotesque',sans-serif;">popular</div>
-			{/if}
-			<div style="font-family:'Fraunces',serif;font-style:italic;font-size:1.2rem;color:#e6dcc8;">{plan.name}</div>
-			<div style="font-size:0.7rem;color:#55504a;margin-bottom:1rem;font-family:'Bricolage Grotesque',sans-serif;">{plan.desc}</div>
-			<div style="display:flex;align-items:baseline;gap:0.2rem;margin-bottom:0.25rem;">
-				<span style="font-size:1rem;color:#8a8070;">$</span>
-				<span style="font-family:'Fraunces',serif;font-style:italic;font-size:2.8rem;color:#e6dcc8;line-height:1;">{plan.price.replace('$','')}</span>
-			</div>
-			<div style="font-size:0.75rem;color:#55504a;margin-bottom:1.25rem;font-family:'Bricolage Grotesque',sans-serif;">per month</div>
-			{#each plan.features as feat}
-				<div style="font-size:0.75rem;color:#8a8070;margin-bottom:0.3rem;display:flex;align-items:center;gap:0.4rem;font-family:'Bricolage Grotesque',sans-serif;">
-					<span style="width:3px;height:3px;border-radius:50%;background:oklch(1 0 0 / 15%);"></span>{feat}
-				</div>
-			{/each}
-			<a href="/signup" style="display:block;text-align:center;margin-top:1.25rem;padding:0.65rem;border-radius:0;font-size:0.75rem;font-family:'Bricolage Grotesque',sans-serif;text-decoration:none;background:{plan.featured ? 'oklch(0.78 0.12 75 / 10%)' : 'rgba(255,255,255,0.03)'};border:1px solid {plan.featured ? 'rgba(196,162,101,0.18)' : 'rgba(255,255,255,0.06)'};color:{plan.featured ? '#c4a265' : '#8a8070'};">Get started</a>
-		</div>
-	</HTML>
-{/each}
-
-<!-- ═══════════════════════════════════════
      CTA
      ═══════════════════════════════════════ -->
 
@@ -733,7 +695,7 @@
 <Text text="They'll remember what matters to you, notice how you're feeling, and be there at 3am when no one else is." font={bricolage} fontSize={0.26} color={dim} anchorX="center" anchorY="top" position={[0, Y.cta - 0.2, 0]} maxWidth={10} textAlign="center" lineHeight={1.5} />
 
 <HTML transform pointerEvents="auto" position={[0, Y.cta - 2, 0]} scale={0.7}>
-	<a href="#pricing" style="display:inline-flex;align-items:center;gap:0.5rem;padding:0.75rem 1.75rem;border-radius:2rem;background:oklch(1 0 0 / 5%);backdrop-filter:blur(20px) saturate(160%) brightness(1.06);border:1px solid oklch(1 0 0 / 10%);color:#c4a265;font-family:'Bricolage Grotesque',sans-serif;font-size:0.875rem;font-weight:500;text-decoration:none;">Meet yours →</a>
+	<a href="/docs" style="display:inline-flex;align-items:center;gap:0.5rem;padding:0.75rem 1.75rem;border-radius:2rem;background:oklch(1 0 0 / 5%);backdrop-filter:blur(20px) saturate(160%) brightness(1.06);border:1px solid oklch(1 0 0 / 10%);color:#c4a265;font-family:'Bricolage Grotesque',sans-serif;font-size:0.875rem;font-weight:500;text-decoration:none;">Meet yours →</a>
 </HTML>
 
 <!-- ═══════════════════════════════════════
