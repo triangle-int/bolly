@@ -6,7 +6,6 @@ pub mod config;
 pub mod daily_stats;
 pub mod drop;
 pub mod events;
-pub mod instance;
 pub mod memory;
 pub mod meta;
 pub mod mood;

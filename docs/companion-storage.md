@@ -82,9 +82,17 @@ only accepted value is `companion`, matched exactly.
 - `GET`, `HEAD`, `OPTIONS`, and `DELETE` on the canonical slug never create
   storage. Any other method creates-or-opens the companion by writing the
   identity marker first.
-- `GET /api/instances` returns `[]` until the companion exists, then exactly
-  one summary. `GET /api/meta` reports `companion_slug` and
-  `instances_count` (`0` or `1`).
+- `GET /api/companion` returns the one companion context:
+  `{"slug":"companion","exists":false,"companion_name":"","soul_exists":false}`
+  until onboarding creates it, then `exists: true` with its name. `GET /api/meta`
+  reports `companion_slug` and `instances_count` (`0` or `1`).
+- The multi-instance listing (`GET /api/instances`) and companion deletion
+  (`DELETE /api/instances/{slug}`) were removed in #104. They, and any other
+  unknown `/api/*` path, answer `404 {"error":"not_found"}` after
+  authentication instead of serving the web client shell.
+- The client never mints a slug: `/` opens `/companion`, and a stale
+  `/{other}/…` URL redirects to `/companion/…` keeping its chat or settings
+  context.
 - Server events (`instance_slug` fields), resource capabilities
   (`instance_slug`), and machine registrations (`MachineInfo.instance_slug`)
   always carry `companion`. A machine registration that names any other slug

@@ -12,11 +12,10 @@ use tokio::sync::broadcast;
 use crate::{
     domain::chat::{ChatMessage, ChatResponse, ChatRole},
     domain::events::ServerEvent,
-    domain::instance::InstanceSummary,
     services::{
         daily_stats,
         llm::{self, LlmBackend},
-        memory, skills, tools, workspace,
+        memory, skills, tools,
     },
 };
 
@@ -1019,16 +1018,6 @@ pub fn update_chat_title(
     let body = serde_json::to_string_pretty(&meta)
         .map_err(|e| io::Error::new(ErrorKind::InvalidData, e))?;
     fs::write(meta_path, body)
-}
-
-pub fn discover_instance(
-    workspace_dir: &Path,
-    instance_slug: &str,
-) -> io::Result<Option<InstanceSummary>> {
-    let path = workspace_dir
-        .join("instances")
-        .join(sanitize_slug(instance_slug));
-    Ok(workspace::summarize_instance(&path))
 }
 
 // ---------------------------------------------------------------------------

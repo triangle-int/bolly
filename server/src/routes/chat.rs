@@ -82,13 +82,6 @@ async fn post_chat(
         message: user_message.clone(),
     });
 
-    // Discover instance
-    if let Ok(Some(instance)) = chat::discover_instance(&state.workspace_dir, &instance_slug) {
-        let _ = state
-            .events
-            .send(ServerEvent::InstanceDiscovered { instance });
-    }
-
     let key = task_key(&instance_slug, &chat_id);
 
     // If an agent is already running for this chat, don't start another one.

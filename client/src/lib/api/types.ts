@@ -35,13 +35,12 @@ export interface ChatSummary {
 	created_at: string;
 }
 
-export interface InstanceSummary {
+/** The one companion this server owns; `exists` is false until onboarding created it. */
+export interface CompanionContext {
 	slug: string;
+	exists: boolean;
 	companion_name: string;
 	soul_exists: boolean;
-	drops_count: number;
-	has_memory: boolean;
-	has_skin: boolean;
 }
 
 export interface LlmSummary {
@@ -239,10 +238,6 @@ export type ServerEvent =
 			instance_slug: string;
 			chat_id: string;
 			message: ChatMessage;
-	  }
-	| {
-			type: "instance_discovered";
-			instance: InstanceSummary;
 	  }
 	| {
 			type: "mood_updated";

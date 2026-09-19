@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod chat;
+pub mod companion;
 pub mod config;
 pub mod drops;
 

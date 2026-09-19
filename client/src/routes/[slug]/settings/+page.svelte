@@ -39,12 +39,41 @@
 		fetchSuggestedMcp,
 		updateLlmConfig,
 		updateProvider,
+		fetchMeta,
+		fetchChangelog,
+		getUpdateChannel,
+		setUpdateChannel,
 		type ScheduledTask,
+		type ChangelogEntry,
 	} from "$lib/api/client.js";
+	import DOMPurify from "dompurify";
+	import { Marked } from "marked";
+	import { getToasts } from "$lib/stores/toast.svelte.js";
 	import type { McpServerInfo, EmailConfig } from "$lib/api/client.js";
 	import { SKINS } from "$lib/stores/skin.svelte.js";
 
 	const slug = $derived(page.params.slug!);
+
+	// --- updates (version, channel, what's new) ---
+	let version = $state("");
+	let commit = $state("");
+	let channel = $state("stable");
+	let channelSaving = $state(false);
+	let changelog = $state<ChangelogEntry[]>([]);
+	let showChangelog = $state(false);
+	const changelogMd = new Marked({ breaks: true, gfm: true });
+	$effect(() => {
+		fetchMeta().then((meta) => { version = meta.version; commit = meta.commit; }).catch(() => {});
+		getUpdateChannel().then((r) => (channel = r.channel)).catch(() => {});
+		fetchChangelog().then((c) => (changelog = c)).catch(() => {});
+	});
+	async function changeChannel(next: string) {
+		if (!next || channelSaving) return;
+		channelSaving = true;
+		try { await setUpdateChannel(next); channel = next; }
+		catch { getToasts().error("Could not change update channel."); }
+		finally { channelSaving = false; }
+	}
 
 	// --- suggested extensions (loaded from server) ---
 	interface SuggestedMcp {
@@ -671,6 +700,47 @@
 		{/if}
 	</section>
 
+	<!-- Updates -->
+	<section class="settings-section">
+		<div class="section-header">
+			<div>
+				<h3 class="section-label">Updates</h3>
+				<p class="section-desc">Version, release channel, and what changed.</p>
+			</div>
+		</div>
+
+		<div class="setting-row">
+			<span class="setting-label">Version</span>
+			<span class="dim-text">{version ? `v${version}` : "…"}{commit && commit !== "dev" ? ` · ${commit.slice(0, 7)}` : ""}</span>
+		</div>
+
+		<div class="setting-row">
+			<span class="setting-label" id="update-channel-label">Release channel</span>
+			<Select.Root type="single" value={channel} onValueChange={changeChannel} disabled={channelSaving}>
+				<Select.Trigger aria-labelledby="update-channel-label" class="h-11 w-40"><span>{channel === "nightly" ? "Nightly" : "Stable"}</span></Select.Trigger>
+				<Select.Content class="z-[210]"><Select.Item value="stable" class="min-h-11">Stable</Select.Item><Select.Item value="nightly" class="min-h-11">Nightly</Select.Item></Select.Content>
+			</Select.Root>
+		</div>
+
+		{#if changelog.length > 0}
+			<div class="setting-row">
+				<button class="setting-btn" onclick={() => (showChangelog = !showChangelog)} aria-expanded={showChangelog}>
+					{showChangelog ? "Hide what’s new" : "What’s new"}
+				</button>
+				{#if showChangelog}
+					<div class="changelog-list">
+						{#each changelog.slice(0, 5) as entry (entry.version)}
+							<div class="changelog-entry">
+								<div class="changelog-version">{entry.version}</div>
+								<div class="changelog-body">{@html DOMPurify.sanitize(changelogMd.parse(entry.body) as string)}</div>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</div>
+		{/if}
+	</section>
+
 	<!-- Skin -->
 	<section class="settings-section">
 		<div class="section-header">
@@ -1272,7 +1342,7 @@
 					disabled={importing}
 				/>
 		</div>
-		<p class="data-hint">Export downloads a .tar.gz of all instance data (soul, memory, drops, chat history). import merges into the current instance.</p>
+		<p class="data-hint">Export downloads a .tar.gz of your companion’s data (soul, memory, drops, chat history). Import merges into your companion.</p>
 
 		<div class="data-actions" style="margin-top: 0.75rem;">
 			<button
@@ -1810,4 +1880,10 @@
     .integration-field input { width: 100%; }
     .data-btn { display: inline-flex; align-items: center; justify-content: center; }
     .section-icon { display: flex; width: 40px; height: 40px; flex: 0 0 40px; align-items: center; justify-content: center; color: var(--primary); background: var(--accent); border: 1px solid var(--border); border-radius: 8px; }
+	.changelog-list { display: flex; flex-direction: column; gap: 16px; margin-top: 12px; }
+	.changelog-entry { padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+	.changelog-version { font: 500 13px var(--font-mono); color: var(--primary); margin-bottom: 8px; }
+	.changelog-body { font: 400 14px/1.6 var(--font-body); color: var(--text-secondary); }
+	.changelog-body :global(p) { margin: 0 0 8px; }
+	.changelog-body :global(ul) { margin: 0 0 8px; padding-left: 18px; }
 </style>

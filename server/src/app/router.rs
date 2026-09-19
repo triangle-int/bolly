@@ -1,6 +1,12 @@
 use std::path::PathBuf;
 
-use axum::{Router, middleware};
+use axum::{
+    Json, Router,
+    http::StatusCode,
+    middleware,
+    response::{IntoResponse, Response},
+    routing::any,
+};
 use tower_http::services::{ServeDir, ServeFile};
 
 use crate::{app::state::AppState, routes};
@@ -10,6 +16,7 @@ use super::{auth::auth_middleware, companion_boundary::companion_boundary};
 fn api_router(state: &AppState) -> Router<AppState> {
     Router::new()
         .merge(routes::meta::router())
+        .merge(routes::companion::router())
         .merge(routes::resources::issuance_router())
         .merge(routes::instances::router())
         .merge(routes::chat::router())
@@ -26,6 +33,8 @@ fn api_router(state: &AppState) -> Router<AppState> {
         .merge(routes::memory_import::router())
         .merge(routes::agents::router())
         .merge(routes::machine_agents::router())
+        // Removed or unknown API paths answer 404 JSON instead of the SPA shell.
+        .route("/api/{*rest}", any(api_not_found))
         // Inner: admit only the canonical companion once the caller is authenticated.
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
@@ -35,6 +44,17 @@ fn api_router(state: &AppState) -> Router<AppState> {
             state.clone(),
             auth_middleware,
         ))
+}
+
+async fn api_not_found() -> Response {
+    (
+        StatusCode::NOT_FOUND,
+        Json(serde_json::json!({
+            "error": "not_found",
+            "message": "no such API route",
+        })),
+    )
+        .into_response()
 }
 
 pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {

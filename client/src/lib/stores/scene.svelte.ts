@@ -9,7 +9,6 @@
  */
 
 import { getContext, setContext } from "svelte";
-import type { InstanceSummary } from "$lib/api/types.js";
 
 const SCENE_KEY = Symbol("scene");
 
@@ -18,9 +17,6 @@ export type IntroPhase = "idle" | "rising" | "traveling" | "settling" | "done";
 
 export interface SceneStore {
 	readonly mode: SceneMode;
-	readonly instances: InstanceSummary[];
-	hoveredSlug: string | null;
-	pendingSelect: string | null;
 	readonly selectedSlug: string | null;
 	readonly introProgress: number;
 	readonly introPhase: IntroPhase;
@@ -31,8 +27,6 @@ export interface SceneStore {
 	presenting: boolean;
 	recalledMemories: {path: string; preview: string; score: number}[];
 
-	setInstances(list: InstanceSummary[]): void;
-	selectInstance(slug: string): void;
 	enterHome(): void;
 	enterOnboarding(slug: string): void;
 	finishOnboarding(): void;
@@ -54,9 +48,6 @@ const PHASE_SETTLING = 3.5;
 
 export function createSceneStore(): SceneStore {
 	let mode = $state<SceneMode>("home");
-	let instances = $state<InstanceSummary[]>([]);
-	let hoveredSlug = $state<string | null>(null);
-	let pendingSelect = $state<string | null>(null);
 	let selectedSlug = $state<string | null>(null);
 	let introProgress = $state(0);
 	let introPhase = $state<IntroPhase>("idle");
@@ -99,11 +90,6 @@ export function createSceneStore(): SceneStore {
 
 	const store: SceneStore = {
 		get mode() { return mode; },
-		get instances() { return instances; },
-		get hoveredSlug() { return hoveredSlug; },
-		set hoveredSlug(v) { hoveredSlug = v; },
-		get pendingSelect() { return pendingSelect; },
-		set pendingSelect(v) { pendingSelect = v; },
 		get selectedSlug() { return selectedSlug; },
 		get introProgress() { return introProgress; },
 		get introPhase() { return introPhase; },
@@ -115,18 +101,6 @@ export function createSceneStore(): SceneStore {
 		set presenting(v) { presenting = v; },
 		get recalledMemories() { return recalledMemories; },
 		set recalledMemories(v) { recalledMemories = v; },
-
-		setInstances(list) { instances = list; },
-
-		selectInstance(slug: string) {
-			if (mode !== "home") return;
-			selectedSlug = slug;
-			mode = "selecting";
-			selectStartTime = performance.now();
-			selectProgress = 0;
-			pendingSelect = slug;
-			introPlayedSlugs.add(slug);
-		},
 
 		enterHome() {
 			if (mode === "selecting" || mode === "intro") return;

@@ -59,11 +59,8 @@
 
 		const m = store.mode;
 		const sel = store.selectedSlug;
-		const instances = store.instances;
-
-		// Build slug list
-		const slugs: string[] = instances.map(i => i.slug);
-		if (sel && !slugs.includes(sel)) slugs.push(sel);
+		// One companion per server: the only orb is the selected companion.
+		const slugs: string[] = sel ? [sel] : [];
 
 		// Ensure orbs array matches slugs
 		const existing = new Map(orbs.map(o => [o.slug, o]));
@@ -71,22 +68,14 @@
 			return existing.get(slug) ?? { slug, x: 50, y: 50, size: 0, opacity: 0, visible: false };
 		});
 
-		// Home positions
-		const count = instances.length;
-		const spacing = 1.4;
-		const totalW = (count - 1) * spacing;
-		const startX = -totalW / 2;
 		const homePositions = new Map<string, number>();
-		instances.forEach((inst, i) => {
-			homePositions.set(inst.slug, startX + i * spacing);
-		});
 
 		const useLerp = m === "home" || m === "chat" || m === "onboarding";
 		const lerpF = Math.min(delta * 6, 1);
 
 		for (const orb of newOrbs) {
 			const isSelected = orb.slug === sel;
-			const isHovered = orb.slug === store.hoveredSlug;
+			const isHovered = false;
 			const homeX = homePositions.get(orb.slug) ?? 0;
 
 			let tx = 50 + homeX * WORLD_TO_PCT;
@@ -191,50 +180,15 @@
 		if (raf) cancelAnimationFrame(raf);
 	});
 
-	function hitTestOrb(clientX: number, clientY: number): string | null {
-		if (!container) return null;
-		for (const orb of orbs) {
-			if (!orb.visible) continue;
-			const rect = container.getBoundingClientRect();
-			const orbCx = rect.left + rect.width * orb.x / 100;
-			const orbCy = rect.top + rect.height * orb.y / 100;
-			const dx = clientX - orbCx;
-			const dy = clientY - orbCy;
-			const hitRadius = orb.size * 0.22;
-			if (Math.sqrt(dx * dx + dy * dy) <= hitRadius) return orb.slug;
-		}
-		return null;
-	}
 
-	function handleSceneMove(e: MouseEvent) {
-		if (store.mode !== "home" || !container) return;
-		const hit = hitTestOrb(e.clientX, e.clientY);
-		store.hoveredSlug = hit;
-		(e.currentTarget as HTMLElement).style.cursor = hit ? 'pointer' : 'default';
-	}
-
-	function handleSceneClick(e: MouseEvent) {
-		if (store.mode !== "home") return;
-		const hit = hitTestOrb(e.clientX, e.clientY);
-		if (hit) store.selectInstance(hit);
-	}
 </script>
 
 <div class="scene-root" bind:this={container}>
-{#if store.mode === 'home'}
-	<div class="hit-layer"
-		role="none"
-		onmousemove={handleSceneMove}
-		onclick={handleSceneClick}
-		onmouseleave={() => { store.hoveredSlug = null; if (container) container.style.cursor = 'default'; }}
-	></div>
-{/if}
 	{#each orbs as orb (orb.slug)}
 		{#if orb.visible}
 			<button
 				class="orb-btn"
 				aria-label={orb.slug}
-				onclick={() => { if (store.mode === "home") store.selectInstance(orb.slug); }}
 				style="left: {orb.x}%; top: {orb.y}%; width: {orb.size}px; height: {orb.size}px; opacity: {orb.opacity};"
 				disabled={store.mode !== "home"}
 			>
@@ -290,12 +244,6 @@
 		pointer-events: none;
 	}
 
-	.hit-layer {
-		position: absolute;
-		inset: 0;
-		pointer-events: auto;
-		z-index: 10;
-	}
 
 	.orb-btn {
 		display:flex;align-items:center;justify-content:center;

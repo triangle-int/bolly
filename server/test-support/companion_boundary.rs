@@ -129,34 +129,81 @@ impl Harness {
 }
 
 #[tokio::test]
-async fn listing_and_meta_report_only_the_canonical_companion() {
+async fn companion_context_and_meta_report_only_the_canonical_companion() {
     let h = harness().await;
 
-    let (status, list) = h.json(Method::GET, "/api/instances", None).await;
+    let (status, context) = h.json(Method::GET, "/api/companion", None).await;
     assert_eq!(status, StatusCode::OK);
-    assert_eq!(list, serde_json::json!([]));
+    assert_eq!(
+        context,
+        serde_json::json!({
+            "slug": CANONICAL_SLUG,
+            "exists": false,
+            "companion_name": "",
+            "soul_exists": false,
+        })
+    );
 
     h.seed_obsolete("alice");
     h.seed_obsolete("bob");
-    let (_, list) = h.json(Method::GET, "/api/instances", None).await;
+    let (_, context) = h.json(Method::GET, "/api/companion", None).await;
     assert_eq!(
-        list,
-        serde_json::json!([]),
-        "obsolete directories are never listed"
+        context["exists"], false,
+        "obsolete directories never stand in for the companion"
     );
+    assert_eq!(context["slug"], CANONICAL_SLUG);
     let (_, meta) = h.json(Method::GET, "/api/meta", None).await;
     assert_eq!(meta["instances_count"], 0);
     assert_eq!(meta["companion_slug"], CANONICAL_SLUG);
 
     companion::ensure_identity(h.workspace.path()).unwrap();
-    let (_, list) = h.json(Method::GET, "/api/instances", None).await;
-    assert_eq!(list.as_array().map(Vec::len), Some(1));
-    assert_eq!(list[0]["slug"], CANONICAL_SLUG);
+    let (_, context) = h.json(Method::GET, "/api/companion", None).await;
+    assert_eq!(context["exists"], true);
+    assert_eq!(context["slug"], CANONICAL_SLUG);
     let (_, meta) = h.json(Method::GET, "/api/meta", None).await;
     assert_eq!(meta["instances_count"], 1);
 
     h.assert_obsolete_untouched("alice");
     h.assert_obsolete_untouched("bob");
+}
+
+#[tokio::test]
+async fn multi_instance_routes_are_gone_and_unknown_api_paths_are_404_json() {
+    let h = harness().await;
+    companion::ensure_identity(h.workspace.path()).unwrap();
+    fs::write(h.companion().join("soul.md"), "keep me").unwrap();
+
+    for (method, uri) in [
+        (Method::GET, "/api/instances"),
+        (Method::DELETE, "/api/instances/companion"),
+        (Method::GET, "/api/instances/companion"),
+        (Method::GET, "/api/no-such-route"),
+        (Method::DELETE, "/api/instances/alice"),
+    ] {
+        let label = format!("{method} {uri}");
+        let (status, value) = h.json(method, uri, None).await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{label}");
+        assert_eq!(value["error"], "not_found", "{label}");
+    }
+
+    assert_eq!(
+        fs::read_to_string(h.companion().join("soul.md")).unwrap(),
+        "keep me",
+        "a removed delete route must not delete anything"
+    );
+    assert_eq!(h.instance_dirs(), vec![CANONICAL_SLUG]);
+
+    // Authentication still runs before the API 404 fallback.
+    let response = build_router(h.state.clone(), None)
+        .oneshot(
+            Request::builder()
+                .uri("/api/instances")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
 }
 
 #[tokio::test]
@@ -190,7 +237,6 @@ async fn foreign_slugs_fail_closed_on_every_surface_without_side_effects() {
         (Method::GET, "/api/instances/alice/memory", None),
         (Method::GET, "/api/instances/alice/export", None),
         (Method::GET, "/api/instances/alice/scheduled", None),
-        (Method::DELETE, "/api/instances/alice", None),
         (Method::POST, "/api/instances/alice/machine-hello", None),
         (Method::GET, "/api/chat/alice/chats", None),
         (
@@ -272,11 +318,11 @@ async fn canonical_reads_open_nothing_and_canonical_writes_create_the_one_compan
         .await;
     assert_eq!(status, StatusCode::OK);
 
-    let (_, list) = h.json(Method::GET, "/api/instances", None).await;
-    assert_eq!(list.as_array().map(Vec::len), Some(1));
-    assert_eq!(list[0]["slug"], CANONICAL_SLUG);
-    assert_eq!(list[0]["companion_name"], "Luna");
-    assert_eq!(list[0]["soul_exists"], true);
+    let (_, context) = h.json(Method::GET, "/api/companion", None).await;
+    assert_eq!(context["slug"], CANONICAL_SLUG);
+    assert_eq!(context["exists"], true);
+    assert_eq!(context["companion_name"], "Luna");
+    assert_eq!(context["soul_exists"], true);
     assert_eq!(h.instance_dirs(), vec![CANONICAL_SLUG]);
 }
 
@@ -291,7 +337,7 @@ async fn unsupported_identity_marker_fails_closed_for_reads_and_writes() {
     fs::write(h.companion().join(IDENTITY_FILE), &raw).unwrap();
 
     for (method, uri, body) in [
-        (Method::GET, "/api/instances".to_owned(), None),
+        (Method::GET, "/api/companion".to_owned(), None),
         (
             Method::GET,
             format!("/api/instances/{CANONICAL_SLUG}/soul"),
