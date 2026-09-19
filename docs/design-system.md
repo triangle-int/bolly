@@ -8,7 +8,8 @@ Use this guide before changing the client, landing, onboarding, or brand assets.
 - Shared application CSS primitives: `client/src/routes/layout.css` (`nl-button`, `nl-button-secondary`, `nl-panel`, `nl-input`, `nl-eyebrow`).
 - Interactive examples: client route `/design-system`, including the real message, composer, and tool components. Examples are explicitly sample content and do not require a backend.
 - Landing: `landing/src/app.css` and `landing/src/lib/components/`.
-- Avatar: `client/static/skins/moon/character.svg`; thinking expression beside it. Landing copy: `landing/static/assets/nolune-moon.svg`.
+- Desktop (Tauri): `desktop/src/app.css` mirrors the client tokens and `nl-*` primitives; fonts are bundled from Fontsource because the app CSP only allows same-origin assets. Desktop avatar: `desktop/src/lib/components/Moon.svelte`.
+- Avatar: `client/static/skins/moon/character.svg`; thinking expression beside it. Landing copy: `landing/static/assets/nolune-moon.svg`. Desktop copy: the inline `Moon.svelte` component and the app icon source generated from the same path.
 - Animated marketing avatar: `landing/src/lib/components/MoonCompanion.svelte`.
 
 Update the guide and reference page when intentionally changing this system. Reuse existing components and tokens before inventing another variant. Do not automatically create a new palette for each feature.
@@ -105,3 +106,13 @@ The same tokens apply to settings, onboarding, authentication, agent management,
 - Conversation history failures remain visible with Retry and Settings actions. Provider setup is required for live chat; the design-system example stays explicitly local and simulated.
 
 Onboarding uses `MoonBirth.svelte` after skin selection: the crescent gently grows into place, opens its eyes, blinks, and greets the user. It completes automatically, has a Continue control, and shows a still moon with a shorter hold for reduced motion. Replay the same component in `/design-system`.
+
+## Desktop app
+
+The Tauri desktop app (`desktop/`) is a connection shell, not a second chat client. It uses the same plum surfaces, lavender actions, Fraunces headings, and `nl-button`, `nl-button-secondary`, `nl-panel`, `nl-input`, `nl-eyebrow` primitives as the client.
+
+- Splash: the crescent grows into place and opens its eyes (same keyframes as `MoonBirth.svelte`), then the `nolune` wordmark fades in. It has a Continue control and shows a still moon with a shorter hold for reduced motion. The golden orb video and its spark sound are retired; the splash plays a short CC0 chime (`desktop/static/splash.mp3`, from videoeditingsfx.com, no attribution required) at 0.4 gain, timed to the moon opening its eyes.
+- Connect panel: visible labels, 16px inputs, one primary action (Save connection or Open companion) and secondary actions beside it. Errors use `--destructive` text with `role="alert"`; pending state shows a spinner with text.
+- Settings: permissions are a bordered list on `--card`; a granted state is a text badge, an ungranted state is a lavender Grant button. Failed status checks show an error and Retry, never an empty list.
+- Overlay: the working moon sits in a small card-colored disc with gentle float and blink; action flashes are card-colored chips with outlined SVG icons and JetBrains Mono text. No emoji glyphs.
+- App icon: lavender crescent on a plum rounded square, regenerated with `pnpm tauri icon` from a 1024px PNG of the approved path.

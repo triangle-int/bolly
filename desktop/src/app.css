@@ -1,35 +1,61 @@
 @import "tailwindcss";
 
-@font-face {
-  font-family: "Fraunces";
-  src: url("https://fonts.gstatic.com/s/fraunces/v31/6NUh8FyLNQOQZAnv9bYEvDiIdE9Ea92uemAk_WBq8U_9v0c2Wa0K7iN7hzFUPJH58nk.woff2")
-    format("woff2");
-  font-weight: 100 900;
-  font-style: italic;
-  font-display: swap;
-}
+/* Bundled fonts: the Tauri CSP only allows same-origin assets, so Google Fonts never loads here. */
+@import "@fontsource-variable/fraunces/wght.css";
+@import "@fontsource-variable/bricolage-grotesque/index.css";
+@import "@fontsource/jetbrains-mono/400.css";
+@import "@fontsource/jetbrains-mono/500.css";
 
-@font-face {
-  font-family: "Bricolage Grotesque";
-  src: url("https://fonts.gstatic.com/s/bricolagegrotesque/v7/3y9U6as8bTXq_nANBjzKo3IeZx8z6up5BeSl5jBNz_19PpbpMXuECpwUxJBOm_OJWiQ.woff2")
-    format("woff2");
-  font-weight: 200 800;
-  font-display: swap;
-}
-
+/* Nolune Little Moon tokens. Mirror of client/src/lib/styles/tokens.css; keep docs/design-system.md in sync. */
 :root {
-  --warm: oklch(0.78 0.12 75);
-  --warm-muted: oklch(0.78 0.12 75 / 18%);
-  --background: oklch(0.04 0.015 260);
-  --foreground: oklch(0.90 0.02 75);
-  --muted: oklch(0.60 0.03 240);
-  --border: oklch(1 0 0 / 8%);
-  --border-top: oklch(1 0 0 / 16%);
-  --card: oklch(1 0 0 / 4%);
-  --glass-bg: oklch(1 0 0 / 5%);
-  --glass-border: oklch(1 0 0 / 10%);
-  --font-display: "Fraunces", Georgia, serif;
-  --font-body: "Bricolage Grotesque", system-ui, sans-serif;
+  color-scheme: dark;
+  --background: #201d29;
+  --foreground: #f6f3ec;
+  --card: #282432;
+  --card-foreground: #f6f3ec;
+  --popover: #312c3c;
+  --popover-foreground: #f6f3ec;
+  --primary: #b7a9e7;
+  --primary-foreground: #201d29;
+  --secondary: #373142;
+  --secondary-foreground: #f6f3ec;
+  --muted: #282432;
+  --muted-foreground: #b5adc2;
+  --accent: #3b334d;
+  --accent-foreground: #e4d9ff;
+  --destructive: #f39b9b;
+  --border: #51485f;
+  --input: #625770;
+  --ring: #b7a9e7;
+  --text-primary: #f6f3ec;
+  --text-secondary: #d0c9dc;
+  --text-muted: #b5adc2;
+  --text-faint: #aaa0b8;
+  --text-placeholder: #b5adc2;
+  --text-link: #c9baf4;
+  --surface-input: #282432;
+  --surface-input-focus: #312c3c;
+  --surface-input-border: #625770;
+  --surface-elevated: #312c3c;
+  --surface-overlay: #282432;
+  /* Compatibility aliases: new work should use primary, not warm. */
+  --warm: var(--primary);
+  --warm-foreground: var(--primary-foreground);
+  --warm-muted: #b7a9e71f;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-12: 48px;
+  --radius-control: 8px;
+  --radius-panel: 16px;
+
+  --font-display: "Fraunces Variable", "Fraunces", Georgia, "Times New Roman", serif;
+  --font-body: "Bricolage Grotesque Variable", "Bricolage Grotesque", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
 }
 
 html,
@@ -40,8 +66,118 @@ body {
   overflow: hidden;
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-body);
+  font: 400 16px/1.5 var(--font-body);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   user-select: none;
+}
+
+h1,
+h2,
+h3 {
+  font-family: var(--font-display);
+  font-weight: 400;
+}
+
+/* Little Moon application primitives. See docs/design-system.md. */
+.nl-button,
+.nl-button-secondary {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 44px;
+  padding: 10px 18px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-control);
+  background: var(--primary);
+  color: var(--primary-foreground);
+  font: 500 14px/1.5 var(--font-body);
+  text-decoration: none;
+  cursor: pointer;
+  transition: filter 160ms ease;
+}
+.nl-button:hover:not(:disabled),
+.nl-button-secondary:hover:not(:disabled) {
+  filter: brightness(1.08);
+}
+.nl-button:disabled,
+.nl-button-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.nl-button-secondary {
+  background: var(--card);
+  color: var(--foreground);
+  border-color: var(--border);
+}
+.nl-panel {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  padding: 24px;
+}
+.nl-input {
+  width: 100%;
+  min-height: 44px;
+  padding: 12px 14px;
+  border: 1px solid var(--input);
+  border-radius: var(--radius-control);
+  background: var(--surface-input);
+  color: var(--foreground);
+  font: 400 16px/1.5 var(--font-body);
+  user-select: text;
+}
+.nl-input::placeholder {
+  color: var(--text-placeholder);
+}
+.nl-input:focus {
+  background: var(--surface-input-focus);
+}
+.nl-input:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.nl-eyebrow {
+  font: 500 11px/1.5 var(--font-body);
+  letter-spacing: 0.13em;
+  text-transform: uppercase;
+  color: var(--primary);
+}
+.nl-label {
+  display: block;
+  font: 500 13px/1.5 var(--font-body);
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+
+:where(a, button, input, textarea, select, summary):focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 3px;
+}
+
+::-webkit-scrollbar {
+  width: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border);
+  border-radius: 3px;
+}
+::selection {
+  background: var(--accent);
+  color: var(--foreground);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }
