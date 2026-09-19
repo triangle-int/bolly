@@ -236,53 +236,24 @@ async fn wait_for_registration(
 /// When any desktop machine connects, notify the companion agent.
 /// If `bound_slug` is set, only notify that instance.
 async fn on_machine_connected(state: &AppState, machine_id: &str, bound_slug: Option<&str>) {
-    let instances_dir = state.workspace_dir.join("instances");
-    let entries = match std::fs::read_dir(&instances_dir) {
-        Ok(e) => e,
-        Err(e) => {
-            log::error!("[machine-connect] failed to read instances dir: {e}");
-            return;
-        }
-    };
+    use crate::domain::companion::{CANONICAL_SLUG, is_canonical};
 
-    let all_slugs: Vec<String> = entries
-        .filter_map(Result::ok)
-        .filter(|e| e.path().is_dir() && e.path().join("soul.md").exists())
-        .filter(|e| match bound_slug {
-            Some(s) => e.file_name().to_string_lossy() == s,
-            None => true,
-        })
-        .map(|e| e.file_name().to_string_lossy().to_string())
-        .collect();
-
-    if all_slugs.is_empty() {
+    if let Some(slug) = bound_slug
+        && !is_canonical(slug)
+    {
         log::warn!(
-            "[machine-connect] no matching instances for '{}' (bound_slug={:?}, instances_dir={})",
-            machine_id,
-            bound_slug,
-            instances_dir.display()
+            "[machine-connect] '{machine_id}' asked for foreign companion {slug:?}; this server owns only {CANONICAL_SLUG}"
         );
-        // Try to notify at least something — find any instance with soul.md
-        let fallback: Vec<String> = std::fs::read_dir(&instances_dir)
-            .into_iter()
-            .flatten()
-            .filter_map(Result::ok)
-            .filter(|e| e.path().is_dir() && e.path().join("soul.md").exists())
-            .map(|e| e.file_name().to_string_lossy().to_string())
-            .collect();
-        for slug in &fallback {
-            let _ = crate::services::chat::save_system_message(
-                &state.workspace_dir,
-                slug,
-                "default",
-                &format!(
-                    "[system] desktop '{}' connected but no matching instance found (bound_slug={:?}). check your instance config.",
-                    machine_id, bound_slug
-                ),
-            );
-        }
         return;
     }
+    let companion_dir = crate::services::companion::companion_dir(&state.workspace_dir);
+    if !companion_dir.join("soul.md").exists() {
+        log::warn!(
+            "[machine-connect] '{machine_id}' connected before the companion was onboarded; nothing to notify"
+        );
+        return;
+    }
+    let all_slugs = vec![CANONICAL_SLUG.to_owned()];
 
     log::info!(
         "[machine-connect] '{}' connected, notifying {} instance(s): {:?}",

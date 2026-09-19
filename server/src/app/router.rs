@@ -5,7 +5,7 @@ use tower_http::services::{ServeDir, ServeFile};
 
 use crate::{app::state::AppState, routes};
 
-use super::auth::auth_middleware;
+use super::{auth::auth_middleware, companion_boundary::companion_boundary};
 
 fn api_router(state: &AppState) -> Router<AppState> {
     Router::new()
@@ -25,6 +25,11 @@ fn api_router(state: &AppState) -> Router<AppState> {
         .merge(routes::memory_import::router())
         .merge(routes::agents::router())
         .merge(routes::machine_agents::router())
+        // Inner: admit only the canonical companion once the caller is authenticated.
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            companion_boundary,
+        ))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -37,8 +42,13 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
 
     // Public routes — no auth
     let health = routes::health::router();
-    let public_files = routes::uploads::public_router();
-    let public_memory = routes::instances::public_memory_router();
+    // Public routes still address a companion by slug and fail closed on foreign ones.
+    let public_files = routes::uploads::public_router().route_layer(
+        middleware::from_fn_with_state(state.clone(), companion_boundary),
+    );
+    let public_memory = routes::instances::public_memory_router().route_layer(
+        middleware::from_fn_with_state(state.clone(), companion_boundary),
+    );
 
     let app = Router::new()
         .merge(health)
@@ -61,3 +71,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
 #[cfg(test)]
 #[path = "../../test-support/router_security.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../test-support/companion_boundary.rs"]
+mod companion_boundary_tests;

@@ -323,16 +323,6 @@ pub fn get_neighbors(graph: &MemoryGraph, path: &str) -> Vec<String> {
     neighbors
 }
 
-/// Run legacy migration through the persistent workspace capability.
-pub fn migrate_all_instances(media: &super::media_text::MediaStore) {
-    let Ok(slugs) = media.instance_slugs() else {
-        return;
-    };
-    for slug in slugs {
-        migrate_legacy_memory(media, &slug);
-    }
-}
-
 /// Migrate legacy memory format (facts.md + episodes.md) into the new library structure.
 pub fn migrate_legacy_memory(media: &super::media_text::MediaStore, instance_slug: &str) {
     if media
@@ -967,5 +957,67 @@ mod media_representation_tests {
         assert!(dir.join("photo.jpg").exists());
         assert!(store.needs_backfill("one").await.unwrap());
         assert_eq!(mock.requests.lock().unwrap().len(), 1);
+    }
+}
+
+/// Run legacy memory migration for the canonical companion only.
+///
+/// Obsolete sibling directories are never read. A companion that has no
+/// legacy `facts.md`/`episodes.md` is left untouched so a missing companion
+/// is not created as a side effect.
+pub fn migrate_companion(media: &super::media_text::MediaStore) {
+    use crate::domain::companion::CANONICAL_SLUG;
+    let has_legacy = ["facts.md", "episodes.md"]
+        .into_iter()
+        .any(|file| media.memory_exists(CANONICAL_SLUG, file).unwrap_or(false));
+    if has_legacy {
+        migrate_legacy_memory(media, CANONICAL_SLUG);
+    }
+}
+
+#[cfg(test)]
+mod companion_boundary_tests {
+    use super::*;
+    use crate::domain::companion::CANONICAL_SLUG;
+
+    #[test]
+    fn legacy_migration_runs_for_the_companion_and_skips_obsolete_dirs() {
+        let workspace = tempfile::tempdir().unwrap();
+        for slug in [CANONICAL_SLUG, "alice"] {
+            let memory = workspace.path().join("instances").join(slug).join("memory");
+            std::fs::create_dir_all(&memory).unwrap();
+            std::fs::write(memory.join("facts.md"), "- drinks tea\n").unwrap();
+        }
+        let media = super::super::media_text::MediaStore::open(workspace.path()).unwrap();
+
+        migrate_companion(&media);
+
+        assert!(media.memory_exists(CANONICAL_SLUG, ".migrated").unwrap());
+        let alice = workspace.path().join("instances/alice/memory");
+        assert!(
+            !alice.join(".migrated").exists(),
+            "obsolete dir must not be migrated"
+        );
+        assert_eq!(
+            std::fs::read_to_string(alice.join("facts.md")).unwrap(),
+            "- drinks tea\n",
+            "obsolete memory must stay byte-identical"
+        );
+        assert!(!alice.join("_legacy_facts.md").exists());
+    }
+
+    #[test]
+    fn migration_without_a_companion_is_a_no_op() {
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(workspace.path().join("instances/alice/memory")).unwrap();
+        let media = super::super::media_text::MediaStore::open(workspace.path()).unwrap();
+        migrate_companion(&media);
+        assert!(
+            !workspace
+                .path()
+                .join("instances")
+                .join(CANONICAL_SLUG)
+                .exists()
+        );
     }
 }

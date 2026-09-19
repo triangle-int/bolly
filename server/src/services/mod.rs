@@ -6,6 +6,7 @@ pub mod keyword_search;
 // rate_limit removed — all instances are BYOK with no rate limits
 pub mod agent_runs;
 pub mod child_agents;
+pub mod companion;
 pub mod drops;
 pub mod heartbeat;
 pub mod llm;

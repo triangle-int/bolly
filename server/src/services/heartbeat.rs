@@ -12,11 +12,12 @@ use chrono::Utc;
 use tokio::sync::{RwLock, broadcast};
 
 use crate::domain::child_agent::ChildAgentConfig;
+use crate::domain::companion::CANONICAL_SLUG;
 use crate::domain::events::ServerEvent;
 use crate::domain::thought::Thought;
 use crate::services::machine_registry::MachineRegistry;
 use crate::services::tools::load_mood_state;
-use crate::services::{chat, llm::LlmBackend, rhythm, thoughts};
+use crate::services::{chat, companion, llm::LlmBackend, rhythm, thoughts};
 
 pub fn start(
     workspace_dir: &Path,
@@ -26,55 +27,43 @@ pub fn start(
     google_ai_key: String,
     machine_registry: MachineRegistry,
 ) {
-    let instances_dir = workspace_dir.join("instances");
-
-    // Ensure built-in child agents exist for all instances
-    if let Ok(entries) = fs::read_dir(&instances_dir) {
-        for entry in entries.filter_map(Result::ok) {
-            if entry.path().is_dir() && entry.path().join("soul.md").exists() {
-                let slug = entry.file_name().to_string_lossy().to_string();
-                crate::services::child_agents::ensure_builtins(workspace_dir, &slug);
-            }
-        }
+    // One companion per server: only the canonical identity has an inner life.
+    let slug = CANONICAL_SLUG.to_owned();
+    if !companion::companion_dir(workspace_dir)
+        .join("soul.md")
+        .exists()
+    {
+        log::info!("heartbeat: companion not onboarded yet; no loops spawned");
+        return;
     }
+    crate::services::child_agents::ensure_builtins(workspace_dir, &slug);
 
-    // Spawn independent loops for each instance × agent
-    let entries = match fs::read_dir(&instances_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
+    // Spawn one independent loop per scheduled agent of the companion
+    let agents = crate::services::child_agents::load_agents(workspace_dir, &slug);
 
-    for entry in entries.filter_map(Result::ok) {
-        if !entry.path().is_dir() || !entry.path().join("soul.md").exists() {
-            continue;
+    for agent in agents {
+        if agent.interval_hours <= 0.0 {
+            continue; // skip on-demand agents
         }
-        let slug = entry.file_name().to_string_lossy().to_string();
-        let agents = crate::services::child_agents::load_agents(workspace_dir, &slug);
 
-        for agent in agents {
-            if agent.interval_hours <= 0.0 {
-                continue; // skip on-demand agents
-            }
+        let ws = workspace_dir.to_path_buf();
+        let s = slug.clone();
+        let l = llm.clone();
+        let ev = events.clone();
+        let vs = vector_store.clone();
+        let gai = google_ai_key.clone();
+        let mr = machine_registry.clone();
+        let agent_name = agent.name.clone();
+        let agent_hours = agent.interval_hours;
+        let agent_clone = agent.clone();
 
-            let ws = workspace_dir.to_path_buf();
-            let s = slug.clone();
-            let l = llm.clone();
-            let ev = events.clone();
-            let vs = vector_store.clone();
-            let gai = google_ai_key.clone();
-            let mr = machine_registry.clone();
-            let agent_name = agent.name.clone();
-            let agent_hours = agent.interval_hours;
-            let agent_clone = agent.clone();
+        tokio::spawn(async move {
+            run_agent_loop(&ws, &s, &agent_clone, l, ev, vs, &gai, mr).await;
+        });
 
-            tokio::spawn(async move {
-                run_agent_loop(&ws, &s, &agent_clone, l, ev, vs, &gai, mr).await;
-            });
-
-            log::info!(
-                "heartbeat: spawned '{agent_name}' for instance '{slug}' (every {agent_hours}h)"
-            );
-        }
+        log::info!(
+            "heartbeat: spawned '{agent_name}' for instance '{slug}' (every {agent_hours}h)"
+        );
     }
 }
 

@@ -2,7 +2,7 @@
 	import * as AlertDialog from "$lib/components/ui/alert-dialog/index.js";
 	import { goto } from "$app/navigation";
 	import { page } from "$app/state";
-	import { deleteInstance, machineHello, machineBye } from "$lib/api/client.js";
+	import { deleteInstance, machineHello, machineBye, getCompanionSlug } from "$lib/api/client.js";
 	import { getInstances } from "$lib/stores/instances.svelte.js";
 	import { getPresentationState } from "$lib/stores/presentation.svelte.js";
 	import { getSceneStore } from "$lib/stores/scene.svelte.js";
@@ -14,6 +14,14 @@
 
 	const slug = $derived(page.params.slug!);
 	const instances = getInstances();
+	// One companion per server (#103): stale multi-instance URLs open the canonical companion.
+	$effect(() => {
+		const canonical = getCompanionSlug();
+		if (slug !== canonical) {
+			const rest = page.url.pathname.replace(`/${slug}`, "");
+			goto(`/${canonical}${rest}`, { replaceState: true });
+		}
+	});
 	const presentation = getPresentationState();
 	const scene = getSceneStore();
 	const skinStore = getSkinStore();

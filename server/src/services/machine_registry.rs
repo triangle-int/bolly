@@ -69,7 +69,20 @@ impl MachineRegistry {
     }
 
     /// Register a new agent connection.
-    pub async fn register(&self, info: MachineInfo, sender: AgentSender) {
+    ///
+    /// Machines are contexts of the one companion this server owns; a
+    /// registration naming any other slug is bound to the canonical one.
+    pub async fn register(&self, mut info: MachineInfo, sender: AgentSender) {
+        use crate::domain::companion::{CANONICAL_SLUG, is_canonical};
+        if let Some(requested) = info.instance_slug.as_deref()
+            && !is_canonical(requested)
+        {
+            log::warn!(
+                "[machines] {} requested foreign companion {requested:?}; binding to {CANONICAL_SLUG}",
+                info.machine_id
+            );
+        }
+        info.instance_slug = Some(CANONICAL_SLUG.to_owned());
         let id = info.machine_id.clone();
         log::info!("[machines] registered: {} ({})", id, info.os);
         self.agents.lock().await.insert(id, (info, sender));
@@ -162,6 +175,40 @@ impl MachineRegistry {
         } else {
             log::warn!("[machines] no pending request for {request_id}");
             false
+        }
+    }
+}
+
+#[cfg(test)]
+mod companion_boundary_tests {
+    use super::*;
+    use crate::domain::companion::CANONICAL_SLUG;
+
+    fn info(instance_slug: Option<&str>) -> MachineInfo {
+        MachineInfo {
+            machine_id: "machine-1".into(),
+            os: "macos".into(),
+            hostname: "studio".into(),
+            screen_width: 1440,
+            screen_height: 900,
+            last_seen: 0,
+            instance_slug: instance_slug.map(str::to_owned),
+        }
+    }
+
+    #[tokio::test]
+    async fn registered_machines_are_always_bound_to_the_canonical_companion() {
+        for provided in [None, Some("alice"), Some("Companion"), Some(CANONICAL_SLUG)] {
+            let registry = MachineRegistry::new();
+            let (tx, _rx) = tokio::sync::mpsc::unbounded_channel();
+            registry.register(info(provided), tx).await;
+            let listed = registry.list().await;
+            assert_eq!(listed.len(), 1, "{provided:?}");
+            assert_eq!(
+                listed[0].instance_slug.as_deref(),
+                Some(CANONICAL_SLUG),
+                "{provided:?} must bind to the canonical companion"
+            );
         }
     }
 }

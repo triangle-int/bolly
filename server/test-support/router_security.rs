@@ -141,13 +141,13 @@ async fn public_routes_have_exact_semantics_and_never_disclose_the_auth_token() 
         ),
         (
             Method::GET,
-            "/public/files/moon/missing",
+            "/public/files/companion/missing",
             StatusCode::UNAUTHORIZED,
             None,
         ),
         (
             Method::GET,
-            "/public/memory/moon/missing",
+            "/public/memory/companion/missing",
             StatusCode::UNAUTHORIZED,
             None,
         ),
@@ -257,8 +257,8 @@ fn production_sources_and_checked_in_build_have_no_tokenized_browser_bootstrap()
 #[tokio::test]
 async fn removed_google_workspace_routes_are_not_in_api_router() {
     let state = AppState::new(crate::config::Config::default()).await;
-    let account_routes = format!("/api/instances/moon/google/{}", "accounts");
-    let connect_route = format!("/api/instances/moon/google/{}", "connect");
+    let account_routes = format!("/api/instances/companion/google/{}", "accounts");
+    let connect_route = format!("/api/instances/companion/google/{}", "connect");
     let disconnect_route = format!("{account_routes}/user@example.com");
     for (method, uri) in [
         ("GET", account_routes),

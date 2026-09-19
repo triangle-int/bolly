@@ -2,8 +2,11 @@ use axum::{Json, Router, extract::State, routing::get};
 
 use crate::{
     app::state::AppState,
-    domain::meta::{LlmSummary, ServerMetaResponse},
-    services::workspace,
+    domain::{
+        companion::CANONICAL_SLUG,
+        meta::{LlmSummary, ServerMetaResponse},
+    },
+    services::{companion, workspace},
 };
 
 pub fn router() -> Router<AppState> {
@@ -11,9 +14,16 @@ pub fn router() -> Router<AppState> {
 }
 
 async fn server_meta(State(state): State<AppState>) -> Json<ServerMetaResponse> {
-    let instances_dir = state.workspace_dir.join("instances");
     let skills_dir = state.workspace_dir.join("skills");
     let cfg = state.config.read().await;
+    let instances_count = match companion::read_identity(&state.workspace_dir) {
+        Ok(Some(_)) => 1,
+        Ok(None) => 0,
+        Err(error) => {
+            log::warn!("companion identity is unavailable: {error}");
+            0
+        }
+    };
 
     Json(ServerMetaResponse {
         app: "nolune",
@@ -21,7 +31,8 @@ async fn server_meta(State(state): State<AppState>) -> Json<ServerMetaResponse> 
         commit: option_env!("GIT_HASH").unwrap_or("dev"),
         port: cfg.port,
         workspace_dir: state.workspace_dir.display().to_string(),
-        instances_count: workspace::count_directories(&instances_dir).unwrap_or(0),
+        companion_slug: CANONICAL_SLUG,
+        instances_count,
         skills_count: workspace::count_directories(&skills_dir).unwrap_or(0),
         llm: LlmSummary {
             provider: cfg.llm.provider,

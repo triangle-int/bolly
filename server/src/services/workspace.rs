@@ -12,16 +12,10 @@ pub fn count_directories(path: &Path) -> io::Result<usize> {
         .count())
 }
 
-pub fn read_instances(path: &Path) -> io::Result<Vec<InstanceSummary>> {
-    let mut instances = fs::read_dir(path)?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir())
-        .filter_map(|path| summarize_instance(&path))
-        .collect::<Vec<_>>();
-
-    instances.sort_by(|a, b| a.slug.cmp(&b.slug));
-    Ok(instances)
+/// Summary of the one canonical companion, if its directory exists.
+pub fn companion_summary(workspace_dir: &Path) -> Option<InstanceSummary> {
+    let dir = super::companion::companion_dir(workspace_dir);
+    dir.is_dir().then(|| summarize_instance(&dir)).flatten()
 }
 
 pub fn summarize_instance(path: &Path) -> Option<InstanceSummary> {
