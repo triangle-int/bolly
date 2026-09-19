@@ -88,6 +88,9 @@ export class PairingError extends Error {
 
 /** Redeem a one-time pairing code; the server answers with the session cookie. */
 export async function pairBrowser(code: string): Promise<PairedDevice> {
+	// The desktop relay authenticates natively and strips cookies; pairing
+	// inside it would never take effect.
+	if (isDesktopRelay()) throw new Error("Reconnect from the desktop dashboard.");
 	clearLegacyAuth();
 	const res = await fetch(`${BASE}/api/session/pair`, {
 		method: "POST",
