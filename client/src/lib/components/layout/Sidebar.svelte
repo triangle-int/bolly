@@ -9,7 +9,6 @@
 	import Sparkles from "@lucide/svelte/icons/sparkles";
 	import Brain from "@lucide/svelte/icons/brain";
 	import Home from "@lucide/svelte/icons/home";
-	import UsageBar from "./UsageBar.svelte";
 
 	const instances = getInstances();
 	const ws = getWebSocket();
@@ -107,8 +106,6 @@
 	</nav>
 
 	<Separator />
-
-	<UsageBar />
 
 	<div class="px-5 py-3.5">
 		<div class="flex items-center gap-2 text-xs text-muted-foreground/50">

@@ -2,17 +2,13 @@
  import { play } from '$lib/sounds.js';
  import { hapticLight, hapticMedium } from '$lib/haptics.js';
  import { fetchConfigStatus, updateModelMode } from '$lib/api/client.js';
- import UsageBar from '$lib/components/layout/UsageBar.svelte';
  import PromptComposer from './PromptComposer.svelte';
  let { onSend, onStop, disabled = false, agentRunning = false, mood = 'calm', uploadProgress = null }:
  { onSend: (content: string, files?: File[]) => void | boolean | Promise<void | boolean>; onStop: () => void; disabled?: boolean; agentRunning?: boolean; mood?: string; uploadProgress?: { fileIndex: number; fileCount: number; loaded: number; total: number } | null } = $props();
  let modelMode = $state('auto');
  let modelError = $state('');
  let changingMode = false;
- let usageTick = $state(0);
- let prevDisabled = $state(false);
  $effect(() => { fetchConfigStatus().then(s => { if (s.model_mode) modelMode = s.model_mode; }).catch(() => {}); });
- $effect(() => { if (prevDisabled && !disabled) usageTick++; prevDisabled = disabled; });
  async function changeMode(mode: string) {
   if (changingMode) return;
   changingMode = true;
@@ -31,7 +27,6 @@
     <div class="upload"><progress value={pct} max="100" aria-label="File upload progress"></progress><span role="status">Uploading file {uploadProgress.fileIndex + 1} of {uploadProgress.fileCount} · {pct.toFixed(0)}%</span></div>
    {/if}
    {#if modelError}<p role="alert">{modelError}</p>{/if}
-   <UsageBar tick={usageTick} />
   {/snippet}
  </PromptComposer>
 </div>

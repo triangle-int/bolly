@@ -98,8 +98,8 @@ pub use project::{TaskItem, TaskStatus};
 pub use skills::{ActivateSkillTool, ListSkillsTool, ReadSkillReferenceTool};
 pub use system::{
     CallAgentTool, ClearContextTool, CreateDropTool, ExportProfileTool, GetSettingsTool,
-    GetTimeTool, ImportProfileTool, InteractiveSessionTool, RequestSecretTool, RestartMachineTool,
-    RunCommandTool, UpdateConfigTool,
+    GetTimeTool, ImportProfileTool, InteractiveSessionTool, RequestSecretTool, RunCommandTool,
+    UpdateConfigTool,
 };
 // ---------------------------------------------------------------------------
 // Cached tool definitions snapshot (populated by build_tools, read by stats)
@@ -489,7 +489,6 @@ pub fn build_tools(
             tokio::sync::Mutex<std::collections::HashMap<String, crate::app::state::PendingSecret>>,
         >,
     >,
-    _plan: &str,
     email_accounts: Vec<crate::config::EmailConfig>,
     sent_files: SentFiles,
     mcp_snapshot: Option<crate::services::mcp::McpAppSnapshot>,
@@ -605,9 +604,6 @@ pub fn build_tools(
             ps,
         ))));
     }
-
-    // ── Machine management ──
-    tools.push(wrap(Box::new(RestartMachineTool)));
 
     // ── Skills ──
     tools.push(wrap(Box::new(ListSkillsTool::new(

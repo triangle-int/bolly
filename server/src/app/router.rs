@@ -18,7 +18,6 @@ fn api_router(state: &AppState) -> Router<AppState> {
         .merge(routes::thoughts::router())
         .merge(routes::uploads::router())
         .merge(routes::skills::router())
-        .merge(routes::usage::router())
         .merge(routes::heartbeat::router())
         .merge(routes::ws::router())
         .merge(routes::update::router())
@@ -97,5 +96,38 @@ mod tests {
                 "{uri}"
             );
         }
+    }
+
+    #[tokio::test]
+    async fn standalone_api_has_no_managed_status_or_usage_route() {
+        let state = AppState::new(crate::config::Config::default()).await;
+        let status = api_router(&state)
+            .with_state(state.clone())
+            .oneshot(
+                Request::builder()
+                    .uri("/api/config/status")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(status.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(status.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        let status: serde_json::Value = serde_json::from_slice(&body).unwrap();
+        assert!(status.get("is_managed").is_none());
+
+        let usage = api_router(&state)
+            .with_state(state)
+            .oneshot(
+                Request::builder()
+                    .uri("/api/usage")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(usage.status(), axum::http::StatusCode::NOT_FOUND);
     }
 }

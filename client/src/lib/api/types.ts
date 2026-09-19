@@ -186,16 +186,6 @@ export interface UploadMeta {
 	uploaded_at: string;
 }
 
-export interface Usage {
-	tokens_last_4h: number;
-	tokens_4h_limit: number;
-	tokens_this_week: number;
-	tokens_week_limit: number;
-	tokens_this_month: number;
-	tokens_month_limit: number;
-	resets_at: string | null;
-}
-
 export interface ContextSection {
 	name: string;
 	chars: number;

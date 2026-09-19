@@ -17,7 +17,6 @@ pub mod thoughts;
 pub mod tts;
 pub mod update;
 pub mod uploads;
-pub mod usage;
 pub mod ws;
 
 /// Preserve a machine-readable setup error at request admission.

@@ -8,7 +8,6 @@
 	import Puzzle from "@lucide/svelte/icons/puzzle";
 	import Clock from "@lucide/svelte/icons/clock";
 	import Brain from "@lucide/svelte/icons/brain";
-	import ChartNoAxesCombined from "@lucide/svelte/icons/chart-no-axes-combined";
 	import Moon from "@lucide/svelte/icons/moon";
 	import Zap from "@lucide/svelte/icons/zap";
 	import KeyRound from "@lucide/svelte/icons/key-round";
@@ -30,7 +29,6 @@
 		fetchEmailAccounts,
 		saveEmailAccounts,
 		deleteAllEmailAccounts,
-		fetchUsage,
 		fetchConfigStatus,
 		updateModelMode,
 		exportInstance,
@@ -45,7 +43,7 @@
 		type ScheduledTask,
 	} from "$lib/api/client.js";
 	import type { McpServerInfo, EmailConfig } from "$lib/api/client.js";
-	import type { Usage, ServerEvent } from "$lib/api/types.js";
+	import type { ServerEvent } from "$lib/api/types.js";
 	import { getWebSocket } from "$lib/stores/websocket.svelte.js";
 	import { SKINS } from "$lib/stores/skin.svelte.js";
 	import { onDestroy } from "svelte";
@@ -187,9 +185,6 @@
 	let ghError = $state("");
 	let ghEditing = $state(false);
 
-	// Cloud/managed detection
-	let isManaged = $state(false);
-
 	// Server state
 	let serverHost = $state("0.0.0.0");
 	let serverPort = $state(26559);
@@ -203,17 +198,12 @@
 	async function loadServer() {
 		serverLoading = true;
 		try {
-			const { fetchServerConfig, fetchConfigStatus } = await import("$lib/api/client.js");
+			const { fetchServerConfig } = await import("$lib/api/client.js");
 			const res = await fetchServerConfig();
 			serverHost = res.host;
 			serverPort = res.port;
 			serverPortInput = String(res.port);
 			serverAuthSet = res.auth_token_set;
-			// Also check if managed (cloud) by fetching status
-			try {
-				const status = await fetchConfigStatus();
-				isManaged = !!status.is_managed;
-			} catch { /* ignore */ }
 		} catch {
 			// not critical
 		} finally {
@@ -351,9 +341,6 @@
 
 	// Update state
 
-	// Usage state
-	let usage = $state<Usage | null>(null);
-	$effect(() => { fetchUsage().then(u => usage = u).catch(() => {}); });
 
 	const apiKeyDefs = [
 		{ id: "api_key", name: "Anthropic", hint: "sk-ant-...", required: false, configKey: "anthropic" },
@@ -426,16 +413,6 @@
 		}
 	}
 
-	function formatTokens(n: number): string {
-		if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-		if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
-		return String(n);
-	}
-
-	function usagePct(used: number, limit: number): number {
-		if (limit <= 0) return 0;
-		return Math.min(100, Math.round((used / limit) * 100));
-	}
 
 	// Timezone state
 	let tzValue = $state("");
@@ -668,8 +645,7 @@
 
 	<div class="settings-grid">
 
-	<!-- Server (self-hosted only) -->
-	{#if !isManaged}
+	<!-- Server -->
 	<section class="settings-section">
 		<div class="section-header">
 			<div>
@@ -737,58 +713,6 @@
 			</div>
 		{/if}
 	</section>
-	{/if}
-
-	<!-- Usage -->
-	{#if usage && (usage.tokens_4h_limit > 0 || usage.tokens_week_limit > 0 || usage.tokens_month_limit > 0)}
-		<section class="settings-section">
-			<div class="section-header">
-				<div class="section-icon" aria-hidden="true"><ChartNoAxesCombined size={20} strokeWidth={1.75} /></div>
-				<div>
-					<h3 class="section-label">Usage</h3>
-					<p class="section-desc">Token usage across time windows.</p>
-				</div>
-			</div>
-			<div class="usage-windows">
-				{#if usage.tokens_4h_limit > 0}
-					{@const p = usagePct(usage.tokens_last_4h, usage.tokens_4h_limit)}
-					<div class="usage-window">
-						<div class="usage-window-header">
-							<span class="usage-window-label">4 hours</span>
-							<span class="usage-window-value">{formatTokens(usage.tokens_last_4h)} / {formatTokens(usage.tokens_4h_limit)}</span>
-						</div>
-						<div class="usage-window-track">
-							<div class="usage-window-fill" style="width: {p}%; background: {p >= 90 ? 'var(--destructive)' : 'var(--primary)'}"></div>
-						</div>
-					</div>
-				{/if}
-				{#if usage.tokens_week_limit > 0}
-					{@const p = usagePct(usage.tokens_this_week, usage.tokens_week_limit)}
-					<div class="usage-window">
-						<div class="usage-window-header">
-							<span class="usage-window-label">This week</span>
-							<span class="usage-window-value">{formatTokens(usage.tokens_this_week)} / {formatTokens(usage.tokens_week_limit)}</span>
-						</div>
-						<div class="usage-window-track">
-							<div class="usage-window-fill" style="width: {p}%; background: {p >= 90 ? 'var(--destructive)' : 'var(--primary)'}"></div>
-						</div>
-					</div>
-				{/if}
-				{#if usage.tokens_month_limit > 0}
-					{@const p = usagePct(usage.tokens_this_month, usage.tokens_month_limit)}
-					<div class="usage-window">
-						<div class="usage-window-header">
-							<span class="usage-window-label">This month</span>
-							<span class="usage-window-value">{formatTokens(usage.tokens_this_month)} / {formatTokens(usage.tokens_month_limit)}</span>
-						</div>
-						<div class="usage-window-track">
-							<div class="usage-window-fill" style="width: {p}%; background: {p >= 90 ? 'var(--destructive)' : 'var(--primary)'}"></div>
-						</div>
-					</div>
-				{/if}
-			</div>
-		</section>
-	{/if}
 
 	<!-- Skin -->
 	<section class="settings-section">
@@ -1461,40 +1385,6 @@
 </div>
 
 <style>
-	/* Usage */
-	.usage-windows {
-		display: flex;
-		flex-direction: column;
-		gap: 0.625rem;
-	}
-	.usage-window-header {
-		display: flex;
-		justify-content: space-between;
-		align-items: baseline;
-		margin-bottom: 0.25rem;
-	}
-	.usage-window-label {
-		font-family: var(--font-body);
-		font-size: 0.8125rem;
-		color: var(--foreground);
-	}
-	.usage-window-value {
-		font-family: var(--font-body);
-		font-size: 0.8125rem;
-		color: var(--primary);
-	}
-	.usage-window-track {
-		height: 4px;
-		border-radius: 2px;
-		background: var(--popover);
-		overflow: hidden;
-	}
-	.usage-window-fill {
-		height: 100%;
-		border-radius: 2px;
-		transition: width 0.5s ease;
-	}
-
 	.settings-page {
 		padding: 2rem 2.5rem;
 		padding-bottom: calc(2rem + env(safe-area-inset-bottom, 0px));
@@ -2065,7 +1955,6 @@
     .setting-input-row, .key-row, .key-action, .gh-status, .email-form-row, .data-actions { flex-wrap: wrap; }
     .key-action { max-width: 100%; }
     .tz-picker { flex-direction: column; align-items: stretch; }
-    .usage-window-header { gap: 8px; flex-wrap: wrap; }
     .setting-input { max-width: none; }
     @media (max-width: 600px) {
         .settings-page { padding: 24px 20px; }
