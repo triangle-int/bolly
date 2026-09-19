@@ -306,6 +306,14 @@ if ! grep -Fq 'could not stop the existing Nolune process' "$tmp/stubborn/output
   exit 1
 fi
 
+# Every platform the release workflow publishes resolves to its own asset.
+run_installer macos-intel Darwin x86_64 1
+assert_status macos-intel 0
+assert_contains "$tmp/macos-intel/calls" 'https://github.com/triangle-int/nolune/releases/latest/download/nolune-server-x86_64-apple-darwin'
+run_installer linux-arm Linux aarch64 1
+assert_status linux-arm 0
+assert_contains "$tmp/linux-arm/calls" 'https://github.com/triangle-int/nolune/releases/latest/download/nolune-server-aarch64-unknown-linux-gnu'
+
 # A service that never becomes healthy makes installation fail honestly.
 run_installer unhealthy Darwin arm64 0
 assert_generated_token_private unhealthy
