@@ -281,11 +281,10 @@ pub async fn run_agent_loop(
         iteration += 1;
 
         let config_path = config::config_path();
-        let (fast_model_name, google_ai_key, public_url) = {
+        let (fast_model_name, public_url) = {
             let cfg = state.config.read().await;
             (
                 cfg.llm.fast_model_name().to_string(),
-                cfg.llm.tokens.google_ai.clone(),
                 cfg.public_url.clone(),
             )
         };
@@ -326,7 +325,6 @@ pub async fn run_agent_loop(
             &state.mcp_registry,
             voice_mode,
             state.vector_store.clone(),
-            &google_ai_key,
             state.machine_registry.clone(),
             &public_url,
             &state.resources,

@@ -45,7 +45,6 @@ async fn get_status(State(state): State<AppState>) -> Json<serde_json::Value> {
     let keys: Vec<&str> = [
         ("anthropic", !t.anthropic.is_empty()),
         ("openai", !t.open_ai.is_empty()),
-        ("google_ai", !t.google_ai.is_empty()),
         ("elevenlabs", !t.elevenlabs.is_empty()),
         ("openrouter", !t.open_router.is_empty()),
     ]
@@ -152,8 +151,6 @@ struct UpdateLlmKeyRequest {
     #[serde(default)]
     openai: Option<String>,
     #[serde(default)]
-    google_ai: Option<String>,
-    #[serde(default)]
     elevenlabs: Option<String>,
     #[serde(default)]
     openrouter: Option<String>,
@@ -205,10 +202,6 @@ async fn update_llm_key(
         if let Some(key) = &req.openai {
             cfg.llm.tokens.open_ai = key.trim().to_string();
             changes.push("openai");
-        }
-        if let Some(key) = &req.google_ai {
-            cfg.llm.tokens.google_ai = key.trim().to_string();
-            changes.push("google_ai");
         }
         if let Some(key) = &req.elevenlabs {
             cfg.llm.tokens.elevenlabs = key.trim().to_string();
@@ -600,7 +593,6 @@ mod embedding_status_tests {
     async fn status_api_exposes_embedding_settings_without_tokens() {
         let mut cfg = config::Config::default();
         cfg.llm.tokens.open_ai = "secret-openai-key".into();
-        cfg.llm.tokens.google_ai = "secret-google-key".into();
         let state = AppState::new(cfg).await;
         let Json(status) = get_status(State(state)).await;
         assert_eq!(status["embedding"]["provider"], "openai");

@@ -153,7 +153,6 @@ export function sendMessage(
 export function updateLlmConfig(req: {
 	api_key?: string;
 	openai?: string;
-	google_ai?: string;
 	elevenlabs?: string;
 	openrouter?: string;
 }): Promise<void> {

@@ -275,10 +275,6 @@ async fn on_machine_connected(state: &AppState, machine_id: &str, bound_slug: Op
         let llm_guard = state.llm.read().await;
         if let Some(llm) = llm_guard.as_ref() {
             let instance_dir = state.workspace_dir.join("instances").join(slug);
-            let google_ai_key = {
-                let cfg = state.config.read().await;
-                cfg.llm.tokens.google_ai.clone()
-            };
 
             let agents = crate::services::child_agents::load_agents(&state.workspace_dir, slug);
             if let Some(companion) = agents.iter().find(|a| a.name == "companion") {
@@ -309,7 +305,6 @@ async fn on_machine_connected(state: &AppState, machine_id: &str, bound_slug: Op
                         &llm_c,
                         &events,
                         &vs,
-                        &google_ai_key,
                         &agent,
                         Some(&task),
                         "machine_connected",
