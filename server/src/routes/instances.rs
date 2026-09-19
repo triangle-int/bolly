@@ -59,14 +59,6 @@ pub fn router() -> Router<AppState> {
             get(search_memory),
         )
         .route(
-            "/api/instances/{instance_slug}/memory/reindex",
-            post(reindex_memory),
-        )
-        .route(
-            "/api/instances/{instance_slug}/memory/vectors",
-            get(list_vectors),
-        )
-        .route(
             "/api/instances/{instance_slug}/memory/graph",
             get(get_memory_graph),
         )
@@ -579,31 +571,6 @@ async fn search_memory(
     Ok(Json(serde_json::Value::Array(json)))
 }
 
-async fn list_vectors(
-    State(state): State<AppState>,
-    Path(instance_slug): Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    let results = state
-        .vector_store
-        .list_all(&instance_slug, 500)
-        .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-
-    let json: Vec<serde_json::Value> = results
-        .into_iter()
-        .map(|r| {
-            serde_json::json!({
-                "path": r.path,
-                "source_type": r.source_type,
-                "content_preview": r.content_preview,
-                "upload_id": r.upload_id,
-            })
-        })
-        .collect();
-
-    Ok(Json(serde_json::Value::Array(json)))
-}
-
 async fn get_memory_graph(
     State(state): State<AppState>,
     Path(instance_slug): Path<String>,
@@ -612,26 +579,6 @@ async fn get_memory_graph(
         &state.vector_store.media_store(),
         &instance_slug,
     ))
-}
-
-async fn reindex_memory(
-    State(state): State<AppState>,
-    Path(instance_slug): Path<String>,
-) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Backfill builds and atomically commits a candidate; keep the last good
-    // index searchable if any embedding request fails.
-    // Backfill in background
-    let vs = state.vector_store.clone();
-    let ws = state.workspace_dir.clone();
-    let slug = instance_slug.clone();
-    tokio::spawn(async move {
-        match vs.backfill_text_memories(&ws, &slug).await {
-            Ok(count) => log::info!("[reindex] {slug}: indexed {count} chunks"),
-            Err(e) => log::warn!("[reindex] {slug}: failed: {e}"),
-        }
-    });
-
-    Ok(Json(serde_json::json!({ "status": "reindexing" })))
 }
 
 async fn serve_memory_file_public() -> StatusCode {
@@ -982,7 +929,7 @@ mod media_tests {
     }
 
     #[tokio::test]
-    async fn media_reindex_endpoint_preserves_committed_index_during_provider_failure() {
+    async fn automatic_backfill_preserves_committed_index_during_provider_failure() {
         let mock = MockServer::new(vec![
             (200, response(vec![1., 0., 0.])),
             (503, serde_json::json!({"error":"offline"})),
@@ -1004,9 +951,11 @@ mod media_tests {
             .backfill_text_memories(ws.path(), "one")
             .await
             .unwrap();
-        let _ = reindex_memory(State(state.clone()), Path("one".into()))
-            .await
-            .unwrap();
+        // A second recovery pass hits the failing provider; the committed index survives.
+        let _ = state
+            .vector_store
+            .backfill_text_memories(ws.path(), "one")
+            .await;
         assert_eq!(
             state.vector_store.list_all("one", 10).await.unwrap().len(),
             1

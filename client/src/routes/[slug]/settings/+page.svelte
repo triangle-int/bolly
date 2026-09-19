@@ -37,7 +37,6 @@
 		updateModelMode,
 		exportInstance,
 		importInstance,
-		reindexMemory,
 		fetchScheduledTasks,
 		cancelScheduledTask,
 		fetchSuggestedMcp,
@@ -192,20 +191,6 @@
 		} finally {
 			importing = false;
 			if (importFileInput) importFileInput.value = "";
-		}
-	}
-
-	// Reindex memory
-	let reindexing = $state(false);
-
-	async function handleReindex() {
-		reindexing = true;
-		try {
-			await reindexMemory(slug);
-		} catch (e) {
-			console.error('reindex failed', e);
-		} finally {
-			reindexing = false;
 		}
 	}
 
@@ -1626,16 +1611,6 @@
 		</div>
 		<p class="data-hint">Export downloads a .tar.gz of your companion’s data (soul, memory, drops, chat history). Import merges into your companion.</p>
 
-		<div class="data-actions" style="margin-top: 0.75rem;">
-			<button
-				class="ext-form-btn"
-				disabled={reindexing}
-				onclick={handleReindex}
-			>
-				{reindexing ? 'Reindexing...' : 'Reindex memory'}
-			</button>
-			<span class="data-hint">Rebuild vector search index for all memories</span>
-		</div>
 		{#if importError}
 			<p class="error-msg" role="alert">{importError}</p>
 		{/if}

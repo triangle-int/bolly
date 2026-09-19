@@ -197,6 +197,24 @@ async fn multi_instance_routes_are_gone_and_unknown_api_paths_are_404_json() {
     );
     assert_eq!(h.instance_dirs(), vec![CANONICAL_SLUG]);
 
+    // Retired memory debug routes (#96): the vectors path now resolves as an
+    // ordinary (missing) memory file and reindex has no POST handler.
+    let (status, _) = h
+        .send(Method::GET, "/api/instances/companion/memory/vectors", None)
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let (status, _) = h
+        .send(
+            Method::POST,
+            "/api/instances/companion/memory/reindex",
+            None,
+        )
+        .await;
+    assert!(
+        status == StatusCode::NOT_FOUND || status == StatusCode::METHOD_NOT_ALLOWED,
+        "{status}"
+    );
+
     // Authentication still runs before the API 404 fallback.
     let response = build_router(h.state.clone(), None)
         .oneshot(
