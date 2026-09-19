@@ -13,7 +13,8 @@ use std::{
 
 use crate::{
     domain::companion::{
-        CANONICAL_SLUG, CompanionIdentity, IDENTITY_FILE, IdentityError, is_canonical,
+        CANONICAL_SLUG, CompanionContext, CompanionIdentity, IDENTITY_FILE, IdentityError,
+        is_canonical,
     },
     services::media_text::MediaStore,
 };
@@ -71,6 +72,29 @@ pub fn obsolete_instance_dirs(workspace_dir: &Path) -> Vec<String> {
             Vec::new()
         }
     }
+}
+
+/// The one companion as the client sees it. `exists` follows the identity
+/// marker, so a fresh server reports an absent companion and the client
+/// offers onboarding for the canonical slug only.
+pub fn context(workspace_dir: &Path) -> Result<CompanionContext, IdentityError> {
+    if read_identity(workspace_dir)?.is_none() {
+        return Ok(CompanionContext::absent());
+    }
+    let dir = companion_dir(workspace_dir);
+    Ok(CompanionContext {
+        slug: CANONICAL_SLUG,
+        exists: true,
+        companion_name: read_companion_name(&dir).unwrap_or_default(),
+        soul_exists: dir.join("soul.md").is_file(),
+    })
+}
+
+fn read_companion_name(dir: &Path) -> Option<String> {
+    let raw = std::fs::read_to_string(dir.join("project_state.json")).ok()?;
+    let state: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    let name = state.get("identity")?.get("name")?.as_str()?;
+    (!name.is_empty()).then(|| name.to_owned())
 }
 
 fn open_store(workspace_dir: &Path) -> Result<MediaStore, IdentityError> {

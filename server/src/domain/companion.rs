@@ -52,6 +52,28 @@ impl CompanionIdentity {
     }
 }
 
+/// What the client needs to open the one companion: whether it exists yet
+/// (drives onboarding) and how it presents itself. Wire shape of
+/// `GET /api/companion`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct CompanionContext {
+    pub slug: &'static str,
+    pub exists: bool,
+    pub companion_name: String,
+    pub soul_exists: bool,
+}
+
+impl CompanionContext {
+    pub fn absent() -> Self {
+        Self {
+            slug: CANONICAL_SLUG,
+            exists: false,
+            companion_name: String::new(),
+            soul_exists: false,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum IdentityError {
     /// A marker exists but is not a layout this server understands.

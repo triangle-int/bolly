@@ -2,7 +2,7 @@
 	import "./layout.css";
 	import { page } from "$app/state";
 	import favicon from "$lib/assets/favicon.svg";
-	import { getInstances } from "$lib/stores/instances.svelte.js";
+	import { getCompanion } from "$lib/stores/companion.svelte.js";
 	import { getWebSocket } from "$lib/stores/websocket.svelte.js";
 	import { createSceneStore, setSceneStore } from "$lib/stores/scene.svelte.js";
 	import { createSkinStore, setSkinStore } from "$lib/stores/skin.svelte.js";
@@ -17,7 +17,7 @@
 
 	let { children } = $props();
 
-	const instances = getInstances();
+	const companion = getCompanion();
 	const ws = getWebSocket();
 	const sceneStore = createSceneStore();
 	setSceneStore(sceneStore);
@@ -46,7 +46,7 @@
 
 	function init() {
 		needsAuth = false;
-		instances.refresh().catch((e: unknown) => {
+		companion.refresh().catch((e: unknown) => {
 			if (e instanceof AuthError) needsAuth = true;
 		});
 		ws.connect();
@@ -57,9 +57,7 @@
 		init();
 
 		const unsub = ws.subscribe((event: ServerEvent) => {
-			if (event.type === "instance_discovered") {
-				instances.upsert(event.instance);
-			} else if (event.type === "secret_request") {
+			if (event.type === "secret_request") {
 				secretRequest = {
 					instanceSlug: event.instance_slug,
 					id: event.id,

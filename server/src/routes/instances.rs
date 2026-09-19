@@ -11,9 +11,8 @@ use std::fs;
 
 use crate::{
     app::state::AppState,
-    domain::instance::InstanceSummary,
     domain::memory::MemoryEntry,
-    services::{chat, companion, memory, tools, workspace},
+    services::{chat, memory, tools},
 };
 
 /// Retired control-token resource namespace; always denies access.
@@ -26,8 +25,6 @@ pub fn public_memory_router() -> Router<AppState> {
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/instances", get(list_instances))
-        .route("/api/instances/{instance_slug}", delete(delete_instance))
         .route("/api/instances/{instance_slug}/mood", get(get_mood))
         .route(
             "/api/instances/{instance_slug}/companion-name",
@@ -114,48 +111,6 @@ pub fn router() -> Router<AppState> {
             "/api/instances/{instance_slug}/import",
             post(import_instance),
         )
-}
-
-/// The one canonical companion, or an empty list until it has been created.
-/// An unsupported identity marker fails closed instead of listing anything.
-async fn list_instances(
-    State(state): State<AppState>,
-) -> Result<Json<Vec<InstanceSummary>>, axum::response::Response> {
-    match companion::read_identity(&state.workspace_dir) {
-        Ok(Some(_)) => Ok(Json(
-            workspace::companion_summary(&state.workspace_dir)
-                .into_iter()
-                .collect(),
-        )),
-        Ok(None) => Ok(Json(Vec::new())),
-        Err(error) => {
-            Err(crate::app::companion_boundary::CompanionRejection::from(error).into_response())
-        }
-    }
-}
-
-async fn delete_instance(
-    State(state): State<AppState>,
-    Path(instance_slug): Path<String>,
-) -> StatusCode {
-    // Validate slug to prevent path traversal
-    if instance_slug.contains('/')
-        || instance_slug.contains('\\')
-        || instance_slug == ".."
-        || instance_slug == "."
-    {
-        return StatusCode::BAD_REQUEST;
-    }
-
-    let instance_dir = state.workspace_dir.join("instances").join(&instance_slug);
-    if !instance_dir.exists() {
-        return StatusCode::NOT_FOUND;
-    }
-
-    match fs::remove_dir_all(&instance_dir) {
-        Ok(_) => StatusCode::NO_CONTENT,
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
-    }
 }
 
 #[derive(Serialize)]

@@ -679,7 +679,7 @@ async fn scoped_downloads_preserve_all_media_types_and_never_cache_authorization
     let response = app
         .oneshot(
             Request::builder()
-                .uri(format!("/api/instances?cap={cap}"))
+                .uri(format!("/api/companion?cap={cap}"))
                 .body(Body::empty())
                 .unwrap(),
         )
@@ -693,7 +693,7 @@ async fn api_control_auth_never_accepts_http_query_tokens() {
     let app = build_router(seeded_state().await, None);
     for path in [
         "/api/meta",
-        "/api/instances",
+        "/api/companion",
         "/api/instances/moon/export",
         "/api/instances/moon/uploads/id/file",
         "/api/instances/moon/memory/photo.png",
