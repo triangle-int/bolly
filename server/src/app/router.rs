@@ -37,15 +37,11 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
 
     // Public routes — no auth
     let health = routes::health::router();
-    let auth = routes::auth::router();
-    let pwa = routes::pwa::router();
     let public_files = routes::uploads::public_router();
     let public_memory = routes::instances::public_memory_router();
 
     let app = Router::new()
         .merge(health)
-        .merge(auth)
-        .merge(pwa)
         .merge(public_files)
         .merge(public_memory)
         .merge(api)
@@ -63,71 +59,5 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use axum::{body::Body, http::Request};
-    use tower::ServiceExt;
-
-    #[tokio::test]
-    async fn removed_google_workspace_routes_are_not_in_api_router() {
-        let state = AppState::new(crate::config::Config::default()).await;
-        let account_routes = format!("/api/instances/moon/google/{}", "accounts");
-        let connect_route = format!("/api/instances/moon/google/{}", "connect");
-        let disconnect_route = format!("{account_routes}/user@example.com");
-        for (method, uri) in [
-            ("GET", account_routes),
-            ("GET", connect_route),
-            ("DELETE", disconnect_route),
-        ] {
-            let response = api_router(&state)
-                .with_state(state.clone())
-                .oneshot(
-                    Request::builder()
-                        .method(method)
-                        .uri(&uri)
-                        .body(Body::empty())
-                        .unwrap(),
-                )
-                .await
-                .unwrap();
-            assert_eq!(
-                response.status(),
-                axum::http::StatusCode::NOT_FOUND,
-                "{uri}"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn standalone_api_has_no_managed_status_or_usage_route() {
-        let state = AppState::new(crate::config::Config::default()).await;
-        let status = api_router(&state)
-            .with_state(state.clone())
-            .oneshot(
-                Request::builder()
-                    .uri("/api/config/status")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(status.status(), axum::http::StatusCode::OK);
-        let body = axum::body::to_bytes(status.into_body(), usize::MAX)
-            .await
-            .unwrap();
-        let status: serde_json::Value = serde_json::from_slice(&body).unwrap();
-        assert!(status.get("is_managed").is_none());
-
-        let usage = api_router(&state)
-            .with_state(state)
-            .oneshot(
-                Request::builder()
-                    .uri("/api/usage")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(usage.status(), axum::http::StatusCode::NOT_FOUND);
-    }
-}
+#[path = "../../test-support/router_security.rs"]
+mod tests;

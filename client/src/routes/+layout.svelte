@@ -86,7 +86,6 @@
 
 <svelte:head>
 	<link rel="icon" href={favicon} />
-	<link rel="manifest" href="/manifest.webmanifest" />
 	<title>nolune</title>
 </svelte:head>
 

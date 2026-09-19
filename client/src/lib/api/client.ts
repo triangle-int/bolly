@@ -18,6 +18,7 @@ import type {
 	ChildAgent,
 	AgentHistoryEntry,
 } from "./types.js";
+import { clearLegacyBrowserAuth } from "./legacy-auth-cleanup.js";
 
 const BASE = "";
 
@@ -26,24 +27,12 @@ const BASE = "";
 // ---------------------------------------------------------------------------
 
 const TOKEN_KEY = "nolune_auth_token";
-const TOKEN_COOKIE = "nolune_token";
 
-function getCookie(name: string): string | null {
-	if (typeof document === "undefined") return null;
-	const match = document.cookie.match(new RegExp(`(?:^|; )${name}=([^;]*)`));
-	return match ? decodeURIComponent(match[1]) : null;
-}
-
-function setCookie(name: string, value: string) {
-	if (typeof document === "undefined") return;
-	// 1 year expiry, same-site strict, secure on https
-	const secure = location.protocol === "https:" ? "; Secure" : "";
-	document.cookie = `${name}=${encodeURIComponent(value)}; path=/; max-age=31536000; SameSite=Strict${secure}`;
-}
-
-function deleteCookie(name: string) {
-	if (typeof document === "undefined") return;
-	document.cookie = `${name}=; path=/; max-age=0`;
+function clearLegacyAuth() {
+	clearLegacyBrowserAuth(
+		typeof localStorage === "undefined" ? undefined : localStorage,
+		typeof document === "undefined" ? undefined : document,
+	);
 }
 
 export function isDesktopRelay(): boolean {
@@ -51,11 +40,11 @@ export function isDesktopRelay(): boolean {
 }
 
 export function getAuthToken(): string | null {
+	clearLegacyAuth();
 	// Desktop authenticates in the native exact-origin relay, never in browser URLs.
 	if (isDesktopRelay()) return null;
-	if (typeof localStorage === "undefined") return getCookie(TOKEN_COOKIE);
-	// Try localStorage first, fall back to cookie (for PWA isolated storage)
-	return localStorage.getItem(TOKEN_KEY) ?? getCookie(TOKEN_COOKIE);
+	if (typeof localStorage === "undefined") return null;
+	return localStorage.getItem(TOKEN_KEY);
 }
 
 /** Build a public URL for media (video/image) that includes auth token in query string.
@@ -71,14 +60,14 @@ export function setAuthToken(token: string) {
 	if (typeof localStorage !== "undefined") {
 		localStorage.setItem(TOKEN_KEY, token);
 	}
-	setCookie(TOKEN_COOKIE, token);
+	clearLegacyAuth();
 }
 
 export function clearAuthToken() {
 	if (typeof localStorage !== "undefined") {
 		localStorage.removeItem(TOKEN_KEY);
 	}
-	deleteCookie(TOKEN_COOKIE);
+	clearLegacyAuth();
 }
 
 function authHeaders(): Record<string, string> {

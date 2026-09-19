@@ -117,7 +117,7 @@ jobs:
       - name: Svelte and TypeScript checks
         run: pnpm check
       - name: JavaScript tests
-        if: matrix.project == 'desktop'
+        if: matrix.project == 'client' || matrix.project == 'desktop'
         run: pnpm test
       - run: pnpm build
 
