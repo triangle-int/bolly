@@ -15,7 +15,7 @@ test('recursive browser HTTP producers never append control-token queries', () =
     }
 });
 test('attachment and memory consumers refresh browser grants', () => {
-    for (const file of ['chat/MessageBubble.svelte', 'memory/MemoryMapView.svelte']) {
+    for (const file of ['chat/MessageBubble.svelte', 'memory/MemoryLibraryView.svelte']) {
         const source = readFileSync(new URL(`../src/lib/components/${file}`, import.meta.url), 'utf8');
         assert.match(source, /use:resourceMedia/, file);
     }

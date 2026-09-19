@@ -546,10 +546,6 @@ export function searchMemory(slug: string, query: string, limit = 10): Promise<M
 	return json(`/api/instances/${encodeURIComponent(slug)}/memory/search?q=${encodeURIComponent(query)}&limit=${limit}`);
 }
 
-export function reindexMemory(slug: string): Promise<{ status: string }> {
-	return json(`/api/instances/${encodeURIComponent(slug)}/memory/reindex`, { method: 'POST' });
-}
-
 function encodedMemoryPath(path: string): string {
     return path.split('/').map(part => encodeURIComponent(part).replace(/[!'()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)).join('/');
 }
@@ -559,17 +555,6 @@ export async function fetchMemoryContent(slug: string, path: string): Promise<st
 	if (res.status === 401) throw new AuthError();
 	if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
 	return res.text();
-}
-
-export interface VectorEntry {
-	path: string;
-	source_type: string;
-	content_preview: string;
-	upload_id?: string;
-}
-
-export function fetchVectors(slug: string): Promise<VectorEntry[]> {
-	return json(`/api/instances/${encodeURIComponent(slug)}/memory/vectors`);
 }
 
 export function fetchMemoryGraph(slug: string): Promise<import("./types.js").MemoryGraph> {

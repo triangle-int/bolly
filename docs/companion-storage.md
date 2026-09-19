@@ -74,6 +74,17 @@ multi-instance layout. The server:
 There are no external users of that layout, so no migration is provided.
 Remove or archive those directories manually.
 
+### Derived index recovery
+
+`vectors/` is a derived cache keyed by the companion slug; `memory/` is the
+source of truth. Recovery is automatic (#96): on startup the server asks the
+index whether it `needs_backfill` (missing, corrupt, or written by another
+format version) and rebuilds it from the memory files in the background,
+committing only a complete candidate so the last good index stays searchable
+if a provider call fails. Deleting a memory reconciles its index entries
+immediately. There is no button and no manual reindex route; delete the
+`vectors/` directory to force a rebuild on the next start.
+
 ## Wire shape
 
 ### Slug in URLs, bodies, and events
