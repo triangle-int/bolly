@@ -47,12 +47,18 @@ export function getAuthToken(): string | null {
 	return localStorage.getItem(TOKEN_KEY);
 }
 
-/** Build a public URL for media (video/image) that includes auth token in query string.
- *  Use this for <video src> and <img src> since they can't send Authorization headers. */
-export function mediaUrl(slug: string, uploadId: string): string {
-	const token = getAuthToken();
-	const q = token ? `?token=${encodeURIComponent(token)}` : "";
-	return `${BASE}/public/files/${encodeURIComponent(slug)}/${encodeURIComponent(uploadId)}${q}`;
+/** Issue a resource-scoped browser URL through the authenticated API. */
+export interface ResourceGrant { url: string; refresh_after_seconds: number }
+export async function mediaUrl(slug: string, uploadId: string): Promise<ResourceGrant> {
+    return json<ResourceGrant>(`/api/instances/${encodeURIComponent(slug)}/resource-capabilities/files`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: uploadId }),
+    });
+}
+
+export async function memoryMediaUrl(slug: string, path: string): Promise<ResourceGrant> {
+    return json<ResourceGrant>(`/api/instances/${encodeURIComponent(slug)}/resource-capabilities/memory`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }),
+    });
 }
 
 export function setAuthToken(token: string) {
@@ -517,8 +523,12 @@ export function reindexMemory(slug: string): Promise<{ status: string }> {
 	return json(`/api/instances/${encodeURIComponent(slug)}/memory/reindex`, { method: 'POST' });
 }
 
+function encodedMemoryPath(path: string): string {
+    return path.split('/').map(part => encodeURIComponent(part).replace(/[!'()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)).join('/');
+}
+
 export async function fetchMemoryContent(slug: string, path: string): Promise<string> {
-	const res = await authedFetch(`/api/instances/${encodeURIComponent(slug)}/memory/${path}`);
+	const res = await authedFetch(`/api/instances/${encodeURIComponent(slug)}/memory/${encodedMemoryPath(path)}`);
 	if (res.status === 401) throw new AuthError();
 	if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
 	return res.text();
@@ -540,7 +550,7 @@ export function fetchMemoryGraph(slug: string): Promise<import("./types.js").Mem
 }
 
 export async function deleteMemoryFile(slug: string, path: string): Promise<void> {
-	const res = await authedFetch(`/api/instances/${encodeURIComponent(slug)}/memory/${path}`, { method: 'DELETE' });
+	const res = await authedFetch(`/api/instances/${encodeURIComponent(slug)}/memory/${encodedMemoryPath(path)}`, { method: 'DELETE' });
 	if (res.status === 401) throw new AuthError();
 	if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
 }
@@ -609,10 +619,8 @@ export async function deleteUpload(slug: string, uploadId: string): Promise<void
 	);
 }
 
-export function uploadFileUrl(slug: string, uploadId: string): string {
-	const base = `/api/instances/${encodeURIComponent(slug)}/uploads/${encodeURIComponent(uploadId)}/file`;
-	const token = getAuthToken();
-	return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+export async function uploadFileUrl(slug: string, uploadId: string): Promise<string> {
+    return (await mediaUrl(slug, uploadId)).url;
 }
 
 // ---------------------------------------------------------------------------
@@ -747,9 +755,7 @@ export function setUpdateChannel(channel: string): Promise<{ ok: boolean; channe
 // ---------------------------------------------------------------------------
 
 export function exportInstanceUrl(slug: string): string {
-	const base = `${BASE}/api/instances/${encodeURIComponent(slug)}/export`;
-	const token = getAuthToken();
-	return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+    return `${BASE}/api/instances/${encodeURIComponent(slug)}/export`;
 }
 
 /** Stream-download the export archive, reporting bytes received via callback. */
@@ -758,7 +764,7 @@ export async function exportInstance(
 	onProgress?: (downloadedBytes: number) => void,
 ): Promise<Blob> {
 	const url = exportInstanceUrl(slug);
-	const res = await fetch(url);
+	const res = await authedFetch(url);
 	if (!res.ok) throw new Error(await res.text() || "export failed");
 
 	const reader = res.body!.getReader();
@@ -814,6 +820,7 @@ export async function submitComputerUseResult(
 // WebSocket
 // ---------------------------------------------------------------------------
 
+// ISSUE-112: sole query-control-token exemption; WebSocket handshake only.
 export function createWebSocket(): WebSocket {
 	const proto = location.protocol === "https:" ? "wss:" : "ws:";
 	const token = getAuthToken();

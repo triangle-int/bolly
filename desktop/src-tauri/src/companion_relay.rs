@@ -30,6 +30,7 @@ fn companion_csp(origin: &str) -> String {
 #[derive(Clone)]
 struct RelayState {
     upstream: url::Url,
+    public_origin: Option<url::Origin>,
     origin: String,
     session: String,
     cookie_name: String,
@@ -116,6 +117,85 @@ fn upstream_url(base: &url::Url, uri: &axum::http::Uri) -> Result<url::Url, Stat
     Ok(target)
 }
 
+/// Convert only known resource namespaces to exact native issuance requests.
+fn native_resource_request(
+    uri: &axum::http::Uri,
+) -> Result<Option<(String, serde_json::Value)>, StatusCode> {
+    let Some(rest) = uri.path().strip_prefix("/resources/") else {
+        return Ok(None);
+    };
+    let mut parts = rest.splitn(4, '/');
+    let audience = parts.next().unwrap_or("");
+    let kind = parts.next().unwrap_or("");
+    let slug = parts.next().unwrap_or("");
+    let encoded = parts.next().unwrap_or("");
+    if !matches!(audience, "browser" | "model-provider" | "native-relay")
+        || !matches!(kind, "files" | "memory")
+        || slug.is_empty()
+        || slug.len() > 128
+        || !slug
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_".contains(&b))
+        || encoded.is_empty()
+        || encoded.len() > 3072
+    {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let mut components = Vec::new();
+    for part in encoded.split('/') {
+        let mut bytes = Vec::new();
+        let mut index = 0;
+        while index < part.len() {
+            let byte = part.as_bytes()[index];
+            if byte == b'%' {
+                let hex = part
+                    .get(index + 1..index + 3)
+                    .ok_or(StatusCode::BAD_REQUEST)?;
+                bytes.push(u8::from_str_radix(hex, 16).map_err(|_| StatusCode::BAD_REQUEST)?);
+                index += 3;
+            } else {
+                bytes.push(byte);
+                index += 1;
+            }
+        }
+        let decoded = String::from_utf8(bytes).map_err(|_| StatusCode::BAD_REQUEST)?;
+        if decoded.is_empty()
+            || matches!(decoded.as_str(), "." | "..")
+            || decoded.contains(['/', '\\'])
+            || decoded.chars().any(char::is_control)
+        {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        let canonical: String = decoded
+            .bytes()
+            .map(|b| {
+                if b.is_ascii_alphanumeric() || b"-._~".contains(&b) {
+                    char::from(b).to_string()
+                } else {
+                    format!("%{b:02X}")
+                }
+            })
+            .collect();
+        if part != canonical {
+            return Err(StatusCode::BAD_REQUEST);
+        }
+        components.push(decoded);
+    }
+    if kind == "files" && components.len() != 1 {
+        return Err(StatusCode::BAD_REQUEST);
+    }
+    let path = components.join("/");
+    let body = if kind == "files" {
+        serde_json::json!({"id": path})
+    } else {
+        serde_json::json!({"path": path})
+    };
+    Ok(Some((
+        format!("/api/native-relay/instances/{slug}/resource-capabilities/{kind}"),
+        body,
+    )))
+}
+
 pub async fn start(upstream: url::Url, token: String) -> Result<Relay, String> {
     let listener = tokio::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0))
         .await
@@ -128,19 +208,22 @@ pub async fn start(upstream: url::Url, token: String) -> Result<Relay, String> {
     );
     let session = uuid::Uuid::new_v4().to_string();
     let cookie_name = format!("nolune_relay_{}", uuid::Uuid::new_v4().simple());
-    let token = Arc::new(Mutex::new(Some(token)));
     let (stop, stopped) = watch::channel(false);
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|_| "Could not start companion relay")?;
+    let public_origin = discover_public_origin(&client, &upstream, &token).await;
+    let token = Arc::new(Mutex::new(Some(token)));
     let state = RelayState {
         upstream,
+        public_origin,
         origin: origin.clone(),
         session: session.clone(),
         cookie_name,
         token: token.clone(),
         stopped,
-        client: reqwest::Client::builder()
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|_| "Could not start companion relay")?,
+        client,
     };
     let mut shutdown = stop.subscribe();
     let app = Router::new()
@@ -181,6 +264,39 @@ pub async fn start(upstream: url::Url, token: String) -> Result<Relay, String> {
     })
 }
 
+async fn discover_public_origin(
+    client: &reqwest::Client,
+    upstream: &url::Url,
+    token: &str,
+) -> Option<url::Origin> {
+    let mut endpoint = upstream.clone();
+    endpoint.set_path("/api/config/status");
+    endpoint.set_query(None);
+    let value: serde_json::Value = client
+        .get(endpoint)
+        .bearer_auth(token)
+        .send()
+        .await
+        .ok()?
+        .error_for_status()
+        .ok()?
+        .json()
+        .await
+        .ok()?;
+    let configured = value
+        .get("public_url")?
+        .as_str()?
+        .parse::<url::Url>()
+        .ok()?;
+    if !matches!(configured.scheme(), "http" | "https")
+        || !configured.username().is_empty()
+        || configured.password().is_some()
+    {
+        return None;
+    }
+    Some(configured.origin())
+}
+
 async fn bootstrap(State(state): State<RelayState>, headers: HeaderMap) -> Response<Body> {
     if *state.stopped.borrow()
         || !is_local_request(&headers, &state.origin)
@@ -219,7 +335,7 @@ async fn forward(State(mut state): State<RelayState>, request: Request<Body>) ->
         }
         return StatusCode::UNAUTHORIZED.into_response();
     }
-    let target = match upstream_url(&state.upstream, request.uri()) {
+    let mut target = match upstream_url(&state.upstream, request.uri()) {
         Ok(url) => url,
         Err(code) => return code.into_response(),
     };
@@ -227,6 +343,51 @@ async fn forward(State(mut state): State<RelayState>, request: Request<Body>) ->
         Some(t) => t,
         None => return StatusCode::UNAUTHORIZED.into_response(),
     };
+    let native = match native_resource_request(request.uri()) {
+        Ok(value) => value,
+        Err(code) => return code.into_response(),
+    };
+    let resource_request = native.is_some();
+    if let Some((endpoint, input)) = native {
+        if request.method() != "GET" {
+            return StatusCode::METHOD_NOT_ALLOWED.into_response();
+        }
+        let mut issue_url = state.upstream.clone();
+        issue_url.set_path(&endpoint);
+        issue_url.set_query(None);
+        let issue = state
+            .client
+            .post(issue_url)
+            .bearer_auth(&token)
+            .json(&input)
+            .send();
+        let response = tokio::select! {
+            _ = state.stopped.changed() => return StatusCode::UNAUTHORIZED.into_response(),
+            result = issue => match result { Ok(r) if r.status().is_success() => r, _ => return StatusCode::BAD_GATEWAY.into_response() }
+        };
+        let value: serde_json::Value = match response.json().await {
+            Ok(v) => v,
+            Err(_) => return StatusCode::BAD_GATEWAY.into_response(),
+        };
+        let Some(resource_url) = value["url"].as_str() else {
+            return StatusCode::BAD_GATEWAY.into_response();
+        };
+        let Ok(uri) = resource_url.parse::<axum::http::Uri>() else {
+            return StatusCode::BAD_GATEWAY.into_response();
+        };
+        // Server response cannot redirect the native credential or choose another identity.
+        if uri.scheme().is_some()
+            || uri.authority().is_some()
+            || !uri.path().starts_with("/resources/native-relay/")
+            || native_resource_request(&uri).ok().flatten().as_ref() != Some(&(endpoint, input))
+        {
+            return StatusCode::BAD_GATEWAY.into_response();
+        }
+        target = match upstream_url(&state.upstream, &uri) {
+            Ok(url) => url,
+            Err(code) => return code.into_response(),
+        };
+    }
     let (parts, body) = request.into_parts();
     let mut headers = parts.headers;
     for name in [
@@ -243,12 +404,15 @@ async fn forward(State(mut state): State<RelayState>, request: Request<Body>) ->
         headers.remove(name);
     }
     // Preserve streamed uploads/downloads and Range requests, but never follow redirects.
-    let pending = state
+    let mut builder = state
         .client
         .request(parts.method, target)
         .headers(headers)
-        .header("accept-encoding", "identity")
-        .bearer_auth(&token)
+        .header("accept-encoding", "identity");
+    if !resource_request {
+        builder = builder.bearer_auth(&token);
+    }
+    let pending = builder
         .body(reqwest::Body::wrap_stream(body.into_data_stream()))
         .send();
     let response = tokio::select! {
@@ -302,7 +466,13 @@ async fn forward(State(mut state): State<RelayState>, request: Request<Body>) ->
             if let Ok(value) = value.to_str() {
                 output = output.header(
                     name,
-                    sanitize_text(value, &state.upstream, &state.origin, &token),
+                    sanitize_text_with_public(
+                        value,
+                        &state.upstream,
+                        state.public_origin.as_ref(),
+                        &state.origin,
+                        &token,
+                    ),
                 );
             }
         }
@@ -359,7 +529,14 @@ async fn forward(State(mut state): State<RelayState>, request: Request<Body>) ->
         output.headers_mut().unwrap().remove(header);
     }
     if mime == "text/event-stream" {
-        let body = sanitized_sse_body(response, state.stopped, state.upstream, state.origin, token);
+        let body = sanitized_sse_body(
+            response,
+            state.stopped,
+            state.upstream,
+            state.public_origin,
+            state.origin,
+            token,
+        );
         return output
             .header("cache-control", "no-store")
             .body(body)
@@ -372,7 +549,13 @@ async fn forward(State(mut state): State<RelayState>, request: Request<Body>) ->
     let Ok(text) = std::str::from_utf8(&bytes) else {
         return StatusCode::BAD_GATEWAY.into_response();
     };
-    let Ok(body) = sanitize_browser_text(text, &state.upstream, &state.origin, &token) else {
+    let Ok(body) = sanitize_browser_text_with_public(
+        text,
+        &state.upstream,
+        state.public_origin.as_ref(),
+        &state.origin,
+        &token,
+    ) else {
         return StatusCode::BAD_GATEWAY.into_response();
     };
     output
@@ -439,9 +622,10 @@ async fn pipe(
                     let frame = match frame {
                         Message::Text(v) => {
                             let token = state.token.lock().unwrap().clone().unwrap_or_default();
-                            let Ok(text) = sanitize_browser_text(
+                            let Ok(text) = sanitize_browser_text_with_public(
                                 &v,
                                 &state.upstream,
+                                state.public_origin.as_ref(),
                                 &state.origin,
                                 &token,
                             ) else {
@@ -453,9 +637,10 @@ async fn pipe(
                             let token = state.token.lock().unwrap().clone().unwrap_or_default();
                             let bytes = match std::str::from_utf8(&v) {
                                 Ok(text) => {
-                                    let Ok(text) = sanitize_browser_text(
+                                    let Ok(text) = sanitize_browser_text_with_public(
                                         text,
                                         &state.upstream,
+                                        state.public_origin.as_ref(),
                                         &state.origin,
                                         &token,
                                     ) else {
@@ -550,7 +735,13 @@ fn redact_prefix(bytes: &[u8], token: &str, limit: usize) -> (Vec<u8>, usize) {
     (result, i)
 }
 
-fn rewrite_urls(text: &str, upstream: &url::Url, origin: &str, token: &str) -> String {
+fn rewrite_urls(
+    text: &str,
+    upstream: &url::Url,
+    public_origin: Option<&url::Origin>,
+    origin: &str,
+    _token: &str,
+) -> String {
     // URL delimiters cover Markdown, HTML, prose and JSON string boundaries.
     text.split_inclusive(|c: char| {
         c.is_whitespace()
@@ -577,14 +768,14 @@ fn rewrite_urls(text: &str, upstream: &url::Url, origin: &str, token: &str) -> S
         let Ok(mut url) = upstream.join(candidate) else {
             return part.to_owned();
         };
-        let media =
+        let allowed_origin = url.origin() == upstream.origin()
+            || public_origin.is_some_and(|configured| configured == &url.origin());
+        let legacy_media =
             url.path().starts_with("/public/files/") || url.path().starts_with("/public/memory/");
-        // Public-origin links may differ from the connection origin. A
-        // token-bearing public media URL can safely map to our fixed
-        // upstream route; we never request that URL's foreign origin.
-        let authenticated_media =
-            !token.is_empty() && url.query_pairs().any(|(k, v)| k == "token" && v == token);
-        if media && (url.origin() == upstream.origin() || authenticated_media) {
+        let scoped_resource = url.path().starts_with("/resources/");
+        if scoped_resource && allowed_origin {
+            format!("{}{}{}", origin, &url[url::Position::BeforePath..], suffix)
+        } else if legacy_media && allowed_origin {
             let params: Vec<_> = url
                 .query_pairs()
                 .filter(|(k, _)| k != "token")
@@ -602,31 +793,53 @@ fn rewrite_urls(text: &str, upstream: &url::Url, origin: &str, token: &str) -> S
     .collect()
 }
 
-fn sanitize_value(value: &mut serde_json::Value, upstream: &url::Url, origin: &str, token: &str) {
+fn sanitize_value_with_public(
+    value: &mut serde_json::Value,
+    upstream: &url::Url,
+    public_origin: Option<&url::Origin>,
+    origin: &str,
+    token: &str,
+) {
     match value {
-        serde_json::Value::String(text) => *text = sanitize_text(text, upstream, origin, token),
+        serde_json::Value::String(text) => {
+            *text = sanitize_text_with_public(text, upstream, public_origin, origin, token)
+        }
         serde_json::Value::Array(values) => {
             for value in values {
-                sanitize_value(value, upstream, origin, token);
+                sanitize_value_with_public(value, upstream, public_origin, origin, token);
             }
         }
         serde_json::Value::Object(values) => {
             let old = std::mem::take(values);
             for (key, mut value) in old {
-                sanitize_value(&mut value, upstream, origin, token);
-                values.insert(sanitize_text(&key, upstream, origin, token), value);
+                sanitize_value_with_public(&mut value, upstream, public_origin, origin, token);
+                values.insert(
+                    sanitize_text_with_public(&key, upstream, public_origin, origin, token),
+                    value,
+                );
             }
         }
         _ => {}
     }
 }
 
+#[cfg(test)]
 fn sanitize_text(text: &str, upstream: &url::Url, origin: &str, token: &str) -> String {
+    sanitize_text_with_public(text, upstream, None, origin, token)
+}
+
+fn sanitize_text_with_public(
+    text: &str,
+    upstream: &url::Url,
+    public_origin: Option<&url::Origin>,
+    origin: &str,
+    token: &str,
+) -> String {
     let rewritten = if let Ok(mut value) = serde_json::from_str::<serde_json::Value>(text) {
-        sanitize_value(&mut value, upstream, origin, token);
+        sanitize_value_with_public(&mut value, upstream, public_origin, origin, token);
         value.to_string()
     } else {
-        rewrite_urls(text, upstream, origin, token)
+        rewrite_urls(text, upstream, public_origin, origin, token)
     };
     redact_secret(&rewritten, token)
 }
@@ -657,13 +870,24 @@ fn supported_text_content_type(content_type: &str) -> Result<(), ()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn sanitize_browser_text(
     text: &str,
     upstream: &url::Url,
     origin: &str,
     token: &str,
 ) -> Result<String, ()> {
-    let sanitized = sanitize_text(text, upstream, origin, token);
+    sanitize_browser_text_with_public(text, upstream, None, origin, token)
+}
+
+fn sanitize_browser_text_with_public(
+    text: &str,
+    upstream: &url::Url,
+    public_origin: Option<&url::Origin>,
+    origin: &str,
+    token: &str,
+) -> Result<String, ()> {
+    let sanitized = sanitize_text_with_public(text, upstream, public_origin, origin, token);
     // Browsers accept numeric character references without a semicolon, while
     // html_escape intentionally only decodes the unambiguous forms.
     let decoded = decode_numeric_html_entities(&html_escape::decode_html_entities(&sanitized));
@@ -750,6 +974,7 @@ fn sse_delimiter(bytes: &[u8]) -> Option<usize> {
 fn sanitize_sse_event(
     event: &str,
     upstream: &url::Url,
+    public_origin: Option<&url::Origin>,
     origin: &str,
     token: &str,
 ) -> Result<String, ()> {
@@ -771,9 +996,21 @@ fn sanitize_sse_event(
         let line = &event[start..end];
         if let Some(payload) = line.strip_prefix("data:") {
             output.push_str("data:");
-            output.push_str(&sanitize_browser_text(payload, upstream, origin, token)?);
+            output.push_str(&sanitize_browser_text_with_public(
+                payload,
+                upstream,
+                public_origin,
+                origin,
+                token,
+            )?);
         } else {
-            output.push_str(&sanitize_browser_text(line, upstream, origin, token)?);
+            output.push_str(&sanitize_browser_text_with_public(
+                line,
+                upstream,
+                public_origin,
+                origin,
+                token,
+            )?);
         }
         output.push_str(&event[end..ending_end]);
         start = ending_end;
@@ -785,6 +1022,7 @@ fn sanitized_sse_body(
     response: reqwest::Response,
     stopped: watch::Receiver<bool>,
     upstream: url::Url,
+    public_origin: Option<url::Origin>,
     origin: String,
     token: String,
 ) -> Body {
@@ -794,6 +1032,7 @@ fn sanitized_sse_body(
         move |(mut source, mut pending, done)| {
             let mut stopped = stopped.clone();
             let upstream = upstream.clone();
+            let public_origin = public_origin.clone();
             let origin = origin.clone();
             let token = token.clone();
             async move {
@@ -812,8 +1051,14 @@ fn sanitized_sse_body(
                         let output = std::str::from_utf8(&event)
                             .map_err(|_| std::io::Error::other("invalid SSE encoding"))
                             .and_then(|text| {
-                                sanitize_sse_event(text, &upstream, &origin, &token)
-                                    .map_err(|_| std::io::Error::other("unsafe SSE event"))
+                                sanitize_sse_event(
+                                    text,
+                                    &upstream,
+                                    public_origin.as_ref(),
+                                    &origin,
+                                    &token,
+                                )
+                                .map_err(|_| std::io::Error::other("unsafe SSE event"))
                             });
                         return Some((
                             output.map(axum::body::Bytes::from),
@@ -843,8 +1088,14 @@ fn sanitized_sse_body(
                             let output = std::str::from_utf8(&pending)
                                 .map_err(|_| std::io::Error::other("invalid SSE encoding"))
                                 .and_then(|text| {
-                                    sanitize_sse_event(text, &upstream, &origin, &token)
-                                        .map_err(|_| std::io::Error::other("unsafe SSE event"))
+                                    sanitize_sse_event(
+                                        text,
+                                        &upstream,
+                                        public_origin.as_ref(),
+                                        &origin,
+                                        &token,
+                                    )
+                                    .map_err(|_| std::io::Error::other("unsafe SSE event"))
                                 });
                             return Some((
                                 output.map(axum::body::Bytes::from),
@@ -939,18 +1190,36 @@ mod tests {
     #[test]
     fn generated_media_links_are_localized_without_query_credentials() {
         let base = crate::connection_url("https://example.org:8443").unwrap();
+        let public = "https://public.example"
+            .parse::<url::Url>()
+            .unwrap()
+            .origin();
         let mut value = serde_json::json!({"images": [
             "https://example.org:8443/public/memory/a/test.png?token=long-lived&size=2",
             "/public/files/a/b?token=long-lived",
-            "https://other.example/public/files/a/b",
+            "https://public.example/resources/browser/files/a/b?cap=scoped",
+            "https://other.example/resources/browser/files/a/b?cap=foreign",
         ]});
-        sanitize_value(&mut value, &base, "http://127.0.0.1:1234", "long-lived");
+        sanitize_value_with_public(
+            &mut value,
+            &base,
+            Some(&public),
+            "http://127.0.0.1:1234",
+            "long-lived",
+        );
         assert_eq!(
             value["images"][0],
             "http://127.0.0.1:1234/public/memory/a/test.png?size=2"
         );
         assert_eq!(value["images"][1], "http://127.0.0.1:1234/public/files/a/b");
-        assert_eq!(value["images"][2], "https://other.example/public/files/a/b");
+        assert_eq!(
+            value["images"][2],
+            "http://127.0.0.1:1234/resources/browser/files/a/b?cap=scoped"
+        );
+        assert_eq!(
+            value["images"][3],
+            "https://other.example/resources/browser/files/a/b?cap=foreign"
+        );
     }
 
     #[test]
@@ -960,7 +1229,17 @@ mod tests {
         let value = serde_json::json!({"nested": [{"text":
             "See ![image](https://private.example:8443/public/files/a/b?token=TOP_SECRET&size=2) and [public](https://public.example/public/memory/a/b.png?token=TOP%5fSECRET). Foreign https://foreign.example/path?x=TOP%5FSECRET and malformed TOP_SECRET"
         }], "TOP_SECRET": "{\"deep\":\"TOP_SECRET\"}"});
-        let output = sanitize_text(&value.to_string(), &base, origin, "TOP_SECRET");
+        let public = "https://public.example"
+            .parse::<url::Url>()
+            .unwrap()
+            .origin();
+        let output = sanitize_text_with_public(
+            &value.to_string(),
+            &base,
+            Some(&public),
+            origin,
+            "TOP_SECRET",
+        );
         assert!(!output.contains("TOP_SECRET"));
         assert!(!output.contains("TOP%5"));
         assert!(output.contains("http://127.0.0.1:1234/public/files/a/b?size=2"));
@@ -1012,7 +1291,7 @@ mod tests {
             "data: {\"text\":\"TOP\\u005fSECRET\"}\r\n\r",
         ] {
             assert_eq!(sse_delimiter(event.as_bytes()), Some(event.len()));
-            let output = sanitize_sse_event(event, &base, origin, "TOP_SECRET").unwrap();
+            let output = sanitize_sse_event(event, &base, None, origin, "TOP_SECRET").unwrap();
             assert!(!output.contains("TOP_SECRET"));
             assert!(!output.contains("u005f"));
             assert!(output.contains("[redacted]"));
@@ -1020,6 +1299,7 @@ mod tests {
         assert!(sanitize_sse_event(
             "data: {\"text\":\"TOP&#95SECRET\"}\n\n",
             &base,
+            None,
             origin,
             "TOP_SECRET"
         )
@@ -1332,6 +1612,79 @@ mod tests {
             closed,
             None | Some(Err(_)) | Some(Ok(Message::Close(_)))
         ));
+        task.abort();
+    }
+    #[test]
+    fn scoped_resources_use_native_issuance_with_exact_decoded_identity() {
+        let uri = "/resources/browser/memory/moon/Folder/R%C3%A9sum%C3%A9%201%25.png?cap=browser"
+            .parse()
+            .unwrap();
+        let (endpoint, body) = native_resource_request(&uri).unwrap().unwrap();
+        assert_eq!(
+            endpoint,
+            "/api/native-relay/instances/moon/resource-capabilities/memory"
+        );
+        assert_eq!(body, serde_json::json!({"path": "Folder/Résumé 1%.png"}));
+        assert!(native_resource_request(&"/api/meta".parse().unwrap())
+            .unwrap()
+            .is_none());
+        assert!(
+            native_resource_request(&"/resources/browser/files/moon/a%2Fb".parse().unwrap())
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn relay_exchanges_browser_resource_identity_for_native_capability() {
+        async fn endpoint(request: Request<Body>) -> Response<Body> {
+            if request.uri().path()
+                == "/api/native-relay/instances/moon/resource-capabilities/files"
+            {
+                assert_eq!(request.method(), "POST");
+                assert_eq!(request.headers()["authorization"], "Bearer native-secret");
+                let bytes = axum::body::to_bytes(request.into_body(), 2048)
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+                    serde_json::json!({"id":"id"})
+                );
+                return axum::Json(serde_json::json!({"url":"/resources/native-relay/files/moon/id?cap=native-grant"})).into_response();
+            }
+            if request.uri().to_string() == "/resources/native-relay/files/moon/id?cap=native-grant"
+            {
+                assert!(!request.headers().contains_key("authorization"));
+                return Response::builder()
+                    .header("content-type", "image/png")
+                    .body(Body::from("media bytes"))
+                    .unwrap();
+            }
+            StatusCode::UNAUTHORIZED.into_response()
+        }
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream = format!("http://{}", listener.local_addr().unwrap())
+            .parse()
+            .unwrap();
+        let task = tokio::spawn(async move {
+            axum::serve(listener, Router::new().fallback(any(endpoint)))
+                .await
+                .unwrap();
+        });
+        let relay = start(upstream, "native-secret".into()).await.unwrap();
+        let client = reqwest::Client::new();
+        let cookie = session(&client, &relay).await;
+        let response = client
+            .get(format!(
+                "{}/resources/browser/files/moon/id?cap=browser-grant",
+                relay.origin
+            ))
+            .header("cookie", cookie)
+            .header("origin", &relay.origin)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.text().await.unwrap(), "media bytes");
         task.abort();
     }
 }

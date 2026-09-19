@@ -72,6 +72,7 @@ async fn get_status(State(state): State<AppState>) -> Json<serde_json::Value> {
         "configured_keys": keys,
         "host": config.host,
         "port": config.port,
+        "public_url": config.public_url,
         "auth_token_set": !config.auth_token.is_empty(),
     }))
 }
@@ -447,22 +448,27 @@ async fn update_server(
 
     {
         let mut config = state.config.write().await;
+        let mut candidate = config.clone();
         if let Some(host) = &request.host {
-            if config.host != *host {
-                config.host = host.trim().to_string();
+            if candidate.host != *host {
+                candidate.host = host.trim().to_string();
                 needs_restart = true;
             }
         }
         if let Some(port) = request.port {
-            if port > 0 && config.port != port {
-                config.port = port;
+            if port > 0 && candidate.port != port {
+                candidate.port = port;
                 needs_restart = true;
             }
         }
         if let Some(token) = &request.auth_token {
-            config.auth_token = token.trim().to_string();
+            candidate.auth_token = token.trim().to_string();
         }
-        save_config(&config)?;
+        save_config_at(&candidate, &state.workspace_dir.join("config.toml"))?;
+        if config.auth_token != candidate.auth_token {
+            state.resources.replace(&candidate.auth_token);
+        }
+        *config = candidate;
     }
 
     Ok(Json(json!({
@@ -631,5 +637,113 @@ mod embedding_status_tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+    }
+
+    fn browser_file_grant(state: &AppState) -> String {
+        state
+            .resources
+            .url(
+                "",
+                "moon",
+                crate::services::resource_capability::CapabilityResource::uploaded_file("id")
+                    .unwrap(),
+                crate::services::resource_capability::CapabilityAudience::Browser,
+            )
+            .unwrap()
+    }
+
+    fn verifies_browser_file(state: &AppState, url: &str) -> bool {
+        state
+            .resources
+            .verify(
+                "moon",
+                crate::services::resource_capability::CapabilityResource::uploaded_file("id")
+                    .unwrap(),
+                crate::services::resource_capability::CapabilityAudience::Browser,
+                &url.parse().unwrap(),
+                "GET",
+            )
+            .is_ok()
+    }
+
+    #[tokio::test]
+    async fn server_update_save_failure_publishes_neither_config_nor_auth() {
+        let mut cfg = config::Config::default();
+        cfg.auth_token = "old-token".into();
+        let mut state = AppState::new(cfg).await;
+        let workspace = tempfile::tempdir().unwrap();
+        state.workspace_dir = workspace.path().join("missing-parent");
+        let old_grant = browser_file_grant(&state);
+        let result = update_server(
+            State(state.clone()),
+            Json(UpdateServerRequest {
+                host: None,
+                port: None,
+                auth_token: Some("new-token".into()),
+            }),
+        )
+        .await;
+        assert!(result.is_err());
+        assert_eq!(state.config.read().await.auth_token, "old-token");
+        assert!(verifies_browser_file(&state, &old_grant));
+    }
+
+    #[tokio::test]
+    async fn same_token_update_preserves_grants_but_changed_token_revokes() {
+        let mut cfg = config::Config::default();
+        cfg.auth_token = "old-token".into();
+        let mut state = AppState::new(cfg).await;
+        let workspace = tempfile::tempdir().unwrap();
+        state.workspace_dir = workspace.path().to_owned();
+        let old_grant = browser_file_grant(&state);
+        let _response = update_server(
+            State(state.clone()),
+            Json(UpdateServerRequest {
+                host: None,
+                port: None,
+                auth_token: Some("old-token".into()),
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(verifies_browser_file(&state, &old_grant));
+        let _response = update_server(
+            State(state.clone()),
+            Json(UpdateServerRequest {
+                host: None,
+                port: None,
+                auth_token: Some("new-token".into()),
+            }),
+        )
+        .await
+        .unwrap();
+        assert!(!verifies_browser_file(&state, &old_grant));
+        assert_eq!(state.config.read().await.auth_token, "new-token");
+    }
+
+    #[tokio::test]
+    async fn auth_request_waits_for_atomic_config_and_resource_transition() {
+        let mut cfg = config::Config::default();
+        cfg.auth_token = "old-token".into();
+        let state = AppState::new(cfg).await;
+        let app = crate::app::router::build_router(state.clone(), None);
+        let mut guard = state.config.write().await;
+        let request = tokio::spawn(async move {
+            app.oneshot(
+                axum::http::Request::builder()
+                    .uri("/api/meta")
+                    .header("authorization", "Bearer new-token")
+                    .body(axum::body::Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap()
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(!request.is_finished());
+        state.resources.replace("new-token");
+        guard.auth_token = "new-token".into();
+        drop(guard);
+        assert_eq!(request.await.unwrap().status(), StatusCode::OK);
     }
 }

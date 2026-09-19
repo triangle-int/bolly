@@ -6,6 +6,7 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use futures::StreamExt;
 use tokio::sync::broadcast;
 
 use crate::{
@@ -123,6 +124,7 @@ pub async fn run_single_turn(
     google_ai_key: &str,
     machine_registry: crate::services::machine_registry::MachineRegistry,
     public_url: &str,
+    resources: &crate::services::resource_access::ResourceAccess,
 ) -> io::Result<SingleTurnResult> {
     let instance_slug = sanitize_slug(instance_slug);
     let chat_id = sanitize_slug(chat_id);
@@ -144,11 +146,6 @@ pub async fn run_single_turn(
         .unwrap_or("");
 
     let chat_config = crate::config::load_config().ok();
-    let auth_token = std::env::var("NOLUNE_AUTH_TOKEN")
-        .ok()
-        .filter(|s| !s.is_empty())
-        .or_else(|| chat_config.as_ref().map(|c| c.auth_token.clone()))
-        .unwrap_or_default();
 
     // Build system prompt with STABLE content first (for Anthropic prompt caching).
     // Anthropic caches the longest matching prefix, so put rarely-changing
@@ -227,18 +224,7 @@ pub async fn run_single_turn(
          use read_file or run_command to access them. use list_files on the uploads dir to find files.",
         uploads_path.display(), uploads_path.display(),
     ));
-    if !public_url.is_empty() {
-        let token_suffix = if auth_token.is_empty() {
-            String::new()
-        } else {
-            format!("?token={auth_token}")
-        };
-        system_prompt.push_str(&format!(
-            "\npublic URLs (for external APIs like fal.ai):\n\
-             - uploads: {public_url}/public/files/{instance_slug}/{{upload_id}}{token_suffix}\n\
-             - memory: {public_url}/public/memory/{instance_slug}/{{path}}{token_suffix}"
-        ));
-    }
+    system_prompt.push_str("\nUse read_file, memory_read, or upload_file to obtain scoped download URLs for external APIs. URLs expire; request a fresh URL when needed.\n");
 
     // Email accounts prompt
     if email_configured {
@@ -423,12 +409,14 @@ pub async fn run_single_turn(
         .find(|m| m.role == ChatRole::User)
         .ok_or_else(|| io::Error::new(ErrorKind::InvalidInput, "no user message to process"))?;
     let public_url = public_url.to_string();
+    let media_store = vector_store.media_store();
     let mut prompt_msg = llm::build_multimodal_prompt(
         &last_user.content,
         workspace_dir,
         &instance_slug,
         &public_url,
-        &auth_token,
+        resources,
+        &media_store,
     );
 
     // Prepend time context to user message (keeps system prompt stable for caching)
@@ -557,6 +545,7 @@ pub async fn run_single_turn(
             }
         }
 
+        llm::refresh_resource_messages(&mut msgs, &public_url, &instance_slug, resources);
         log::info!("loaded {} rig history messages from disk", msgs.len());
         msgs
     };
@@ -602,6 +591,7 @@ pub async fn run_single_turn(
         google_ai_key,
         machine_registry,
         &public_url,
+        resources,
     );
     tools::cache_tool_defs(&all_tools).await;
 
@@ -1183,17 +1173,22 @@ fn strip_leaked_tool_calls(reply: &str) -> String {
 
 /// Call Anthropic /v1/messages/count_tokens API for accurate token count.
 async fn count_tokens_api(
+    client: &reqwest::Client,
+    endpoint: &str,
     api_key: &str,
     model: &str,
     workspace_dir: &Path,
     instance_slug: &str,
     chat_id: &str,
+    public_url: &str,
+    resources: &crate::services::resource_access::ResourceAccess,
 ) -> Option<usize> {
     // Build the same system prompt + messages we'd send to the LLM
     let system_prompt = llm::load_system_prompt(workspace_dir, instance_slug);
     let rig_path = rig_history_path(workspace_dir, instance_slug, chat_id);
     let entries = load_rig_history(&rig_path).unwrap_or_default();
-    let messages = llm::HistoryEntry::to_messages(&entries);
+    let mut messages = llm::HistoryEntry::to_messages(&entries);
+    llm::refresh_resource_messages(&mut messages, public_url, instance_slug, resources);
 
     let msgs_json = llm::messages_to_anthropic(&messages);
 
@@ -1213,9 +1208,9 @@ async fn count_tokens_api(
         body["tools"] = serde_json::Value::Array(tool_defs);
     }
 
-    let client = reqwest::Client::new();
+    let body = tools::redact_value(body);
     let res = client
-        .post("https://api.anthropic.com/v1/messages/count_tokens")
+        .post(endpoint)
         .header("x-api-key", api_key)
         .header("anthropic-version", "2023-06-01")
         .header("content-type", "application/json")
@@ -1224,15 +1219,41 @@ async fn count_tokens_api(
         .await
         .ok()?;
 
-    if !res.status().is_success() {
-        let status = res.status();
-        let body_text = res.text().await.unwrap_or_default();
-        log::warn!("count_tokens API failed: {} — {}", status, body_text);
+    let status = res.status();
+    const MAX_COUNT_TOKENS_RESPONSE_BYTES: usize = 64 * 1024;
+    if res
+        .content_length()
+        .is_some_and(|length| length > MAX_COUNT_TOKENS_RESPONSE_BYTES as u64)
+    {
+        log::warn!("count_tokens API failed: response too large");
+        return None;
+    }
+    let mut response_bytes = Vec::new();
+    let mut stream = res.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.ok()?;
+        if response_bytes.len().saturating_add(chunk.len()) > MAX_COUNT_TOKENS_RESPONSE_BYTES {
+            log::warn!("count_tokens API failed: response too large");
+            return None;
+        }
+        response_bytes.extend_from_slice(&chunk);
+    }
+    if !status.is_success() {
+        log::warn!(
+            "count_tokens API failed: {}",
+            count_tokens_failure(status, &response_bytes)
+        );
         return None;
     }
 
-    let data: serde_json::Value = res.json().await.ok()?;
+    let data: serde_json::Value = serde_json::from_slice(&response_bytes).ok()?;
     data["input_tokens"].as_u64().map(|t| t as usize)
+}
+
+fn count_tokens_failure(status: reqwest::StatusCode, body: &[u8]) -> String {
+    let status = tools::redact_secrets(&status.to_string());
+    let body = tools::redact_secrets(&String::from_utf8_lossy(body));
+    format!("{status} — {body}")
 }
 
 /// Rough token estimate: ~4 chars per token for English, ~2 for code/mixed.
@@ -1311,6 +1332,9 @@ pub async fn compute_context_stats_async(
     workspace_dir: PathBuf,
     instance_slug: String,
     chat_id: String,
+    public_url: String,
+    resources: crate::services::resource_access::ResourceAccess,
+    http_client: reqwest::Client,
 ) -> ContextStats {
     let instance_slug = sanitize_slug(&instance_slug);
     let chat_id = sanitize_slug(&chat_id);
@@ -1343,8 +1367,18 @@ pub async fn compute_context_stats_async(
                 Some((key.to_string(), model.to_string()))
             });
         if let Some((api_key, model)) = api_info {
-            if let Some(real_total) =
-                count_tokens_api(&api_key, &model, &workspace_dir, &instance_slug, &chat_id).await
+            if let Some(real_total) = count_tokens_api(
+                &http_client,
+                "https://api.anthropic.com/v1/messages/count_tokens",
+                &api_key,
+                &model,
+                &workspace_dir,
+                &instance_slug,
+                &chat_id,
+                &public_url,
+                &resources,
+            )
+            .await
             {
                 let local_total = stats.total_input_tokens_estimate;
                 if local_total > 0 && real_total > 0 {
@@ -1981,6 +2015,83 @@ respond ONLY with those three lines."#,
             mood: mood.companion_mood.clone(),
         });
         log::info!("[sentiment] {instance_slug} mood → {}", mood.companion_mood);
+    }
+}
+
+#[cfg(test)]
+mod count_tokens_tests {
+    use super::*;
+    use axum::{Router, body::Bytes, extract::State, http::StatusCode, routing::post};
+    use std::sync::{Arc, Mutex};
+
+    #[tokio::test]
+    async fn count_tokens_refreshes_typed_resources_and_redacts_request_and_error() {
+        const SECRET: &str = "issue116-count-token-control-secret";
+        let workspace = tempfile::tempdir().unwrap();
+        let history_path = rig_history_path(workspace.path(), "moon", "default");
+        std::fs::create_dir_all(history_path.parent().unwrap()).unwrap();
+        let message = llm::Message::User {
+            content: vec![
+                llm::ContentBlock::Text {
+                    text: format!("persisted raw control token: {SECRET}"),
+                },
+                llm::ContentBlock::Image {
+                    source: llm::ImageSource::Url {
+                        url: format!("https://stale.invalid/file?token={SECRET}"),
+                    },
+                    resource_provenance: Some(llm::ResourceProvenance::uploaded_file(
+                        "moon",
+                        "upload_1.png",
+                    )),
+                },
+            ],
+        };
+        save_rig_history(
+            &history_path,
+            &[llm::HistoryEntry::new(message, "1".into(), "one".into())],
+        );
+
+        let captured = Arc::new(Mutex::new(None::<Vec<u8>>));
+        let app = Router::new()
+            .route(
+                "/v1/messages/count_tokens",
+                post(
+                    |State(captured): State<Arc<Mutex<Option<Vec<u8>>>>>, body: Bytes| async move {
+                        *captured.lock().unwrap() = Some(body.to_vec());
+                        (StatusCode::BAD_GATEWAY, SECRET)
+                    },
+                ),
+            )
+            .with_state(captured.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let endpoint = format!(
+            "http://{}/v1/messages/count_tokens",
+            listener.local_addr().unwrap()
+        );
+        let task = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let resources = crate::services::resource_access::ResourceAccess::new(SECRET);
+        let result = count_tokens_api(
+            &reqwest::Client::new(),
+            &endpoint,
+            "provider-key",
+            "model",
+            workspace.path(),
+            "moon",
+            "default",
+            "https://public.invalid",
+            &resources,
+        )
+        .await;
+        task.abort();
+
+        assert_eq!(result, None);
+        let request = String::from_utf8(captured.lock().unwrap().take().unwrap()).unwrap();
+        assert!(!request.contains(SECRET));
+        assert!(!request.contains("stale.invalid"));
+        assert!(request.contains("/resources/model-provider/files/moon/upload_1.png?cap="));
+        let failure = count_tokens_failure(StatusCode::BAD_GATEWAY, SECRET.as_bytes());
+        assert!(!failure.contains(SECRET));
+        assert!(failure.contains("[REDACTED]"));
     }
 }
 

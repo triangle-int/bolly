@@ -10,6 +10,7 @@ use super::{auth::auth_middleware, companion_boundary::companion_boundary};
 fn api_router(state: &AppState) -> Router<AppState> {
     Router::new()
         .merge(routes::meta::router())
+        .merge(routes::resources::issuance_router())
         .merge(routes::instances::router())
         .merge(routes::chat::router())
         .merge(routes::drops::router())
@@ -40,7 +41,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
     // API routes — protected by auth middleware
     let api = api_router(&state);
 
-    // Public routes — no auth
+    // Health is public; resource handlers verify capabilities independently of API auth.
     let health = routes::health::router();
     // Public routes still address a companion by slug and fail closed on foreign ones.
     let public_files = routes::uploads::public_router().route_layer(
@@ -52,6 +53,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
 
     let app = Router::new()
         .merge(health)
+        .merge(routes::resources::router())
         .merge(public_files)
         .merge(public_memory)
         .merge(api)

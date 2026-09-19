@@ -21,6 +21,11 @@ async function setup(desktop) {
     localStorage: { getItem: () => "legacy-storage" },
     WebSocket: class { constructor(url) { urls.push(url); } },
     URL,
+    fetch: async (url, options) => {
+      assert.equal(options.headers.Authorization, undefined);
+      assert.equal(url.includes("token="), false);
+      return { ok: true, status: 200, json: async () => ({ url: "/resources/browser/files/a/b?cap=scoped" }) };
+    },
   });
   const module = new vm.SourceTextModule(source, { context });
   await module.link((specifier) => {
@@ -37,7 +42,11 @@ test("desktop client never converts legacy cookies/storage into navigation, medi
   const { api, urls } = await setup(true);
   assert.equal(api.getAuthToken(), null);
   assert.throws(() => api.setAuthToken("new-secret"), /desktop dashboard/);
-  for (const url of [api.mediaUrl("a", "b"), api.uploadFileUrl("a", "b"), api.exportInstanceUrl("a")]) {
+  for (const url of [
+    (await api.mediaUrl("a", "b")).url,
+    await api.uploadFileUrl("a", "b"),
+    api.exportInstanceUrl("a"),
+  ]) {
     assert.equal(url.includes("token="), false);
     assert.equal(url.includes("legacy"), false);
   }

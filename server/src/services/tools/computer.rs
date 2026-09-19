@@ -73,7 +73,7 @@ pub struct ComputerUseTool {
     workspace_dir: std::path::PathBuf,
     instance_slug: String,
     public_url: String,
-    auth_token: String,
+    resources: crate::services::resource_access::ResourceAccess,
 }
 
 impl ComputerUseTool {
@@ -82,14 +82,14 @@ impl ComputerUseTool {
         workspace_dir: &std::path::Path,
         instance_slug: &str,
         public_url: &str,
-        auth_token: &str,
+        resources: &crate::services::resource_access::ResourceAccess,
     ) -> Self {
         Self {
             registry,
             workspace_dir: workspace_dir.to_path_buf(),
             instance_slug: instance_slug.to_string(),
             public_url: public_url.to_string(),
-            auth_token: auth_token.to_string(),
+            resources: resources.clone(),
         }
     }
 }
@@ -120,6 +120,7 @@ pub struct ComputerUseArgs {
 
 impl Tool for ComputerUseTool {
     const NAME: &'static str = "computer_use";
+    const TRUSTS_RESOURCE_PROVENANCE: bool = true;
     type Error = ToolExecError;
     type Args = ComputerUseArgs;
     type Output = String;
@@ -210,12 +211,11 @@ impl Tool for ComputerUseTool {
                         &self.public_url,
                         &self.instance_slug,
                         &meta.id,
-                        &self.auth_token,
+                        &self.resources,
                     );
-                    let chat_url = format!(
-                        "/api/instances/{}/uploads/{}/file",
-                        self.instance_slug, meta.id
-                    );
+                    let chat_url = self.resources.url("", &self.instance_slug,
+                        crate::services::resource_capability::CapabilityResource::uploaded_file(&meta.id).map_err(|e| ToolExecError(e.to_string()))?,
+                        crate::services::resource_capability::CapabilityAudience::Browser).map_err(|e| ToolExecError(e.to_string()))?;
 
                     let blocks = serde_json::json!([
                         {
@@ -223,6 +223,12 @@ impl Tool for ComputerUseTool {
                             "source": {
                                 "type": "url",
                                 "url": full_url,
+                            },
+                            "resource_provenance": {
+                                "kind": "uploaded_file",
+                                "version": 1,
+                                "slug": self.instance_slug,
+                                "id": meta.id,
                             }
                         },
                         {

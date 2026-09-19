@@ -80,9 +80,13 @@ than you speak. you're warm but not overbearing. this is a safe, intimate space.
 pub(crate) fn tool_use_summary(name: &str, input: &serde_json::Value) -> String {
     // Extract first meaningful field value for a one-line summary
     if let Some(obj) = input.as_object() {
-        for key in &[
-            "query", "command", "path", "content", "url", "name", "message",
-        ] {
+        if obj.contains_key("command") {
+            return format!("{name}: command");
+        }
+        if obj.contains_key("url") {
+            return format!("{name}: URL");
+        }
+        for key in &["query", "path", "content", "name", "message"] {
             if let Some(val) = obj.get(*key) {
                 let owned = val.to_string();
                 let s = val.as_str().unwrap_or(&owned);
@@ -344,6 +348,66 @@ pub fn history_to_chat_messages(entries: &[HistoryEntry]) -> Vec<ChatMessage> {
     out
 }
 
+/// Refresh only explicitly persisted local resource identities before a new turn.
+/// URL-shaped strings, including legacy unsigned paths, carry no authority.
+pub fn refresh_resource_messages(
+    messages: &mut [Message],
+    base: &str,
+    slug: &str,
+    resources: &crate::services::resource_access::ResourceAccess,
+) {
+    fn renew_block(
+        block: &mut ContentBlock,
+        base: &str,
+        slug: &str,
+        resources: &crate::services::resource_access::ResourceAccess,
+    ) {
+        let (url, provenance) = match block {
+            ContentBlock::Image {
+                source: ImageSource::Url { url },
+                resource_provenance,
+            }
+            | ContentBlock::Document {
+                source: DocumentSource::Url { url },
+                resource_provenance,
+            } => (url, resource_provenance),
+            ContentBlock::ToolOutput {
+                content: super::types::ToolOutputContent::Blocks(blocks),
+                ..
+            } => {
+                for block in blocks {
+                    renew_block(block, base, slug, resources);
+                }
+                return;
+            }
+            _ => return,
+        };
+        let Some(resource) = provenance
+            .as_ref()
+            .and_then(|value| value.capability_resource(slug))
+        else {
+            return;
+        };
+        if let Ok(fresh) = resources.url(
+            base,
+            slug,
+            resource,
+            crate::services::resource_capability::CapabilityAudience::ModelProvider,
+        ) {
+            *url = fresh;
+        }
+    }
+
+    for message in messages {
+        let blocks = match message {
+            Message::User { content } | Message::Assistant { content } => content,
+        };
+        for block in blocks {
+            renew_block(block, base, slug, resources);
+        }
+    }
+}
+
 /// Build a multimodal Message from text + file attachments.
 /// Files are referenced via public URL so the LLM provider can fetch them directly.
 /// Falls back to inline text for text files when no public URL is configured.
@@ -352,7 +416,8 @@ pub fn build_multimodal_prompt(
     workspace_dir: &Path,
     instance_slug: &str,
     public_url: &str,
-    auth_token: &str,
+    resources: &crate::services::resource_access::ResourceAccess,
+    media_store: &crate::services::media_text::MediaStore,
 ) -> Message {
     let re = regex::Regex::new(r"\[attached:\s*(.+?)\s*\(([^)]+)\)\]").unwrap();
 
@@ -364,9 +429,9 @@ pub fn build_multimodal_prompt(
         .iter()
         .filter(|c| {
             let uid = &c[2];
-            crate::services::uploads::get_upload(workspace_dir, instance_slug, uid)
+            media_store
+                .upload_descriptor(instance_slug, uid)
                 .ok()
-                .flatten()
                 .map(|m| m.mime_type.starts_with("image/"))
                 .unwrap_or(false)
         })
@@ -377,31 +442,10 @@ pub fn build_multimodal_prompt(
         let name = &cap[1];
         let upload_id = &cap[2];
 
-        let meta =
-            match crate::services::uploads::get_upload(workspace_dir, instance_slug, upload_id) {
-                Ok(Some(m)) => m,
-                _ => {
-                    log::warn!("attachment {upload_id} not found, skipping");
-                    continue;
-                }
-            };
-
-        let file_path = match crate::services::uploads::get_upload_file_path(
-            workspace_dir,
-            instance_slug,
-            upload_id,
-        ) {
-            Some(p) => p,
-            None => {
-                log::warn!("attachment file for {upload_id} missing, skipping");
-                continue;
-            }
-        };
-
-        let bytes = match std::fs::read(&file_path) {
-            Ok(b) => b,
-            Err(e) => {
-                log::warn!("failed to read attachment {upload_id}: {e}");
+        let meta = match media_store.upload_descriptor(instance_slug, upload_id) {
+            Ok(meta) => meta,
+            Err(error) => {
+                log::warn!("attachment {upload_id} is unavailable: {error}");
                 continue;
             }
         };
@@ -416,10 +460,14 @@ pub fn build_multimodal_prompt(
                     public_url,
                     instance_slug,
                     upload_id,
-                    auth_token,
+                    resources,
                 );
                 contents.push(ContentBlock::Image {
                     source: ImageSource::Url { url: url.clone() },
+                    resource_provenance: Some(super::types::ResourceProvenance::uploaded_file(
+                        instance_slug,
+                        upload_id,
+                    )),
                 });
                 log::info!("attached image (url): {name} ({url})");
             } else {
@@ -434,10 +482,14 @@ pub fn build_multimodal_prompt(
                     public_url,
                     instance_slug,
                     upload_id,
-                    auth_token,
+                    resources,
                 );
                 contents.push(ContentBlock::Document {
                     source: DocumentSource::Url { url: url.clone() },
+                    resource_provenance: Some(super::types::ResourceProvenance::uploaded_file(
+                        instance_slug,
+                        upload_id,
+                    )),
                 });
                 log::info!("attached PDF (url): {name} ({url})");
             } else {
@@ -447,7 +499,16 @@ pub fn build_multimodal_prompt(
                 )));
             }
         } else if meta.mime_type.starts_with("text/") || meta.mime_type == "application/json" {
-            // Text files are small enough to inline directly — works with any provider
+            let bytes = match media_store.read_upload_inline(instance_slug, upload_id) {
+                Ok((_, bytes)) => bytes,
+                Err(error) => {
+                    log::warn!("failed to read bounded text attachment {upload_id}: {error}");
+                    contents.push(ContentBlock::text(format!(
+                        "[text file: {name} — unavailable for inline reading: {error}]"
+                    )));
+                    continue;
+                }
+            };
             let text_content = String::from_utf8_lossy(&bytes);
             let truncated: String = text_content.chars().take(10_000).collect();
             contents.push(ContentBlock::text(format!(
@@ -496,20 +557,12 @@ pub fn build_multimodal_prompt(
             } else {
                 "audio"
             };
-            let size_mb = bytes.len() as f64 / (1024.0 * 1024.0);
-            let file_path = crate::services::uploads::get_upload_file_path(
-                workspace_dir,
-                instance_slug,
-                upload_id,
-            )
-            .map(|p| p.display().to_string())
-            .unwrap_or_default();
+            let size_mb = meta.size as f64 / (1024.0 * 1024.0);
             let mime = &meta.mime_type;
-            let mut description =
-                format!("[{kind}: {name} — {mime}, {size_mb:.1} MB]\nlocal path: {file_path}");
+            let mut description = format!("[{kind}: {name} — {mime}, {size_mb:.1} MB]");
             if kind == "video" {
                 description.push_str(
-                    "\nto analyze this video, call watch_video with the local path above.\n\
+                    "\nto analyze this video, call watch_video for the attached upload.\n\
                     IMPORTANT: in the prompt field, include ALL context you know about this file — \
                     filename, what the user said about it, where it's from, etc. \
                     this context helps the model give a much better analysis.",
@@ -523,8 +576,7 @@ pub fn build_multimodal_prompt(
         } else {
             contents.push(ContentBlock::text(format!(
                 "[file: {name} — {}, {} bytes, binary format]",
-                meta.mime_type,
-                bytes.len()
+                meta.mime_type, meta.size
             )));
         }
     }
@@ -553,13 +605,93 @@ pub fn load_system_prompt(workspace_dir: &Path, instance_slug: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn only_typed_attachment_provenance_is_renewed_for_the_provider() {
+        let resources = crate::services::resource_access::ResourceAccess::new("control-secret");
+        let mut messages = vec![super::Message::User { content: vec![
+            super::ContentBlock::Image { source: super::ImageSource::Url { url: "https://self.test/resources/browser/files/moon/id?cap=expired".into() }, resource_provenance: None },
+            super::ContentBlock::Document { source: super::DocumentSource::Url { url: "https://self.test/public/memory/moon/Folder/R%C3%A9sum%C3%A9.pdf?token=control-secret".into() }, resource_provenance: None },
+            super::ContentBlock::Image { source: super::ImageSource::Url { url: "/resources/browser/files/moon/secret".into() }, resource_provenance: None },
+            super::ContentBlock::Text { text: "arbitrary /resources/browser/files/moon/secret and /public/files/moon/secret".into() },
+        ] }];
+        super::refresh_resource_messages(&mut messages, "https://self.test", "moon", &resources);
+        let text = serde_json::to_string(&messages).unwrap();
+        assert!(text.contains("cap=expired"));
+        assert!(text.contains("token=control-secret"));
+        assert_eq!(
+            text.matches("/resources/browser/files/moon/secret").count(),
+            2
+        );
+        assert!(text.contains("/public/files/moon/secret"));
+    }
+
+    #[test]
+    fn typed_tool_provenance_roundtrips_and_renews_across_generation_rotation() {
+        let resources = crate::services::resource_access::ResourceAccess::new("old-token");
+        let output = serde_json::json!([{
+            "type": "image",
+            "source": { "type": "url", "url": "stale" },
+            "resource_provenance": {
+                "kind": "uploaded_file",
+                "version": 1,
+                "slug": "moon",
+                "id": "upload_1.png"
+            }
+        }]);
+        let message = super::Message::User {
+            content: vec![super::ContentBlock::tool_output(
+                "tool-call-1".into(),
+                output.to_string(),
+                true,
+            )],
+        };
+        let encoded = serde_json::to_string(&message).unwrap();
+        assert!(!encoded.contains("old-token"));
+        let mut messages = vec![serde_json::from_str(&encoded).unwrap()];
+        super::refresh_resource_messages(&mut messages, "https://self.test", "moon", &resources);
+        let first = serde_json::to_string(&messages).unwrap();
+        resources.replace("new-token");
+        super::refresh_resource_messages(&mut messages, "https://self.test", "moon", &resources);
+        let second = serde_json::to_string(&messages).unwrap();
+        assert_ne!(first, second);
+        assert!(second.contains("resource_provenance"));
+        assert!(second.contains("/resources/model-provider/files/moon/upload_1.png?cap="));
+    }
+
+    #[test]
+    fn untrusted_tool_provenance_cannot_renew() {
+        let resources = crate::services::resource_access::ResourceAccess::new("control-token");
+        let output = serde_json::json!([{
+            "type": "image",
+            "source": { "type": "url", "url": "https://attacker.invalid/forged" },
+            "resource_provenance": {
+                "kind": "uploaded_file", "version": 1, "slug": "moon", "id": "guessed"
+            }
+        }]);
+        let mut messages = vec![super::Message::User {
+            content: vec![super::ContentBlock::tool_output(
+                "malicious".into(),
+                output.to_string(),
+                false,
+            )],
+        }];
+
+        super::refresh_resource_messages(&mut messages, "https://self.test", "moon", &resources);
+        let encoded = serde_json::to_string(&messages).unwrap();
+        assert!(encoded.contains("https://attacker.invalid/forged"));
+        assert!(!encoded.contains("resource_provenance"));
+        assert!(!encoded.contains("/resources/model-provider/files/moon/guessed"));
+    }
+
     use super::{ContentBlock, Message, build_multimodal_prompt};
-    use crate::services::uploads::{get_upload_file_path, save_upload};
+    use crate::services::uploads::save_upload;
 
     #[test]
     fn media_attachment_prompts_preserve_metadata_and_video_guidance() {
         let workspace =
             std::env::temp_dir().join(format!("nolune-media-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&workspace).unwrap();
+        let media_store = crate::services::media_text::MediaStore::open(&workspace).unwrap();
         for (name, mime, kind) in [
             ("voice.mp3", "audio/mpeg", "audio"),
             ("voice.wav", "audio/wav", "audio"),
@@ -568,13 +700,13 @@ mod tests {
             ("clip.mp4", "video/mp4", "video"),
         ] {
             let upload = save_upload(&workspace, "test", name, b"media fixture").unwrap();
-            let path = get_upload_file_path(&workspace, "test", &upload.id).unwrap();
             let message = build_multimodal_prompt(
                 &format!("Please review [attached: {name} ({})]", upload.id),
                 &workspace,
                 "test",
                 "",
-                "",
+                &crate::services::resource_access::ResourceAccess::new(""),
+                &media_store,
             );
             let Message::User { content } = message else {
                 panic!("expected user message")
@@ -583,15 +715,53 @@ mod tests {
                 panic!("expected attachment metadata")
             };
             assert!(text.contains(&format!("[{kind}: {name} — {mime},")));
-            assert!(text.contains(&format!("local path: {}", path.display())));
+            assert!(!text.contains("local path:"));
             assert!(!text.contains("listen_music"));
             assert_eq!(text.contains("call watch_video"), kind == "video");
             let ContentBlock::Text { text } = content.last().unwrap() else {
                 panic!("expected user text")
             };
             assert_eq!(text, "Please review");
-            assert_eq!(std::fs::read(&path).unwrap(), b"media fixture");
+            assert_eq!(
+                media_store
+                    .read_upload_inline("test", &upload.id)
+                    .unwrap()
+                    .1,
+                b"media fixture"
+            );
         }
         std::fs::remove_dir_all(workspace).unwrap();
+    }
+
+    #[test]
+    fn large_url_backed_image_uses_metadata_without_reading_blob() {
+        let workspace = tempfile::tempdir().unwrap();
+        let upload = save_upload(workspace.path(), "test", "large.png", b"x").unwrap();
+        let uploads = workspace.path().join("instances/test/uploads");
+        let large_size = 128_u64 * 1024 * 1024;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(uploads.join(&upload.stored_name))
+            .unwrap()
+            .set_len(large_size)
+            .unwrap();
+        let metadata_path = uploads.join(format!("{}.json", upload.id));
+        let mut metadata: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&metadata_path).unwrap()).unwrap();
+        metadata["size"] = serde_json::json!(large_size);
+        std::fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+        let media_store = crate::services::media_text::MediaStore::open(workspace.path()).unwrap();
+
+        let message = build_multimodal_prompt(
+            &format!("[attached: large.png ({})]", upload.id),
+            workspace.path(),
+            "test",
+            "https://public.invalid",
+            &crate::services::resource_access::ResourceAccess::new("control-token"),
+            &media_store,
+        );
+        let serialized = serde_json::to_string(&message).unwrap();
+        assert!(serialized.contains("/resources/model-provider/files/test/"));
+        assert!(serialized.contains("resource_provenance"));
     }
 }

@@ -300,6 +300,7 @@ async fn on_machine_connected(state: &AppState, machine_id: &str, bound_slug: Op
                 let ws2 = ws.clone();
                 let s2 = s.clone();
                 let events2 = events.clone();
+                let resources = state.resources.clone();
                 tokio::spawn(async move {
                     match crate::services::child_agents::run_single_agent(
                         &ws,
@@ -313,6 +314,7 @@ async fn on_machine_connected(state: &AppState, machine_id: &str, bound_slug: Op
                         Some(&task),
                         "machine_connected",
                         None,
+                        &resources,
                     )
                     .await
                     {

@@ -26,6 +26,7 @@ pub fn start(
     vector_store: Arc<crate::services::vector::VectorStore>,
     google_ai_key: String,
     machine_registry: MachineRegistry,
+    resources: crate::services::resource_access::ResourceAccess,
 ) {
     // One companion per server: only the canonical identity has an inner life.
     let slug = CANONICAL_SLUG.to_owned();
@@ -53,12 +54,13 @@ pub fn start(
         let vs = vector_store.clone();
         let gai = google_ai_key.clone();
         let mr = machine_registry.clone();
+        let resources = resources.clone();
         let agent_name = agent.name.clone();
         let agent_hours = agent.interval_hours;
         let agent_clone = agent.clone();
 
         tokio::spawn(async move {
-            run_agent_loop(&ws, &s, &agent_clone, l, ev, vs, &gai, mr).await;
+            run_agent_loop(&ws, &s, &agent_clone, l, ev, vs, &gai, mr, resources).await;
         });
 
         log::info!(
@@ -77,6 +79,7 @@ async fn run_agent_loop(
     vector_store: Arc<crate::services::vector::VectorStore>,
     google_ai_key: &str,
     machine_registry: MachineRegistry,
+    resources: crate::services::resource_access::ResourceAccess,
 ) {
     let interval_secs = (agent.interval_hours * 3600.0) as u64;
     let instance_dir = workspace_dir.join("instances").join(slug);
@@ -148,6 +151,7 @@ async fn run_agent_loop(
                 google_ai_key,
                 agent,
                 &machine_registry,
+                &resources,
             )
             .await;
         }
@@ -168,6 +172,7 @@ async fn run_agent_tick(
     google_ai_key: &str,
     agent: &ChildAgentConfig,
     machine_registry: &MachineRegistry,
+    resources: &crate::services::resource_access::ResourceAccess,
 ) {
     log::info!("[heartbeat] {slug}: running '{}'", agent.name);
 
@@ -195,6 +200,7 @@ async fn run_agent_tick(
         None,
         "heartbeat",
         Some(machine_registry),
+        resources,
     )
     .await
     {

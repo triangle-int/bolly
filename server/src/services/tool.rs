@@ -46,6 +46,11 @@ impl From<serde_json::Error> for ToolError {
 /// Dynamic-dispatch tool trait (object-safe).
 pub trait ToolDyn: Send + Sync {
     fn name(&self) -> String;
+    /// Whether this concrete tool is trusted to emit locally-authenticated
+    /// resource provenance. External ToolDyn implementations default closed.
+    fn trusts_resource_provenance(&self) -> bool {
+        false
+    }
     fn definition<'a>(
         &'a self,
         prompt: String,
@@ -59,6 +64,7 @@ pub trait ToolDyn: Send + Sync {
 /// Typed tool trait. Implement this for concrete tools.
 pub trait Tool: Send + Sync + 'static {
     const NAME: &'static str;
+    const TRUSTS_RESOURCE_PROVENANCE: bool = false;
     type Error: std::error::Error + Send + Sync + 'static;
     type Args: for<'de> Deserialize<'de> + Send + Sync;
     type Output: Serialize;
@@ -78,6 +84,10 @@ pub trait Tool: Send + Sync + 'static {
 impl<T: Tool> ToolDyn for T {
     fn name(&self) -> String {
         Tool::name(self)
+    }
+
+    fn trusts_resource_provenance(&self) -> bool {
+        T::TRUSTS_RESOURCE_PROVENANCE
     }
 
     fn definition<'a>(

@@ -1734,6 +1734,7 @@ pub struct CallAgentTool {
     events: tokio::sync::broadcast::Sender<crate::domain::events::ServerEvent>,
     vector_store: std::sync::Arc<crate::services::vector::VectorStore>,
     google_ai_key: String,
+    resources: crate::services::resource_access::ResourceAccess,
 }
 
 impl CallAgentTool {
@@ -1744,6 +1745,7 @@ impl CallAgentTool {
         events: tokio::sync::broadcast::Sender<crate::domain::events::ServerEvent>,
         vector_store: std::sync::Arc<crate::services::vector::VectorStore>,
         google_ai_key: &str,
+        resources: &crate::services::resource_access::ResourceAccess,
     ) -> Self {
         Self {
             workspace_dir: workspace_dir.to_path_buf(),
@@ -1752,6 +1754,7 @@ impl CallAgentTool {
             events,
             vector_store,
             google_ai_key: google_ai_key.to_string(),
+            resources: resources.clone(),
         }
     }
 }
@@ -1894,6 +1897,7 @@ impl Tool for CallAgentTool {
             Some(task),
             &format!("tool:call_agent:{}", agent.name),
             None,
+            &self.resources,
         )
         .await
         .map_err(|e| ToolExecError(format!("agent '{}' failed: {e}", agent.name)))?;

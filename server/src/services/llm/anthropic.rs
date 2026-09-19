@@ -229,7 +229,7 @@ pub(crate) fn build_anthropic_request(
         }));
     }
     req["stream"] = serde_json::json!(stream);
-    req
+    crate::services::tools::redact_value(req)
 }
 
 /// Non-streaming Anthropic call. Returns (text, tool_calls, stop_reason, tokens_used).
@@ -255,7 +255,7 @@ pub(crate) async fn anthropic_complete(
     let resp = http
         .post(&format!("{}/v1/messages", base_url))
         .headers(anthropic_headers(api_key)?)
-        .json(&body)
+        .json(&crate::services::tools::redact_value(body.clone()))
         .send()
         .await?;
 
@@ -269,7 +269,7 @@ pub(crate) async fn anthropic_complete(
         );
         return Err(LlmError::Http {
             status: status.as_u16(),
-            message: resp_text,
+            message: crate::services::tools::redact_secrets(&resp_text),
         }
         .into());
     }
@@ -380,7 +380,7 @@ pub(crate) async fn anthropic_stream(
     let resp = http
         .post(&format!("{}/v1/messages", base_url))
         .headers(headers)
-        .json(&body)
+        .json(&crate::services::tools::redact_value(body.clone()))
         .send()
         .await?;
 
@@ -414,7 +414,7 @@ pub(crate) async fn anthropic_stream(
         }
         return Err(LlmError::Http {
             status: status.as_u16(),
-            message: err_text,
+            message: crate::services::tools::redact_secrets(&err_text),
         }
         .into());
     }
@@ -742,8 +742,8 @@ pub(crate) fn messages_to_anthropic(messages: &[Message]) -> serde_json::Value {
     fn block_to_wire(block: &ContentBlock) -> Option<serde_json::Value> {
         Some(match block {
             ContentBlock::Text { text } => json!({"type": "text", "text": text}),
-            ContentBlock::Image { source } => json!({"type": "image", "source": source}),
-            ContentBlock::Document { source } => json!({"type": "document", "source": source}),
+            ContentBlock::Image { source, .. } => json!({"type": "image", "source": source}),
+            ContentBlock::Document { source, .. } => json!({"type": "document", "source": source}),
             ContentBlock::ToolCall {
                 id,
                 name,

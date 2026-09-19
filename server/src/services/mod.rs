@@ -28,3 +28,5 @@ pub mod vector;
 pub mod workspace;
 
 mod vector_index;
+
+pub(crate) mod resource_access;

@@ -1,7 +1,7 @@
 use axum::{
     Json, Router,
     body::Body,
-    extract::{DefaultBodyLimit, Multipart, Path, Query, State},
+    extract::{DefaultBodyLimit, Multipart, Path, State},
     http::{HeaderValue, StatusCode, header},
     response::Response,
     routing::get,
@@ -26,8 +26,7 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-/// Public file-serving route (no auth middleware) — uses ?token= query param.
-/// Used by LLM providers (OpenRouter) to fetch uploaded files via URL.
+/// Retired control-token resource namespace; always denies access.
 pub fn public_router() -> Router<AppState> {
     Router::new().route(
         "/public/files/{instance_slug}/{upload_id}",
@@ -99,40 +98,28 @@ async fn serve_file(
     serve_file_inner(&state, &instance_slug, &upload_id).await
 }
 
-#[derive(serde::Deserialize)]
-struct TokenQuery {
-    token: Option<String>,
+async fn serve_file_public() -> StatusCode {
+    StatusCode::UNAUTHORIZED
 }
 
-async fn serve_file_public(
-    State(state): State<AppState>,
-    Path((instance_slug, upload_id)): Path<(String, String)>,
-    Query(query): Query<TokenQuery>,
-) -> Result<Response, StatusCode> {
-    // Verify token matches auth_token
-    let expected = state.config.read().await.auth_token.clone();
-    if expected.is_empty() || query.token.as_deref() != Some(&expected) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-
-    serve_file_inner(&state, &instance_slug, &upload_id).await
-}
-
-async fn serve_file_inner(
+pub(super) async fn serve_file_inner(
     state: &AppState,
     instance_slug: &str,
     upload_id: &str,
 ) -> Result<Response, StatusCode> {
-    let meta = uploads::get_upload(&state.workspace_dir, instance_slug, upload_id)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    let file_path = uploads::get_upload_file_path(&state.workspace_dir, instance_slug, upload_id)
-        .ok_or(StatusCode::NOT_FOUND)?;
-
-    let bytes = tokio::fs::read(&file_path)
+    let store = state.vector_store.media_store();
+    let slug = instance_slug.to_owned();
+    let id = upload_id.to_owned();
+    let (meta, file) = tokio::task::spawn_blocking(move || store.open_upload_blob(&slug, &id))
         .await
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+        .map_err(|error| match error.kind() {
+            std::io::ErrorKind::NotFound => StatusCode::NOT_FOUND,
+            std::io::ErrorKind::InvalidInput | std::io::ErrorKind::InvalidData => {
+                StatusCode::UNAUTHORIZED
+            }
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        })?;
 
     let is_media = meta.mime_type.starts_with("audio/")
         || meta.mime_type.starts_with("video/")
@@ -143,12 +130,15 @@ async fn serve_file_inner(
         meta.original_name.replace('"', "_")
     );
 
+    let content_length = meta.size;
+    let stream = tokio_util::io::ReaderStream::new(tokio::fs::File::from_std(file.into_std()));
     Response::builder()
         .header(
             header::CONTENT_TYPE,
             HeaderValue::from_str(&meta.mime_type)
                 .unwrap_or_else(|_| HeaderValue::from_static("application/octet-stream")),
         )
+        .header(header::CONTENT_LENGTH, content_length)
         .header(
             header::CONTENT_DISPOSITION,
             HeaderValue::from_str(&content_disposition)
@@ -156,9 +146,9 @@ async fn serve_file_inner(
         )
         .header(
             header::CACHE_CONTROL,
-            HeaderValue::from_static("public, max-age=31536000, immutable"),
+            HeaderValue::from_static("private, no-store"),
         )
-        .body(Body::from(bytes))
+        .body(Body::from_stream(stream))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
 
