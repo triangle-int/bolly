@@ -34,7 +34,6 @@
 		exportInstance,
 		importInstance,
 		reindexMemory,
-		importKnowledge,
 		fetchScheduledTasks,
 		cancelScheduledTask,
 		fetchSuggestedMcp,
@@ -43,10 +42,7 @@
 		type ScheduledTask,
 	} from "$lib/api/client.js";
 	import type { McpServerInfo, EmailConfig } from "$lib/api/client.js";
-	import type { ServerEvent } from "$lib/api/types.js";
-	import { getWebSocket } from "$lib/stores/websocket.svelte.js";
 	import { SKINS } from "$lib/stores/skin.svelte.js";
-	import { onDestroy } from "svelte";
 
 	const slug = $derived(page.params.slug!);
 
@@ -111,45 +107,6 @@
 		} finally {
 			importing = false;
 			if (importFileInput) importFileInput.value = "";
-		}
-	}
-
-	// Import knowledge
-	let importingKnowledge = $state(false);
-	let knowledgeError = $state("");
-	let knowledgeStarted = $state(false);
-	let knowledgeFileInput: HTMLInputElement | undefined = $state();
-
-	// Import progress (via WebSocket)
-	let importStage = $state<string | null>(null);
-	let importDetail = $state("");
-	const ws = getWebSocket();
-	const unsub = ws.subscribe((event: ServerEvent) => {
-		if (event.type === "import_progress" && event.instance_slug === slug) {
-			importStage = event.stage;
-			importDetail = event.detail;
-			if (event.stage === "done" || event.stage === "error") {
-				setTimeout(() => { importStage = null; importDetail = ""; }, 10000);
-			}
-		}
-	});
-	onDestroy(unsub);
-
-	async function handleImportKnowledge() {
-		const files = knowledgeFileInput?.files;
-		if (!files || files.length === 0) return;
-		importingKnowledge = true;
-		knowledgeError = "";
-		knowledgeStarted = false;
-		try {
-			await importKnowledge(slug, files);
-			knowledgeStarted = true;
-			setTimeout(() => { knowledgeStarted = false; }, 8000);
-		} catch (e) {
-			knowledgeError = e instanceof Error ? e.message : "import failed";
-		} finally {
-			importingKnowledge = false;
-			if (knowledgeFileInput) knowledgeFileInput.value = "";
 		}
 	}
 
@@ -1317,52 +1274,6 @@
 		</div>
 		<p class="data-hint">Export downloads a .tar.gz of all instance data (soul, memory, drops, chat history). import merges into the current instance.</p>
 
-		<div class="data-actions" style="margin-top: 1.25rem;">
-			<button type="button" class="data-btn data-btn-knowledge" onclick={() => knowledgeFileInput?.click()} disabled={importingKnowledge}>
-				{#if importingKnowledge}
-					Uploading...
-				{:else if knowledgeStarted}
-					Started!
-				{:else}
-					Import knowledge
-				{/if}
-				</button>
-<input
-					type="file"
-					accept=".json,.txt,.md,.csv"
-					multiple
-					bind:this={knowledgeFileInput}
-					onchange={handleImportKnowledge}
-					hidden
-					disabled={importingKnowledge}
-				/>
-			<span class="data-hint">Drop your Claude export, notes, or any personal data — AI will extract facts and add them to memory</span>
-		</div>
-		{#if knowledgeError}
-			<p class="error-msg" role="alert">{knowledgeError}</p>
-		{/if}
-		{#if knowledgeStarted && !importStage}
-			<p class="data-hint" style="color: var(--primary); margin-top: 0.5rem;">
-				processing in background — check memory after a few minutes
-			</p>
-		{/if}
-
-		{#if importStage}
-			<div class="import-progress" class:import-done={importStage === 'done'} class:import-error={importStage === 'error'}>
-				<div class="import-progress-header">
-					{#if importStage === 'done'}
-						<span class="import-progress-icon">&#10003;</span>
-					{:else if importStage === 'error'}
-						<span class="import-progress-icon">&#10007;</span>
-					{:else}
-						<span class="import-progress-spinner"></span>
-					{/if}
-					<span class="import-progress-stage">{importStage}</span>
-				</div>
-				<p class="import-progress-detail">{importDetail}</p>
-			</div>
-		{/if}
-
 		<div class="data-actions" style="margin-top: 0.75rem;">
 			<button
 				class="ext-form-btn"
@@ -1680,73 +1591,6 @@
 	.data-btn:hover {
 		background: var(--accent);
 		border-color: var(--border);
-	}
-	.data-btn-knowledge {
-		color: var(--primary);
-		background: var(--accent);
-		border-color: var(--border);
-	}
-	.data-btn-knowledge:hover {
-		background: var(--accent);
-		border-color: var(--border);
-	}
-	.import-progress {
-		margin-top: 0.75rem;
-		padding: 0.625rem 0.875rem;
-		border-radius: 0.5rem;
-		background: var(--accent);
-		border: 1px solid var(--border);
-	}
-	.import-progress.import-done {
-		background: var(--accent);
-		border-color: var(--border);
-	}
-	.import-progress.import-error {
-		background: var(--accent);
-		border-color: var(--destructive);
-	}
-	.import-progress-header {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-	}
-	.import-progress-stage {
-		font-family: var(--font-body);
-		font-size: 0.8125rem;
-		text-transform: none;
-		letter-spacing: 0.08em;
-		color: var(--primary);
-	}
-	.import-done .import-progress-stage {
-		color: var(--primary);
-	}
-	.import-error .import-progress-stage {
-		color: var(--destructive);
-	}
-	.import-progress-icon {
-		font-size: 0.8125rem;
-	}
-	.import-done .import-progress-icon {
-		color: var(--primary);
-	}
-	.import-error .import-progress-icon {
-		color: var(--destructive);
-	}
-	.import-progress-detail {
-		font-size: 0.8125rem;
-		color: var(--primary);
-		margin-top: 0.25rem;
-	}
-	.import-progress-spinner {
-		width: 12px;
-		height: 12px;
-		border: 1.5px solid var(--border);
-		border-top-color: var(--border);
-		border-radius: 50%;
-		animation: spin 0.8s linear infinite;
-	}
-	@keyframes spin {
-		to { transform: rotate(360deg); }
 	}
 	/* Scheduled messages */
 	.sched-list {

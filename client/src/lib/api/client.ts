@@ -771,22 +771,6 @@ export async function importInstance(slug: string, file: File): Promise<{ ok: bo
 	return res.json();
 }
 
-export async function importKnowledge(slug: string, files: FileList): Promise<{ ok: boolean; message: string }> {
-	const form = new FormData();
-	for (const file of files) {
-		form.append("files", file, file.name);
-	}
-	const res = await fetch(
-		`${BASE}/api/instances/${encodeURIComponent(slug)}/memory/import`,
-		{ method: "POST", body: form, headers: authHeaders() },
-	);
-	if (!res.ok) {
-		const text = await res.text();
-		throw new Error(text || "knowledge import failed");
-	}
-	return res.json();
-}
-
 // ---------------------------------------------------------------------------
 // Computer Use
 // ---------------------------------------------------------------------------

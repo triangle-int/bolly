@@ -13,7 +13,6 @@ pub mod machine_registry;
 pub mod mcp;
 pub mod media_text;
 pub mod memory;
-pub mod memory_import;
 pub mod rhythm;
 pub mod scheduler;
 pub mod skills;
