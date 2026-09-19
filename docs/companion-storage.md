@@ -57,7 +57,7 @@ Unknown fields are rejected. A marker with any other `format_version` or
 Every persisted subsystem (settings, soul, history, memory, scheduler, machine
 bindings, export) lives under this single directory. Retired layouts
 (`stats/` per-day aggregates, `agents/` child-agent configs and histories,
-`agent_runs/` traces, `thoughts/` once #94 lands) are removed from the
+`agent_runs/` traces, `thoughts/` raw monologue) are removed from the
 companion directory at startup and never read. The derived vector index
 under `vectors/` is keyed by the same slug and can always be rebuilt from
 `memory/`.

@@ -70,6 +70,12 @@ impl AppState {
         let vector_store =
             VectorStore::connect_with_config(&config::workspace_root(), &config).await;
 
+        let proactive = crate::services::proactive::ProactiveLoop::new(
+            &config::workspace_root(),
+            crate::domain::companion::CANONICAL_SLUG,
+        )
+        .with_events(events.clone());
+
         Self {
             resources: crate::services::resource_access::ResourceAccess::new(&config.auth_token),
             config: Arc::new(RwLock::new(config)),
@@ -82,10 +88,7 @@ impl AppState {
             http_client,
             vector_store: Arc::new(vector_store),
             machine_registry: MachineRegistry::new(),
-            proactive: crate::services::proactive::ProactiveLoop::new(
-                &config::workspace_root(),
-                crate::domain::companion::CANONICAL_SLUG,
-            ),
+            proactive,
             browser_sessions: Arc::new(BrowserSessionStore::new()),
         }
     }

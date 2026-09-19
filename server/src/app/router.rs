@@ -24,7 +24,6 @@ fn api_router(state: &AppState) -> Router<AppState> {
         .merge(routes::drops::router())
         .merge(routes::config::router())
         .merge(routes::soul::router())
-        .merge(routes::thoughts::router())
         .merge(routes::uploads::router())
         .merge(routes::skills::router())
         .merge(routes::ws::router())

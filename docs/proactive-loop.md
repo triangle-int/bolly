@@ -98,7 +98,22 @@ runs the check-in once with a connection task.
 Retired child-agent state (`agents/`, `agent_runs/`) is removed from the
 companion directory once at startup; it is never executed.
 
+## Receipts instead of thoughts (#94)
+
+The raw Thoughts store, its route, tab, and `heartbeat_thought` event are
+gone. Routines return only their tool trace, which the loop reduces to
+receipts; the model's private text is dropped in memory and never written
+anywhere. Historical `thoughts/` files are removed from the companion
+directory once at startup and cannot influence behavior. Mood remains
+bounded companion state in `mood.json`.
+
+The client's **Activity tab** lists the records newest first (trigger, stated
+reason, status, receipts, held messages) with cancel and retry, and updates
+live from the `activity_updated` server event, which carries the same
+record shape as the API. Initiative controls (on/off, check-in interval,
+quiet hours, daily message budget, reflection) live under Settings →
+Companion.
+
 ## Migration hooks
 
-#94 replaces raw Thoughts with these receipts; #85 and #82 add the commitment
-and handoff triggers.
+#85 and #82 add the commitment and handoff triggers.

@@ -1,6 +1,6 @@
 use serde::Serialize;
 
-use crate::domain::{chat::ChatMessage, drop::Drop, thought::Thought};
+use crate::domain::{chat::ChatMessage, drop::Drop, proactive::ProactiveRun};
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
@@ -26,9 +26,10 @@ pub enum ServerEvent {
         instance_slug: String,
         drop: Drop,
     },
-    HeartbeatThought {
+    /// A proactive run was created or changed (#94). Receipts only, no model text.
+    ActivityUpdated {
         instance_slug: String,
-        thought: Thought,
+        run: ProactiveRun,
     },
     ContextCompacting {
         instance_slug: String,

@@ -76,6 +76,8 @@ pub struct ProactiveLoop {
     workspace_dir: PathBuf,
     slug: String,
     active: Arc<Mutex<HashMap<String, Active>>>,
+    /// Receipt updates for connected clients (#94). None in tests that do not care.
+    events: Option<tokio::sync::broadcast::Sender<crate::domain::events::ServerEvent>>,
 }
 
 impl ProactiveLoop {
@@ -84,7 +86,17 @@ impl ProactiveLoop {
             workspace_dir: workspace_dir.to_path_buf(),
             slug: slug.to_owned(),
             active: Arc::new(Mutex::new(HashMap::new())),
+            events: None,
         }
+    }
+
+    /// Broadcast every record change as `activity_updated`.
+    pub fn with_events(
+        mut self,
+        events: tokio::sync::broadcast::Sender<crate::domain::events::ServerEvent>,
+    ) -> Self {
+        self.events = Some(events);
+        self
     }
 
     fn instance_dir(&self) -> PathBuf {
@@ -396,7 +408,14 @@ impl ProactiveLoop {
         write_atomic(
             &self.run_path(&run.id),
             &serde_json::to_string_pretty(run).map_err(io::Error::other)?,
-        )
+        )?;
+        if let Some(events) = &self.events {
+            let _ = events.send(crate::domain::events::ServerEvent::ActivityUpdated {
+                instance_slug: self.slug.clone(),
+                run: run.clone(),
+            });
+        }
+        Ok(())
     }
 
     pub fn get(&self, id: &str) -> Option<ProactiveRun> {
@@ -901,6 +920,48 @@ mod tests {
         assert_eq!(removed, 3, "finished runs older than retention_days");
         assert_eq!(r#loop.list(10).len(), 1);
         running.complete_at(RunOutcome::default(), T0 + 3 * 86_400);
+    }
+
+    #[test]
+    fn every_record_change_is_broadcast_as_an_activity_receipt() {
+        let (ws, _) = harness();
+        let (events, mut rx) = tokio::sync::broadcast::channel(16);
+        let r#loop = ProactiveLoop::new(ws.path(), CANONICAL_SLUG).with_events(events);
+        let handle = admitted(r#loop.begin_at(heartbeat(), "check-in", Target::Companion, T0));
+        r#loop
+            .approve_side_effect(Some(handle.id()), SideEffect::ReachOut, T0 + 1)
+            .unwrap();
+        handle.complete_at(RunOutcome::default(), T0 + 2);
+        skipped(r#loop.begin_at(heartbeat(), "check-in", Target::Companion, T0 + 3));
+
+        let mut statuses = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            let crate::domain::events::ServerEvent::ActivityUpdated { instance_slug, run } = event
+            else {
+                panic!("unexpected event");
+            };
+            assert_eq!(instance_slug, CANONICAL_SLUG);
+            statuses.push(run.status);
+        }
+        assert!(
+            matches!(
+                statuses.as_slice(),
+                [
+                    RunStatus::Running,
+                    RunStatus::Running,
+                    RunStatus::Completed,
+                    RunStatus::Skipped { .. }
+                ]
+            ),
+            "{statuses:?}"
+        );
+        let json = serde_json::to_string(&crate::domain::events::ServerEvent::ActivityUpdated {
+            instance_slug: CANONICAL_SLUG.into(),
+            run: r#loop.list(1).remove(0),
+        })
+        .unwrap();
+        assert!(json.contains("\"type\":\"activity_updated\""));
+        assert!(!json.contains("trace"));
     }
 
     #[test]

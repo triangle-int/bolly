@@ -4,18 +4,16 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::Duration;
 
 use chrono::Utc;
 use tokio::sync::{RwLock, broadcast};
 
 use crate::domain::events::ServerEvent;
 use crate::domain::proactive::{ProactivePolicy, Target, Trigger};
-use crate::domain::thought::Thought;
 use crate::services::companion_routine::{self, Routine};
 use crate::services::proactive::{Admission, ProactiveLoop, outcome_from_trace};
-use crate::services::tools::load_mood_state;
-use crate::services::{chat, companion, llm::LlmBackend, rhythm, thoughts};
+use crate::services::{chat, companion, llm::LlmBackend, rhythm};
 
 /// Routines the heartbeat keeps alive. Reflection stays in the list so an
 /// opt-in later takes effect without a restart; its loop idles while disabled.
@@ -215,20 +213,6 @@ async fn run_tick(
             );
             log::info!("[heartbeat] {}: done ({} tokens)", routine.name(), r.tokens);
 
-            // Thought capture stays until #94 replaces it with activity receipts.
-            let final_mood = load_mood_state(instance_dir).companion_mood;
-            let thought = Thought {
-                id: format!("thought_{}", unix_millis()),
-                raw: r.response,
-                actions: vec![format!("wake:{}", routine.name())],
-                mood: final_mood,
-                created_at: unix_millis().to_string(),
-            };
-            let _ = thoughts::save_thought(workspace_dir, slug, &thought);
-            let _ = events.send(ServerEvent::HeartbeatThought {
-                instance_slug: slug.to_string(),
-                thought,
-            });
             handle.complete(outcome_from_trace(&r.trace, r.tokens));
         }
         Err(e) => {
@@ -236,13 +220,6 @@ async fn run_tick(
             handle.fail(&e.to_string(), true);
         }
     }
-}
-
-fn unix_millis() -> u128 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system time should be after unix epoch")
-        .as_millis()
 }
 
 #[cfg(test)]

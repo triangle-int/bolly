@@ -10,7 +10,8 @@ import type {
 	Skill,
 	Soul,
 	SoulTemplate,
-	Thought,
+	ProactiveRun,
+	ProactivePolicy,
 	UpdateLlmRequest,
 	MemoryEntry,
 	UploadMeta,
@@ -480,8 +481,31 @@ export function setCompanionName(slug: string, name: string): Promise<void> {
 	});
 }
 
-export function fetchThoughts(slug: string): Promise<Thought[]> {
-	return json(`/api/instances/${encodeURIComponent(slug)}/thoughts`);
+/** Activity receipts and initiative policy (#92, #94). */
+export function fetchActivity(slug: string, limit = 50): Promise<ProactiveRun[]> {
+	return json(`/api/instances/${encodeURIComponent(slug)}/activity?limit=${limit}`);
+}
+
+export async function cancelActivity(slug: string, runId: string): Promise<void> {
+	const res = await authedFetch(`/api/instances/${encodeURIComponent(slug)}/activity/${encodeURIComponent(runId)}/cancel`, { method: "POST" });
+	if (res.status === 401) throw new AuthError();
+	if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
+}
+
+export function retryActivity(slug: string, runId: string): Promise<ProactiveRun> {
+	return json(`/api/instances/${encodeURIComponent(slug)}/activity/${encodeURIComponent(runId)}/retry`, { method: "POST" });
+}
+
+export function fetchProactivePolicy(slug: string): Promise<ProactivePolicy> {
+	return json(`/api/instances/${encodeURIComponent(slug)}/proactive`);
+}
+
+export function updateProactivePolicy(slug: string, policy: ProactivePolicy): Promise<void> {
+	return json(`/api/instances/${encodeURIComponent(slug)}/proactive`, {
+		method: "PUT",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify(policy),
+	});
 }
 
 

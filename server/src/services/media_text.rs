@@ -578,6 +578,20 @@ impl MediaStore {
         finish_aggregated(errors)
     }
 
+    /// Remove the retired raw `thoughts/` store from the canonical companion
+    /// (#94). Bounded, idempotent, never touches obsolete siblings.
+    pub fn cleanup_legacy_thoughts(&self) -> io::Result<()> {
+        let Some(instances) = open_real_child_dir(&self.root, "instances")? else {
+            return Ok(());
+        };
+        let Some(companion) =
+            open_real_child_dir(&instances, crate::domain::companion::CANONICAL_SLUG)?
+        else {
+            return Ok(());
+        };
+        remove_legacy_dir(&companion, "thoughts")
+    }
+
     /// Remove the retired per-day `stats/` aggregate store from the canonical
     /// companion. Bounded, idempotent, and never touches obsolete siblings.
     pub fn cleanup_legacy_stats(&self) -> io::Result<()> {
@@ -2891,6 +2905,25 @@ mod legacy_stats_cleanup_tests {
 
         store.cleanup_legacy_stats().unwrap();
         assert!(!companion.join("stats").exists());
+    }
+
+    #[test]
+    fn legacy_thoughts_are_removed_from_the_companion_only_and_idempotently() {
+        let ws = tempfile::tempdir().unwrap();
+        let companion = ws.path().join("instances").join(CANONICAL_SLUG);
+        std::fs::create_dir_all(companion.join("thoughts")).unwrap();
+        std::fs::write(companion.join("thoughts/thought_1.json"), "{}").unwrap();
+        std::fs::write(companion.join("soul.md"), "soul").unwrap();
+        let obsolete = ws.path().join("instances/alice/thoughts");
+        std::fs::create_dir_all(&obsolete).unwrap();
+        std::fs::write(obsolete.join("thought_1.json"), "{}").unwrap();
+
+        let store = MediaStore::open(ws.path()).unwrap();
+        store.cleanup_legacy_thoughts().unwrap();
+        assert!(!companion.join("thoughts").exists());
+        assert!(companion.join("soul.md").is_file());
+        assert!(obsolete.join("thought_1.json").is_file());
+        store.cleanup_legacy_thoughts().unwrap();
     }
 
     #[test]

@@ -12,7 +12,6 @@ pub mod meta;
 pub mod session;
 pub mod skills;
 pub mod soul;
-pub mod thoughts;
 pub mod tts;
 pub mod update;
 pub mod uploads;
