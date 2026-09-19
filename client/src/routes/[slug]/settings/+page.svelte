@@ -14,8 +14,12 @@
 	import * as Select from "$lib/components/ui/select/index.js";
 	import { page } from "$app/state";
 	import { embeddingStatusText } from "$lib/embedding-status.js";
-	import type { EmbeddingStatus } from "$lib/api/client.js";
+	import type { EmbeddingStatus, PairedDevice, PairingCode, AuthKind } from "$lib/api/client.js";
 	import {
+		fetchPairedDevices,
+		createPairingCode,
+		revokePairedDevice,
+		logoutSession,
 
 		fetchMcpServers,
 		addMcpServer,
@@ -257,6 +261,106 @@
 		} finally {
 			serverSaving = false;
 		}
+	}
+
+	// Paired browsers (#112)
+	let sessionAuth = $state<AuthKind>("disabled");
+	let devices = $state<PairedDevice[]>([]);
+	let devicesLoading = $state(true);
+	let devicesError = $state("");
+	let pairingCode = $state<PairingCode | null>(null);
+	let pairingBusy = $state(false);
+	let pairingSecondsLeft = $state(0);
+	let pairingTimer: ReturnType<typeof setInterval> | null = null;
+	let revokingId = $state("");
+
+	async function loadDevices() {
+		devicesLoading = true;
+		devicesError = "";
+		try {
+			const res = await fetchPairedDevices();
+			sessionAuth = res.auth;
+			devices = res.devices;
+		} catch {
+			devicesError = "Could not load paired browsers.";
+		} finally {
+			devicesLoading = false;
+		}
+	}
+
+	async function startPairing() {
+		pairingBusy = true;
+		devicesError = "";
+		try {
+			pairingCode = await createPairingCode();
+			pairingSecondsLeft = pairingCode.expires_in_secs;
+			if (pairingTimer) clearInterval(pairingTimer);
+			pairingTimer = setInterval(() => {
+				pairingSecondsLeft = Math.max(0, pairingSecondsLeft - 1);
+				if (pairingSecondsLeft === 0) dismissPairingCode();
+			}, 1000);
+		} catch {
+			devicesError = "Could not create a pairing code.";
+		} finally {
+			pairingBusy = false;
+		}
+	}
+
+	function dismissPairingCode() {
+		pairingCode = null;
+		pairingSecondsLeft = 0;
+		if (pairingTimer) {
+			clearInterval(pairingTimer);
+			pairingTimer = null;
+		}
+		// A code that was used shows up as a new device.
+		loadDevices();
+	}
+
+	async function revokeDevice(device: PairedDevice) {
+		revokingId = device.id;
+		devicesError = "";
+		try {
+			await revokePairedDevice(device.id);
+			if (device.current) {
+				location.href = "/";
+				return;
+			}
+			devices = devices.filter((d) => d.id !== device.id);
+		} catch {
+			devicesError = "Could not revoke that browser.";
+		} finally {
+			revokingId = "";
+		}
+	}
+
+	async function signOut() {
+		try {
+			await logoutSession();
+		} finally {
+			location.href = "/";
+		}
+	}
+
+	function timeAgo(unixSeconds: number): string {
+		const delta = Math.max(0, Math.floor(Date.now() / 1000) - unixSeconds);
+		if (delta < 90) return "just now";
+		if (delta < 3600) return `${Math.round(delta / 60)} min ago`;
+		if (delta < 86400 * 2) return `${Math.round(delta / 3600)} h ago`;
+		return `${Math.round(delta / 86400)} days ago`;
+	}
+
+	function pairingCountdown(seconds: number): string {
+		const m = Math.floor(seconds / 60);
+		const s = seconds % 60;
+		return `${m}:${String(s).padStart(2, "0")}`;
+	}
+
+	function pairedViaText(device: PairedDevice): string {
+		if (device.paired_via === "cli") return "paired from the command line";
+		if (device.paired_via.startsWith("browser:")) return "paired from another browser";
+		if (device.paired_via === "desktop") return "paired from the desktop app";
+		return "paired with the API token";
 	}
 
 	// Voice state
@@ -597,6 +701,7 @@
 		loadEmail();
 		loadVoice();
 		loadServer();
+		loadDevices();
 		loadScheduled();
 	});
 
@@ -708,7 +813,63 @@
 						{/if}
 					</div>
 				{/if}
-				<p class="setting-hint">Leave empty for no authentication</p>
+				<p class="setting-hint">API token for automation, the CLI and the desktop app. Browsers pair for a session instead and keep working when it changes. Leave empty for no authentication.</p>
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label">Paired browsers</span>
+				{#if devicesLoading}
+					<p class="dim-text">Loading...</p>
+				{:else if sessionAuth === "disabled"}
+					<p class="setting-hint">Set an API token to require browsers to pair.</p>
+				{:else}
+					{#if devices.length === 0}
+						<p class="setting-hint">No browsers are paired yet.</p>
+					{:else}
+						<ul class="device-list">
+							{#each devices as device (device.id)}
+								<li class="device-row">
+									<div class="device-info">
+										<span class="device-label">
+											{device.label}
+											{#if device.current}<span class="device-current">This browser</span>{/if}
+										</span>
+										<span class="device-meta">{device.host} · {pairedViaText(device)} · last seen {timeAgo(device.last_seen_at)}</span>
+									</div>
+									<button
+										class="setting-btn setting-btn-danger"
+										onclick={() => revokeDevice(device)}
+										disabled={revokingId === device.id}
+									>
+										{device.current ? "Sign out" : "Revoke"}
+									</button>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+					{#if pairingCode}
+						<div class="pairing-panel" aria-live="polite">
+							<span class="pairing-code">{pairingCode.code}</span>
+							<p class="setting-hint">
+								Enter this code on the new device within {pairingCountdown(pairingSecondsLeft)}. It works once.
+								{#if pairingCode.bound_host}Open Nolune there at the same address, <strong>{pairingCode.bound_host}</strong>.{/if}
+							</p>
+							<button class="setting-btn" onclick={dismissPairingCode}>Done</button>
+						</div>
+					{:else}
+						<div class="setting-input-row">
+							<button class="setting-btn" onclick={startPairing} disabled={pairingBusy}>
+								{pairingBusy ? "..." : "Pair another browser"}
+							</button>
+							{#if sessionAuth === "session" && devices.length === 0}
+								<button class="setting-btn setting-btn-danger" onclick={signOut}>Sign out</button>
+							{/if}
+						</div>
+					{/if}
+					{#if devicesError}
+						<p class="setting-hint setting-warning">{devicesError}</p>
+					{/if}
+				{/if}
 			</div>
 
 			<div class="setting-row">
@@ -1878,6 +2039,15 @@
 	.setting-btn-danger:hover:not(:disabled) { background: var(--accent); }
 	.setting-hint { font-size: 0.8125rem; color: var(--text-muted); margin: 0; }
 	.setting-warning { color: var(--primary); }
+	.device-list { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 8px; padding: 0; list-style: none; }
+	.device-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--background); flex-wrap: wrap; }
+	.device-info { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+	.device-label { display: flex; align-items: center; gap: 8px; font-size: 0.875rem; color: var(--foreground); }
+	.device-current { font-size: 0.6875rem; letter-spacing: 0.04em; text-transform: uppercase; padding: 2px 6px; border-radius: 999px; background: var(--accent); color: var(--primary); }
+	.device-meta { font-size: 0.75rem; color: var(--text-muted); overflow-wrap: anywhere; }
+	.pairing-panel { display: flex; flex-direction: column; align-items: flex-start; gap: 8px; padding: 12px; border-radius: 8px; border: 1px solid var(--primary); background: var(--accent); }
+	.pairing-code { font-family: var(--font-mono, monospace); font-size: 1.75rem; letter-spacing: 0.14em; color: var(--foreground); }
+	.pairing-panel strong { color: var(--foreground); font-weight: 500; }
 	.dim-text { font-size: 0.8125rem; color: var(--text-secondary); font-family: var(--font-body); }
 
     .settings-title { font-size: 2rem; color: var(--foreground); }

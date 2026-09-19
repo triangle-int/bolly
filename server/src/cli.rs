@@ -31,6 +31,8 @@ pub enum CliCommand {
     Logs,
     /// Print version
     Version,
+    /// Create a one-time code so a browser can sign in to this server
+    Pair,
 }
 
 pub fn run(cmd: CliCommand) -> i32 {
@@ -45,6 +47,109 @@ pub fn run(cmd: CliCommand) -> i32 {
         CliCommand::Logs => svc_logs(),
         CliCommand::Version => {
             println!("nolune {}", env!("CARGO_PKG_VERSION"));
+            0
+        }
+        CliCommand::Pair => pair(),
+    }
+}
+
+// ── Browser pairing ─────────────────────────────────────────────────────
+
+/// Ask the running server for a pairing code and print it. This is the local
+/// owner surface for #112: the code is short-lived and single-use, and the
+/// API token itself never leaves this process.
+fn pair() -> i32 {
+    let config = match config::load_config() {
+        Ok(config) => config,
+        Err(error) => {
+            eprintln!("cannot read {}: {error}", config::config_path().display());
+            return 1;
+        }
+    };
+    if config.auth_token.is_empty() {
+        println!(
+            "Authentication is disabled (auth_token is empty in {}), so browsers can open Nolune without pairing.",
+            config::config_path().display()
+        );
+        return 0;
+    }
+
+    let connect_host = match config.host.as_str() {
+        "" | "0.0.0.0" => "127.0.0.1".to_string(),
+        "::" | "[::]" => "[::1]".to_string(),
+        other => other.to_string(),
+    };
+    let url = format!("http://{connect_host}:{}/api/session/pairing", config.port);
+    let open_url = if config.public_url.is_empty() {
+        format!("http://localhost:{}", config.port)
+    } else {
+        config.public_url.clone()
+    };
+
+    // `main` is already inside the tokio runtime, so drive this request on a
+    // fresh thread with its own runtime.
+    let auth_token = config.auth_token.clone();
+    let request_url = url.clone();
+    let response = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| e.to_string())?;
+        runtime.block_on(async {
+            let client = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(5))
+                .build()
+                .map_err(|e| e.to_string())?;
+            let response = client
+                .post(&request_url)
+                .bearer_auth(&auth_token)
+                .json(&serde_json::json!({ "source": "cli" }))
+                .send()
+                .await
+                .map_err(|e| e.to_string())?;
+            let status = response.status();
+            let body: serde_json::Value = response.json().await.unwrap_or_default();
+            Ok::<_, String>((status, body))
+        })
+    })
+    .join()
+    .unwrap_or_else(|_| Err("pairing thread panicked".to_string()));
+
+    match response {
+        Err(error) => {
+            eprintln!(
+                "Nolune is not reachable at {url} ({error}).
+Start it with `nolune start` and try again."
+            );
+            1
+        }
+        Ok((status, _)) if status == reqwest::StatusCode::UNAUTHORIZED => {
+            eprintln!(
+                "The running server rejected the token from {}.
+If the service was started with NOLUNE_AUTH_TOKEN, run `nolune pair` with the same value.",
+                config::config_path().display()
+            );
+            1
+        }
+        Ok((status, body)) if !status.is_success() => {
+            let message = body["message"].as_str().unwrap_or("");
+            eprintln!("pairing request failed: HTTP {status} {message}");
+            1
+        }
+        Ok((_, body)) => {
+            let Some(code) = body["code"].as_str() else {
+                eprintln!("the server did not return a pairing code");
+                return 1;
+            };
+            let minutes = body["expires_in_secs"].as_u64().unwrap_or(300) / 60;
+            println!();
+            println!("  Pairing code:  {code}");
+            println!();
+            println!("  Open {open_url} in the browser you want to connect and enter this code.");
+            println!(
+                "  It works once and expires in {minutes} minutes. Run `nolune pair` again for another browser."
+            );
+            println!();
             0
         }
     }

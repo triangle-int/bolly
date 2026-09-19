@@ -8,6 +8,7 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     config::{self, Config},
     domain::events::ServerEvent,
+    services::browser_sessions::BrowserSessionStore,
     services::llm::LlmBackend,
     services::machine_registry::MachineRegistry,
     services::mcp::McpRegistry,
@@ -42,6 +43,9 @@ pub struct AppState {
     pub machine_registry: MachineRegistry,
     /// The one proactive companion loop (#92): every self-started run is admitted here.
     pub proactive: crate::services::proactive::ProactiveLoop,
+    /// Paired browsers and pending pairing codes (#112). In memory until
+    /// `attach_storage` is called by the server entrypoint.
+    pub browser_sessions: Arc<BrowserSessionStore>,
 }
 
 // No hardcoded MCP servers — users add them via Settings UI or config.toml.
@@ -82,6 +86,7 @@ impl AppState {
                 &config::workspace_root(),
                 crate::domain::companion::CANONICAL_SLUG,
             ),
+            browser_sessions: Arc::new(BrowserSessionStore::new()),
         }
     }
 

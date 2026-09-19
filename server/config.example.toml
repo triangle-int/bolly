@@ -1,7 +1,8 @@
 host = "0.0.0.0"
 port = 26559
 
-# Set a token to protect your API (leave empty for no auth)
+# API token for automation, the CLI and the desktop app (leave empty for no auth).
+# Browsers never use it: they pair with a one-time code from `nolune pair`.
 auth_token = ""
 
 # Path to pre-built client files (leave empty to skip static serving)
