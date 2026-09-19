@@ -31,9 +31,9 @@
 	}
 
 	function barColor(p: number): string {
-		if (p >= 100) return "oklch(0.65 0.2 25)";
-		if (p >= 80) return "oklch(0.75 0.15 85)";
-		return "oklch(0.78 0.12 75 / 40%)";
+		if (p >= 100) return "var(--destructive)";
+		if (p >= 80) return "var(--foreground)";
+		return "var(--primary)";
 	}
 
 	function formatTokens(n: number): string {
@@ -62,59 +62,17 @@
 	{@const p = pct(used4h, limit4h)}
 	<div class="usage-bar">
 		<div class="usage-item" title="{formatTokens(used4h)} / {formatTokens(limit4h)} tokens (4h) — resets {resetLabel}">
-			<span class="usage-label">{formatTokens(used4h)}/{formatTokens(limit4h)}</span>
+			<span class="usage-label">Usage: {formatTokens(used4h)}/{formatTokens(limit4h)}</span>
 			<div class="usage-track">
 				<div class="usage-fill" style="width: {p}%; background: {barColor(p)}"></div>
 			</div>
 			{#if resetLabel}
-				<span class="usage-reset">{resetLabel}</span>
+				<span class="usage-reset">Resets {resetLabel}</span>
 			{/if}
 		</div>
 	</div>
 {/if}
 
 <style>
-	.usage-bar {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		gap: 0.75rem;
-		padding: 0.5rem 0.3rem 0;
-	}
-
-	.usage-item {
-		display: flex;
-		align-items: center;
-		gap: 0.375rem;
-		cursor: default;
-	}
-
-	.usage-label {
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		letter-spacing: 0.03em;
-		color: oklch(0.78 0.12 75 / 35%);
-		white-space: nowrap;
-	}
-
-	.usage-track {
-		width: 2.5rem;
-		height: 2px;
-		border-radius: 1px;
-		background: oklch(var(--ink) / 4%);
-		overflow: hidden;
-	}
-
-	.usage-fill {
-		height: 100%;
-		border-radius: 1px;
-		transition: width 0.5s ease, background 0.5s ease;
-	}
-
-	.usage-reset {
-		font-family: var(--font-mono);
-		font-size: 0.68rem;
-		color: oklch(0.78 0.12 75 / 35%);
-		white-space: nowrap;
-	}
+.usage-bar{display:flex;justify-content:center;padding:8px 4px 0}.usage-item{display:flex;align-items:center;justify-content:center;flex-wrap:wrap;gap:8px;font:12px/1.5 var(--font-body);color:var(--text-muted)}.usage-track{width:48px;height:4px;border-radius:2px;background:var(--secondary);overflow:hidden}.usage-fill{height:100%;border-radius:2px;transition:width .3s}.usage-label,.usage-reset{white-space:nowrap}
 </style>

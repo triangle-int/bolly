@@ -9,7 +9,7 @@
 			variant: {
 				default: "bg-primary text-primary-foreground hover:bg-primary/90 shadow-xs",
 				destructive:
-					"bg-destructive hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 dark:bg-destructive/60 text-white shadow-xs",
+					"bg-destructive hover:bg-destructive/90 focus-visible:ring-destructive/20 dark:focus-visible:ring-destructive/40 text-primary-foreground shadow-xs",
 				outline:
 					"bg-background hover:bg-accent hover:text-accent-foreground dark:bg-input/30 dark:border-input dark:hover:bg-input/50 border shadow-xs",
 				secondary: "bg-secondary text-secondary-foreground hover:bg-secondary/80 shadow-xs",
@@ -17,12 +17,12 @@
 				link: "text-primary underline-offset-4 hover:underline",
 			},
 			size: {
-				default: "h-9 px-4 py-2 has-[>svg]:px-3",
-				sm: "h-8 gap-1.5 rounded-md px-3 has-[>svg]:px-2.5",
-				lg: "h-10 rounded-md px-6 has-[>svg]:px-4",
-				icon: "size-9",
-				"icon-sm": "size-8",
-				"icon-lg": "size-10",
+				default: "h-11 px-4 py-2 has-[>svg]:px-3",
+				sm: "h-11 gap-1.5 rounded-md px-3 has-[>svg]:px-2.5",
+				lg: "h-12 rounded-md px-6 has-[>svg]:px-4",
+				icon: "size-11",
+				"icon-sm": "size-11",
+				"icon-lg": "size-12",
 			},
 		},
 		defaultVariants: {

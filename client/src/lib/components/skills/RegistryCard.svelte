@@ -17,7 +17,7 @@
 		<span class="registry-card-icon">{entry.icon || "~"}</span>
 		<span class="registry-card-name">{entry.name}</span>
 		{#if entry.installed}
-			<span class="registry-card-badge">installed</span>
+			<span class="registry-card-badge">Installed</span>
 		{/if}
 	</div>
 
@@ -38,7 +38,7 @@
 					oninstall(entry.id);
 				}}
 			>
-				{installing ? "installing..." : "install"}
+				{installing ? "Installing…" : "Install"}
 			</button>
 		{/if}
 	</div>
@@ -51,15 +51,15 @@
 		gap: 0.5rem;
 		padding: 1rem 1.125rem;
 		border-radius: 0.75rem;
-		background: oklch(0.09 0.018 278 / 60%);
-		border: 1px solid oklch(var(--ink) / 4%);
+		background: var(--card);
+		border: 1px solid var(--border);
 		transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
-		animation: registry-emerge 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+		animation: none;
 	}
 
 	@keyframes registry-emerge {
 		from {
-			opacity: 0;
+			opacity: 1;
 			transform: translateY(8px);
 		}
 		to {
@@ -69,9 +69,9 @@
 	}
 
 	.registry-card:hover {
-		background: oklch(0.1 0.02 278 / 70%);
-		border-color: oklch(0.78 0.12 75 / 10%);
-		box-shadow: 0 0 20px oklch(0.78 0.12 75 / 5%);
+		background: var(--card);
+		border-color: var(--border);
+		box-shadow: none;
 	}
 
 	.registry-card-installed {
@@ -85,9 +85,9 @@
 	}
 
 	.registry-card-icon {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.85rem;
-		color: oklch(0.78 0.12 75 / 60%);
+		color: var(--text-secondary);
 		width: 1.25rem;
 		text-align: center;
 		flex-shrink: 0;
@@ -102,19 +102,19 @@
 
 	.registry-card-badge {
 		margin-left: auto;
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.75rem;
-		color: oklch(0.7 0.08 150 / 50%);
-		background: oklch(0.7 0.08 150 / 8%);
+		color: var(--text-secondary);
+		background: var(--card);
 		padding: 0.15rem 0.45rem;
 		border-radius: 0.25rem;
 		letter-spacing: 0.06em;
-		text-transform: uppercase;
+		text-transform: none;
 	}
 
 	.registry-card-desc {
 		font-size: 0.78rem;
-		color: oklch(0.78 0.12 75 / 45%);
+		color: var(--text-secondary);
 		line-height: 1.5;
 	}
 
@@ -123,19 +123,19 @@
 		align-items: center;
 		gap: 0.5rem;
 		padding-top: 0.4rem;
-		border-top: 1px solid oklch(var(--ink) / 4%);
+		border-top: 1px solid var(--border);
 	}
 
 	.registry-card-author {
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		color: oklch(0.78 0.12 75 / 30%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 	}
 
 	.registry-card-repo {
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		color: oklch(0.78 0.12 75 / 28%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		overflow: hidden;
 		text-overflow: ellipsis;
 		white-space: nowrap;
@@ -143,11 +143,11 @@
 
 	.registry-card-install {
 		margin-left: auto;
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		color: oklch(0.78 0.12 75 / 60%);
-		background: oklch(0.78 0.12 75 / 8%);
-		border: 1px solid oklch(0.78 0.12 75 / 15%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
+		background: var(--card);
+		border: 1px solid var(--border);
 		padding: 0.25rem 0.6rem;
 		border-radius: 0.35rem;
 		cursor: pointer;
@@ -158,12 +158,30 @@
 
 	.registry-card-install:hover:not(:disabled) {
 		color: var(--foreground);
-		background: oklch(0.78 0.12 75 / 35%);
-		border-color: oklch(0.78 0.12 75 / 30%);
+		background: var(--card);
+		border-color: var(--border);
 	}
 
 	.registry-card-install:disabled {
 		opacity: 0.5;
 		cursor: not-allowed;
 	}
+
+/* Little Moon surfaces, controls, and readable content. */
+
+.registry-card { background: var(--card); border-color: var(--border); border-radius: 16px; padding: 24px; }
+.registry-card:hover { background: var(--card); border-color: var(--primary); }
+.registry-card-installed { opacity: 1; }
+.registry-card-header, .registry-card-footer { flex-wrap: wrap; }
+.registry-card-name { font: 500 18px var(--font-body); }
+.registry-card-desc { font-size: 14px; line-height: 1.6; }
+.registry-card-badge { color: var(--primary); background: var(--accent); }
+.registry-card-install { min-height: 44px; padding: 8px 16px; background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); }
+.registry-card-install:hover:not(:disabled) { background: var(--primary); color: var(--primary-foreground); filter: brightness(1.06); }
+
+button { min-height: 44px; font-family: var(--font-body); }
+
+button:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
 </style>

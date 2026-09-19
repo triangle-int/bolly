@@ -20,102 +20,41 @@
 
 <div class="auth-gate">
 	<div class="auth-card">
-		<div class="auth-icon">~</div>
+		<img class="auth-icon" src="/skins/moon/character.svg" alt="Nolune" />
+        <h1>Welcome back</h1>
 		{#if isDesktopRelay()}
 			<p class="auth-label">Return to the desktop dashboard to update your token and reconnect.</p>
 		{:else}
-		<p class="auth-label">this companion requires a token</p>
+		<label for="auth-token" class="auth-label">Connect with your access token</label>
 		<input
-			type="password"
+			id="auth-token"
+            type="password"
+            autocomplete="current-password"
 			bind:value={token}
 			onkeydown={handleKeydown}
-			placeholder="auth token..."
+			placeholder="Access token"
 			class="auth-input"
 		/>
 		{#if error}
-			<p class="auth-error">invalid token</p>
+			<p class="auth-error" role="alert">Invalid token</p>
 		{/if}
-		<button onclick={submit} class="auth-button">connect</button>
+		<button onclick={submit} class="auth-button" disabled={!token.trim()}>Connect</button>
 		{/if}
 	</div>
 </div>
 
 <style>
-	.auth-gate {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		height: 100%;
-	}
-
-	.auth-card {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 1rem;
-		padding: 2.5rem 3rem;
-		border-radius: 1rem;
-		background: oklch(0.09 0.018 278 / 60%);
-		border: 1px solid oklch(var(--ink) / 4%);
-		backdrop-filter: blur(20px);
-		animation: auth-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
-	}
-
-	@keyframes auth-enter {
-		from { opacity: 0; transform: translateY(12px) scale(0.97); }
-		to { opacity: 1; transform: translateY(0) scale(1); }
-	}
-
-	.auth-icon {
-		font-family: var(--font-mono);
-		font-size: 1.5rem;
-		color: oklch(0.78 0.12 75 / 35%);
-	}
-
-	.auth-label {
-		font-family: var(--font-body);
-		font-size: 0.8rem;
-		color: oklch(0.78 0.12 75 / 45%);
-	}
-
-	.auth-input {
-		width: 16rem;
-		padding: 0.5rem 0.75rem;
-		border-radius: 0.5rem;
-		background: oklch(0.065 0.015 280);
-		border: 1px solid oklch(var(--ink) / 6%);
-		color: var(--foreground);
-		font-family: var(--font-mono);
-		font-size: 0.8rem;
-		outline: none;
-		transition: border-color 0.2s ease;
-	}
-
-	.auth-input:focus {
-		border-color: oklch(0.78 0.12 75 / 35%);
-	}
-
-	.auth-error {
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		color: oklch(0.65 0.15 20 / 70%);
-	}
-
-	.auth-button {
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		letter-spacing: 0.05em;
-		color: oklch(0.78 0.12 75 / 60%);
-		background: oklch(0.78 0.12 75 / 6%);
-		border: 1px solid oklch(0.78 0.12 75 / 12%);
-		padding: 0.4rem 1.25rem;
-		border-radius: 2rem;
-		cursor: pointer;
-		transition: all 0.2s ease;
-	}
-
-	.auth-button:hover {
-		background: oklch(0.78 0.12 75 / 12%);
-		color: oklch(0.78 0.12 75 / 80%);
-	}
+ .auth-gate { display: flex; align-items: center; justify-content: center; min-height: 100%; padding: 24px; overflow: auto; }
+ .auth-card { display: flex; flex-direction: column; align-items: stretch; gap: 16px; width: 100%; max-width: 420px; padding: 32px; border-radius: 16px; background: var(--card); border: 1px solid var(--border); }
+ .auth-icon { width: 64px; height: 64px; align-self: center; }
+ h1 { font-family: var(--font-display); font-size: 32px; font-weight: 400; text-align: center; color: var(--foreground); }
+ .auth-label { font-size: 14px; line-height: 1.6; color: var(--text-secondary); }
+ .auth-input { width: 100%; min-height: 48px; padding: 12px; border-radius: 8px; background: var(--background); border: 1px solid var(--input); color: var(--foreground); font-size: 16px; }
+ .auth-input::placeholder { color: var(--text-muted); opacity: 1; }
+ .auth-input:focus { border-color: var(--ring); }
+ .auth-error { color: var(--destructive); font-size: 14px; }
+ .auth-button { min-height: 44px; padding: 12px 16px; border-radius: 8px; background: var(--primary); color: var(--primary-foreground); font-size: 14px; font-weight: 500; cursor: pointer; }
+ .auth-button:hover:not(:disabled) { filter: brightness(1.06); }
+ .auth-button:disabled { opacity: 0.5; cursor: not-allowed; }
+ @media (max-width: 480px) { .auth-card { padding: 24px; } }
 </style>

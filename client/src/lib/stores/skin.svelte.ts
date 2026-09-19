@@ -1,7 +1,7 @@
 /**
  * Skin store — per-instance skin selection, persisted on the server.
  *
- * Skins can use a static vector avatar or a set of video clips.
+ * Little Moon uses lightweight SVG expressions.
  */
 
 import { getContext, setContext } from "svelte";
@@ -9,76 +9,19 @@ import { fetchSkin, updateSkin } from "$lib/api/client.js";
 
 const SKIN_KEY = Symbol("skin");
 
-/** A video clip with WebM (Chrome/Firefox) and MOV HEVC (Safari) sources */
-export interface ClipSource {
-	webm: string;
-	mov: string;
-}
-
 export interface SkinDefinition {
-	id: string;
-	label: string;
-	thumbnail: string;
-	/** Vector avatar overrides video rendering; clips remain for legacy skins. */
-	avatar?: { idle: string; thinking: string };
-	clips: {
-		idle: ClipSource;
-		onboarding: ClipSource;
-		reborn: ClipSource;
-		/** Thinking clips — picked randomly during thinking cycles */
-		thinking: ClipSource[];
-	};
+ id: string;
+ label: string;
+ thumbnail: string;
+ avatar: { idle: string; thinking: string };
 }
 
-function mintClip(name: string): ClipSource {
-	return { webm: `/skins/mint/${name}.webm`, mov: `/skins/mint/${name}.mov` };
-}
-
-function orbClip(name: string): ClipSource {
-	return { webm: `/skins/orb/${name}.webm`, mov: `/skins/orb/${name}.mov` };
-}
-
-export const SKINS: SkinDefinition[] = [
-	{
-		// Keep the persisted ID so existing default instances inherit the new identity.
-		id: "orb",
-		label: "Nolune · Little Moon",
-		thumbnail: "/skins/moon/character.svg",
-		avatar: { idle: "/skins/moon/character.svg", thinking: "/skins/moon/thinking.svg" },
-		clips: {
-			idle: orbClip("orb-idle-loop"),
-			onboarding: orbClip("orb-onboarding"),
-			reborn: orbClip("orb-reborn"),
-			thinking: [
-				orbClip("morph-cube"),
-				orbClip("morph-tesseract"),
-				orbClip("morph-prism"),
-			],
-		},
-	},
-	{
-		id: "mint",
-		label: "Minty",
-		thumbnail: "/skins/mint/character.png",
-		clips: {
-			idle: mintClip("idle-loop"),
-			onboarding: mintClip("onboarding"),
-			reborn: mintClip("reborn"),
-			thinking: [
-				mintClip("reading"),
-				mintClip("typing"),
-			],
-		},
-	},
-];
-
-/** Pick the right video src for the current browser (HEVC alpha for Safari, VP9 for others) */
-const _useHEVC = typeof document !== 'undefined' &&
-	document.createElement('video').canPlayType('video/mp4; codecs="hvc1.2.4.L123.B0"') !== '';
-
-export function clipSrc(clip: ClipSource): string {
-	return _useHEVC ? clip.mov : clip.webm;
-}
+export const SKINS: SkinDefinition[] = [{
+ id: "moon",
+ label: "Nolune · Little Moon",
+ thumbnail: "/skins/moon/character.svg",
+ avatar: { idle: "/skins/moon/character.svg", thinking: "/skins/moon/thinking.svg" },
+}];
 
 export interface SkinStore {
 	readonly skinId: string;
@@ -90,7 +33,7 @@ export interface SkinStore {
 
 export function createSkinStore(initialSlug = ""): SkinStore {
 	let slug = $state(initialSlug);
-	let skinId = $state("orb");
+	let skinId = $state("moon");
 
 	const skin = $derived(SKINS.find((s) => s.id === skinId) ?? SKINS[0]);
 
@@ -98,8 +41,8 @@ export function createSkinStore(initialSlug = ""): SkinStore {
 		get skinId() { return skinId; },
 		get skin() { return skin; },
 		setSkin(id: string) {
-			skinId = id;
-			if (slug) updateSkin(slug, id).catch(() => {});
+			skinId = SKINS.some(s => s.id === id) ? id : SKINS[0].id;
+			if (slug) updateSkin(slug, skinId).catch(() => {});
 		},
 		setSlug(s: string) {
 			slug = s;
@@ -108,9 +51,9 @@ export function createSkinStore(initialSlug = ""): SkinStore {
 			slug = s;
 			try {
 				const res = await fetchSkin(s);
-				skinId = res.skin || "orb";
+				skinId = SKINS.some(s => s.id === res.skin) ? res.skin : SKINS[0].id;
 			} catch {
-				skinId = "orb";
+				skinId = "moon";
 			}
 		},
 	};

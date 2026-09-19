@@ -3,9 +3,11 @@ import type { InstanceSummary } from "$lib/api/types.js";
 
 let instances = $state<InstanceSummary[]>([]);
 let loading = $state(true);
+let error = $state("");
 
 export function getInstances() {
 	return {
+		get error() { return error; },
 		get list() {
 			return instances;
 		},
@@ -14,10 +16,11 @@ export function getInstances() {
 		},
 		async refresh() {
 			loading = true;
+			error = "";
 			try {
 				instances = await fetchInstances();
 			} catch (e) {
-				instances = [];
+				error = "Cannot reach your Nolune server. Check that it is running, then try again.";
 				if (e instanceof AuthError) throw e;
 			} finally {
 				loading = false;

@@ -9,6 +9,7 @@
 
 	let agents = $state<ChildAgent[]>([]);
 	let loading = $state(true);
+	let loadError = $state("");
 	let triggering = $state<string | null>(null);
 
 	// Config editing
@@ -19,19 +20,23 @@
 	let selectedAgent = $state<string | null>(null);
 	let history = $state<AgentHistoryEntry[]>([]);
 	let historyLoading = $state(false);
+	let historyError = $state("");
 
 	// Activity panel
 	let runs = $state<AgentRunSummary[]>([]);
 	let runsLoading = $state(true);
+	let runsError = $state("");
 	let selectedRun = $state<AgentRun | null>(null);
 	let runLoading = $state(false);
 	let expandedRunId = $state<string | null>(null);
 
 	async function load() {
 		loading = true;
+		loadError = "";
 		try {
 			agents = await fetchAgents(slug);
 		} catch {
+			loadError = "Could not load agents. Please try again.";
 			toast.error("failed to load agents");
 		} finally {
 			loading = false;
@@ -40,10 +45,11 @@
 
 	async function loadRuns() {
 		runsLoading = true;
+		runsError = "";
 		try {
 			runs = await fetchAgentRuns(slug, 30);
 		} catch {
-			runs = [];
+			runsError = "Could not load recent activity.";
 		} finally {
 			runsLoading = false;
 		}
@@ -75,10 +81,11 @@
 		}
 		selectedAgent = name;
 		historyLoading = true;
+		historyError = "";
 		try {
 			history = await fetchAgentHistory(slug, name);
 		} catch {
-			history = [];
+			historyError = "Could not load this agent’s history. Close and reopen to try again.";
 		} finally {
 			historyLoading = false;
 		}
@@ -178,15 +185,15 @@
 	}
 
 	const modelColors: Record<string, string> = {
-		heavy: "oklch(0.75 0.14 310)",
-		fast: "oklch(0.75 0.12 200)",
-		cheap: "oklch(0.72 0.10 140)",
-		default: "oklch(0.78 0.12 75)",
+		heavy: "var(--primary)",
+		fast: "var(--primary)",
+		cheap: "var(--primary)",
+		default: "var(--primary)",
 	};
 
 	const kindColors: Record<string, string> = {
-		scheduled: "oklch(0.78 0.12 75)",
-		on_demand: "oklch(0.75 0.12 200)",
+		scheduled: "var(--primary)",
+		on_demand: "var(--primary)",
 	};
 
 	function formatDuration(ms: number): string {
@@ -295,17 +302,20 @@
 
 <div class="agents-page">
 	{#if loading}
+		<span class="sr-only" role="status">Loading agents…</span>
 		<div class="agents-center">
 			<div class="pulse-dot"></div>
 		</div>
+	{:else if loadError}
+		<div class="load-error" role="alert"><p>{loadError}</p><button class="nl-button-secondary" onclick={load}>Try again</button></div>
 	{:else}
 		<div class="agents-header">
 			<div class="agents-title">
 				<span class="agents-count">{agents.length}</span>
-				agents
+				Agents
 			</div>
 			<button class="agents-add" onclick={addAgent}>
-				+ new agent
+				+ New agent
 			</button>
 		</div>
 
@@ -315,13 +325,13 @@
 
 		{#if agents.length === 0}
 			<div class="agents-center">
-				<p class="empty-text">no agents yet</p>
-				<p class="empty-sub">agents are autonomous helpers that wake up on their own schedule</p>
+				<p class="empty-text">No agents yet</p>
+				<p class="empty-sub">Agents are autonomous helpers that wake up on their own schedule.</p>
 			</div>
 		{:else}
 			<div class="agents-list">
 				{#each agents as agent (agent.name)}
-					{@const color = modelColors[agent.model] ?? "oklch(0.78 0.12 75)"}
+					{@const color = modelColors[agent.model] ?? "var(--primary)"}
 					{@const isRunning = triggering === agent.name}
 					{@const isExpanded = selectedAgent === agent.name}
 
@@ -348,13 +358,13 @@
 									{/if}
 								</span>
 								{#if agent.is_due}
-									<span class="agent-due-badge">due</span>
+									<span class="agent-due-badge">Due</span>
 								{/if}
 								{#if !agent.enabled}
-									<span class="agent-paused-badge">paused</span>
+									<span class="agent-paused-badge">Paused</span>
 								{/if}
 								{#if agent.modified_fields?.length > 0}
-									<span class="agent-modified-badge" title="Modified: {agent.modified_fields.join(', ')}">modified</span>
+									<span class="agent-modified-badge" title="Modified: {agent.modified_fields.join(', ')}">Modified</span>
 								{/if}
 							</div>
 						</div>
@@ -364,7 +374,7 @@
 							<button
 								class="agent-btn"
 								onclick={() => toggleEnabled(agent)}
-								title={agent.enabled ? "Disable" : "Enable"}
+								aria-label={agent.enabled ? `Disable ${agent.name}` : `Enable ${agent.name}`} title={agent.enabled ? "Disable" : "Enable"}
 							>
 								{#if agent.enabled}
 									<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
@@ -376,7 +386,7 @@
 								class="agent-btn agent-btn-run"
 								onclick={() => handleTrigger(agent.name)}
 								disabled={isRunning || !agent.enabled}
-								title="Run now"
+								aria-label={`Run now: ${agent.name}`} title="Run now"
 							>
 								{#if isRunning}
 									<span class="agent-spinner"></span>
@@ -388,7 +398,7 @@
 								class="agent-btn"
 								onclick={() => editingAgent = editingAgent === agent.name ? null : agent.name}
 								class:agent-btn-active={editingAgent === agent.name}
-								title="Configure"
+								aria-label={`Configure: ${agent.name}`} title="Configure"
 							>
 								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 010 2.83 2 2 0 01-2.83 0l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09A1.65 1.65 0 009 19.4a1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 01-2.83-2.83l.06-.06A1.65 1.65 0 004.68 15a1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09A1.65 1.65 0 004.6 9a1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 012.83-2.83l.06.06A1.65 1.65 0 009 4.68a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 012.83 2.83l-.06.06A1.65 1.65 0 0019.4 9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>
 							</button>
@@ -396,7 +406,7 @@
 								class="agent-btn agent-btn-history"
 								onclick={() => showHistory(agent.name)}
 								class:agent-btn-active={isExpanded}
-								title="View history"
+								aria-label={`View history: ${agent.name}`} title="View history"
 							>
 								<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
 							</button>
@@ -407,9 +417,9 @@
 					{#if editingAgent === agent.name}
 						<div class="agent-config">
 							<div class="config-row">
-								<label class="config-label">interval</label>
+								<label class="config-label" for={`interval-${agent.name}`}>Interval</label>
 								<div class="config-field">
-									<input class="config-input config-input-sm" type="number" min="0" step="0.25"
+									<input id={`interval-${agent.name}`} class="config-input config-input-sm" type="number" min="0" step="0.25"
 										value={agent.interval_hours}
 										onchange={(e) => saveAgentField(agent.name, "interval_hours", parseFloat((e.target as HTMLInputElement).value))}
 									/>
@@ -418,34 +428,34 @@
 								</div>
 							</div>
 							<div class="config-row">
-								<label class="config-label">model</label>
+								<span class="config-label">Model</span>
 								<div class="config-field">
 									{#each MODEL_OPTIONS as opt (opt.value)}
-										<button class="config-chip" class:config-chip-active={agent.model === opt.value}
+										<button class="config-chip" class:config-chip-active={agent.model === opt.value} aria-pressed={agent.model === opt.value}
 											onclick={() => saveAgentField(agent.name, "model", opt.value)}
 										>{opt.label}</button>
 									{/each}
 								</div>
 							</div>
 							<div class="config-row">
-								<label class="config-label">tools</label>
+								<span class="config-label">Tools</span>
 								<div class="config-field config-field-wrap">
 									{#each ALL_TOOL_GROUPS as group (group)}
-										<button class="config-chip" class:config-chip-active={(agent.tool_groups ?? []).includes(group)}
+										<button class="config-chip" class:config-chip-active={(agent.tool_groups ?? []).includes(group)} aria-pressed={(agent.tool_groups ?? []).includes(group)}
 											onclick={() => toggleToolGroup(agent, group)}
 										>{group}</button>
 									{/each}
 								</div>
 							</div>
 							<div class="config-row config-row-full">
-								<label class="config-label">prompt</label>
-								<textarea class="config-textarea" value={agent.prompt} rows="4"
+								<label class="config-label" for={`prompt-${agent.name}`}>Prompt</label>
+								<textarea id={`prompt-${agent.name}`} class="config-textarea" value={agent.prompt} rows="4"
 									onchange={(e) => saveAgentField(agent.name, "prompt", (e.target as HTMLTextAreaElement).value)}
 								></textarea>
 							</div>
 							{#if isBuiltin(agent.name)}
 								<div class="config-row config-row-actions">
-									<button class="config-reset" onclick={() => handleReset(agent.name)}>reset to defaults</button>
+									<button class="config-reset" onclick={() => handleReset(agent.name)}>Reset to defaults</button>
 								</div>
 							{/if}
 						</div>
@@ -456,8 +466,10 @@
 						<div class="agent-history">
 							{#if historyLoading}
 								<div class="history-loading"><div class="pulse-dot"></div></div>
+							{:else if historyError}
+								<p class="history-empty" role="alert">{historyError}</p>
 							{:else if history.length === 0}
-								<p class="history-empty">no history yet</p>
+								<p class="history-empty">No history yet</p>
 							{:else}
 								{#each history as entry (entry.id)}
 									<div class="history-entry">
@@ -477,15 +489,17 @@
 			<div class="activity-header">
 				<div class="agents-title">
 					<span class="agents-count">{runs.length}</span>
-					recent activity
+					Recent activity
 				</div>
 			</div>
 
 			{#if runsLoading}
 				<div class="activity-loading"><div class="pulse-dot"></div></div>
+			{:else if runsError}
+				<div class="load-error" role="alert"><p>{runsError}</p><button class="nl-button-secondary" onclick={loadRuns}>Try again</button></div>
 			{:else if runs.length === 0}
 				<div class="activity-empty">
-					<p class="empty-text">no recent runs</p>
+					<p class="empty-text">No recent runs</p>
 				</div>
 			{:else}
 				<div class="runs-list">
@@ -500,7 +514,7 @@
 							class:run-card-failed={isFailed}
 							onclick={() => toggleRunTrace(run)}
 						>
-							<div class="run-dot" style="background: {isFailed ? 'oklch(0.65 0.15 25)' : color};"></div>
+							<div class="run-dot" style="background: {isFailed ? 'var(--destructive)' : color};"></div>
 
 							<div class="run-main">
 								<div class="run-top">
@@ -564,7 +578,7 @@
 										{/each}
 									</div>
 								{:else if selectedRun}
-									<p class="history-empty">empty trace</p>
+									<p class="history-empty">No messages in this trace</p>
 								{/if}
 
 								{#if selectedRun && runStatusFailed(selectedRun.status)}
@@ -582,6 +596,7 @@
 </div>
 
 <style>
+	.load-error { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; min-height: 220px; padding: 24px; color: var(--text-secondary); text-align: center; }
 	.agents-page {
 		height: 100%;
 		overflow-y: auto;
@@ -599,20 +614,20 @@
 
 	.pulse-dot {
 		width: 6px; height: 6px; border-radius: 50%;
-		background: oklch(0.78 0.12 75 / 40%);
-		animation: pulse 2s ease-in-out infinite;
+		background: var(--card);
+		animation:none;
 	}
 	@keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.7); } }
 
 	.empty-text {
 		font-family: var(--font-display);
-		font-style: italic;
+		font-style: normal;
 		font-size: 0.9rem;
-		color: oklch(var(--ink) / 30%);
+		color: var(--text-secondary);
 	}
 	.empty-sub {
-		font-size: 0.72rem;
-		color: oklch(var(--ink) / 18%);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		max-width: 30ch;
 		text-align: center;
 		line-height: 1.5;
@@ -630,21 +645,21 @@
 	}
 
 	.agents-title {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.75rem;
-		color: oklch(var(--ink) / 35%);
+		color: var(--text-secondary);
 		letter-spacing: 0.04em;
 	}
 
 	.agents-count {
-		color: oklch(0.78 0.12 75 / 55%);
+		color: var(--text-secondary);
 		margin-right: 0.25rem;
 	}
 
 	.agents-hint {
-		font-family: var(--font-mono);
-		font-size: 0.62rem;
-		color: oklch(var(--ink) / 18%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		max-width: 600px;
 		margin: -0.5rem auto 1rem;
 		letter-spacing: 0.02em;
@@ -652,11 +667,11 @@
 	}
 
 	.agents-add {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.75rem;
-		color: oklch(0.78 0.12 75 / 40%);
-		background: oklch(0.78 0.12 75 / 5%);
-		border: 1px solid oklch(0.78 0.12 75 / 10%);
+		color: var(--text-secondary);
+		background: var(--card);
+		border: 1px solid var(--border);
 		padding: 0.35rem 0.75rem;
 		border-radius: 0.5rem;
 		cursor: pointer;
@@ -664,9 +679,9 @@
 		transition: all 0.2s ease;
 	}
 	.agents-add:hover {
-		color: oklch(0.78 0.12 75 / 65%);
-		background: oklch(0.78 0.12 75 / 10%);
-		border-color: oklch(0.78 0.12 75 / 28%);
+		color: var(--text-secondary);
+		background: var(--card);
+		border-color: var(--border);
 	}
 
 	/* Agent list */
@@ -685,13 +700,13 @@
 		gap: 0.75rem;
 		padding: 0.875rem 1rem;
 		border-radius: 0.625rem;
-		background: oklch(var(--ink) / 2%);
-		border: 1px solid oklch(var(--ink) / 5%);
+		background: var(--card);
+		border: 1px solid var(--border);
 		transition: all 0.2s ease;
 	}
 	.agent-card:hover {
-		background: oklch(var(--ink) / 3.5%);
-		border-color: oklch(var(--ink) / 8%);
+		background: var(--card);
+		border-color: var(--border);
 	}
 
 	.agent-disabled {
@@ -709,7 +724,7 @@
 	}
 	.agent-status-due {
 		opacity: 1;
-		box-shadow: 0 0 6px currentColor;
+		box-shadow: none;
 	}
 
 	.agent-main {
@@ -726,30 +741,30 @@
 	}
 
 	.agent-name {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.82rem;
-		color: oklch(var(--ink) / 70%);
+		color: var(--text-secondary);
 		letter-spacing: 0.02em;
 	}
 
 	.agent-model {
-		font-family: var(--font-mono);
-		font-size: 0.6rem;
+		font-family: var(--font-body);
+		font-size: 0.75rem;
 		letter-spacing: 0.05em;
 		opacity: 0.6;
-		text-transform: uppercase;
+		text-transform: none;
 	}
 
 	.agent-interval {
-		font-family: var(--font-mono);
-		font-size: 0.6rem;
-		color: oklch(var(--ink) / 22%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		letter-spacing: 0.04em;
 	}
 
 	.agent-desc {
-		font-size: 0.72rem;
-		color: oklch(var(--ink) / 32%);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		line-height: 1.5;
 		margin: 0;
 	}
@@ -762,40 +777,40 @@
 	}
 
 	.agent-last-run {
-		font-family: var(--font-mono);
-		font-size: 0.58rem;
-		color: oklch(var(--ink) / 20%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		letter-spacing: 0.04em;
 	}
 
 	.agent-due-badge {
-		font-family: var(--font-mono);
-		font-size: 0.55rem;
+		font-family: var(--font-body);
+		font-size: 0.75rem;
 		letter-spacing: 0.06em;
 		padding: 0.1rem 0.35rem;
 		border-radius: 0.5rem;
-		background: oklch(0.78 0.12 75 / 8%);
-		color: oklch(0.78 0.12 75 / 55%);
+		background: var(--card);
+		color: var(--text-secondary);
 	}
 
 	.agent-paused-badge {
-		font-family: var(--font-mono);
-		font-size: 0.55rem;
+		font-family: var(--font-body);
+		font-size: 0.75rem;
 		letter-spacing: 0.06em;
 		padding: 0.1rem 0.35rem;
 		border-radius: 0.5rem;
-		background: oklch(var(--ink) / 5%);
-		color: oklch(var(--ink) / 25%);
+		background: var(--card);
+		color: var(--text-secondary);
 	}
 
 	.agent-modified-badge {
-		font-family: var(--font-mono);
-		font-size: 0.55rem;
+		font-family: var(--font-body);
+		font-size: 0.75rem;
 		letter-spacing: 0.06em;
 		padding: 0.1rem 0.35rem;
 		border-radius: 0.5rem;
-		background: oklch(0.75 0.12 200 / 8%);
-		color: oklch(0.75 0.12 200 / 55%);
+		background: var(--card);
+		color: var(--text-secondary);
 		cursor: help;
 	}
 
@@ -813,38 +828,38 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		border: 1px solid oklch(var(--ink) / 8%);
+		border: 1px solid var(--border);
 		border-radius: 0.375rem;
 		background: none;
-		color: oklch(var(--ink) / 28%);
+		color: var(--text-secondary);
 		cursor: pointer;
 		transition: all 0.2s ease;
 	}
 	.agent-btn:hover:not(:disabled) {
-		color: oklch(var(--ink) / 55%);
-		border-color: oklch(var(--ink) / 15%);
-		background: oklch(var(--ink) / 3%);
+		color: var(--text-secondary);
+		border-color: var(--border);
+		background: var(--card);
 	}
 	.agent-btn:disabled {
 		opacity: 0.3;
 		cursor: not-allowed;
 	}
 	.agent-btn-active {
-		color: oklch(0.78 0.12 75 / 55%);
-		border-color: oklch(0.78 0.12 75 / 20%);
-		background: oklch(0.78 0.12 75 / 5%);
+		color: var(--text-secondary);
+		border-color: var(--border);
+		background: var(--card);
 	}
 
 	.agent-btn-run:hover:not(:disabled) {
-		color: oklch(0.78 0.15 140 / 70%);
-		border-color: oklch(0.78 0.15 140 / 20%);
+		color: var(--text-secondary);
+		border-color: var(--border);
 	}
 
 	.agent-spinner {
 		width: 10px; height: 10px; border-radius: 50%;
-		border: 1.5px solid oklch(0.78 0.12 75 / 20%);
-		border-top-color: oklch(0.78 0.12 75 / 60%);
-		animation: spin 0.6s linear infinite;
+		border: 1.5px solid var(--border);
+		border-top-color: var(--border);
+		animation: none;
 	}
 	@keyframes spin { to { transform: rotate(360deg); } }
 
@@ -852,7 +867,7 @@
 	.agent-history {
 		margin-left: 1.5rem;
 		padding: 0.75rem 1rem;
-		border-left: 2px solid oklch(var(--ink) / 5%);
+		border-left: 2px solid var(--border);
 		display: flex;
 		flex-direction: column;
 		gap: 0.625rem;
@@ -865,9 +880,9 @@
 	}
 
 	.history-empty {
-		font-family: var(--font-mono);
-		font-size: 0.65rem;
-		color: oklch(var(--ink) / 20%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		margin: 0;
 	}
 
@@ -878,15 +893,15 @@
 	}
 
 	.history-time {
-		font-family: var(--font-mono);
-		font-size: 0.55rem;
-		color: oklch(var(--ink) / 18%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		letter-spacing: 0.04em;
 	}
 
 	.history-content {
-		font-size: 0.72rem;
-		color: oklch(var(--ink) / 35%);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		line-height: 1.5;
 		margin: 0;
 		white-space: pre-line;
@@ -926,8 +941,8 @@
 		gap: 0.625rem;
 		padding: 0.625rem 0.875rem;
 		border-radius: 0.5rem;
-		background: oklch(var(--ink) / 1.5%);
-		border: 1px solid oklch(var(--ink) / 4%);
+		background: var(--card);
+		border: 1px solid var(--border);
 		transition: all 0.2s ease;
 		cursor: pointer;
 		text-align: left;
@@ -936,17 +951,17 @@
 		color: inherit;
 	}
 	.run-card:hover {
-		background: oklch(var(--ink) / 3%);
-		border-color: oklch(var(--ink) / 7%);
+		background: var(--card);
+		border-color: var(--border);
 	}
 	.run-card-expanded {
-		background: oklch(var(--ink) / 3%);
-		border-color: oklch(var(--ink) / 8%);
+		background: var(--card);
+		border-color: var(--border);
 		border-bottom-left-radius: 0;
 		border-bottom-right-radius: 0;
 	}
 	.run-card-failed {
-		border-color: oklch(0.65 0.15 25 / 10%);
+		border-color: var(--border);
 	}
 
 	.run-dot {
@@ -971,15 +986,15 @@
 	}
 
 	.run-agent {
-		font-family: var(--font-mono);
-		font-size: 0.72rem;
+		font-family: var(--font-body);
+		font-size: 0.75rem;
 		letter-spacing: 0.02em;
 	}
 
 	.run-trigger {
-		font-family: var(--font-mono);
-		font-size: 0.58rem;
-		color: oklch(var(--ink) / 20%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		letter-spacing: 0.04em;
 	}
 
@@ -993,30 +1008,30 @@
 	.run-time,
 	.run-duration,
 	.run-tokens {
-		font-family: var(--font-mono);
-		font-size: 0.55rem;
-		color: oklch(var(--ink) / 22%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		letter-spacing: 0.04em;
 	}
 
 	.run-sep {
-		font-size: 0.5rem;
-		color: oklch(var(--ink) / 12%);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 	}
 
 	.run-status {
-		font-family: var(--font-mono);
-		font-size: 0.55rem;
-		color: oklch(0.72 0.10 140 / 50%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		letter-spacing: 0.04em;
 	}
 	.run-status-fail {
-		color: oklch(0.65 0.15 25 / 60%);
+		color: var(--destructive);
 	}
 
 	.run-summary {
-		font-size: 0.65rem;
-		color: oklch(var(--ink) / 25%);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		line-height: 1.4;
 		margin: 0.2rem 0 0;
 		overflow: hidden;
@@ -1027,7 +1042,7 @@
 	.run-chevron {
 		flex-shrink: 0;
 		margin-top: 0.25rem;
-		color: oklch(var(--ink) / 18%);
+		color: var(--text-secondary);
 		transition: transform 0.2s ease;
 	}
 	.run-chevron-open {
@@ -1036,11 +1051,11 @@
 
 	/* Trace view */
 	.run-trace {
-		border: 1px solid oklch(var(--ink) / 6%);
+		border: 1px solid var(--border);
 		border-top: none;
 		border-bottom-left-radius: 0.5rem;
 		border-bottom-right-radius: 0.5rem;
-		background: oklch(var(--ink) / 1%);
+		background: var(--card);
 		padding: 0.5rem;
 		margin-bottom: 0.375rem;
 	}
@@ -1052,62 +1067,62 @@
 		flex-direction: column;
 		gap: 0.375rem;
 		scrollbar-width: thin;
-		scrollbar-color: oklch(var(--ink) / 8%) transparent;
+		scrollbar-color: var(--border) transparent;
 	}
 
 	.trace-msg {
 		padding: 0.5rem 0.625rem;
 		border-radius: 0.375rem;
-		border: 1px solid oklch(var(--ink) / 3%);
+		border: 1px solid var(--border);
 	}
 	.trace-msg-user {
-		background: oklch(var(--ink) / 2.5%);
+		background: var(--card);
 	}
 	.trace-msg-assistant {
-		background: oklch(var(--ink) / 1%);
+		background: var(--card);
 	}
 
 	.trace-role {
-		font-family: var(--font-mono);
-		font-size: 0.52rem;
+		font-family: var(--font-body);
+		font-size: 0.75rem;
 		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		color: oklch(var(--ink) / 22%);
+		text-transform: none;
+		color: var(--text-secondary);
 		display: block;
 		margin-bottom: 0.25rem;
 	}
 
 	.trace-text {
-		font-size: 0.68rem;
-		color: oklch(var(--ink) / 55%);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		line-height: 1.5;
 		margin: 0;
 		white-space: pre-wrap;
 		word-break: break-word;
 	}
 	.trace-msg-assistant .trace-text {
-		color: oklch(var(--ink) / 75%);
+		color: var(--text-secondary);
 	}
 
 	.trace-tool-use {
 		margin-top: 0.25rem;
 		padding: 0.35rem 0.5rem;
 		border-radius: 0.25rem;
-		background: oklch(0.78 0.12 75 / 3%);
-		border: 1px solid oklch(0.78 0.12 75 / 6%);
+		background: var(--card);
+		border: 1px solid var(--border);
 	}
 
 	.trace-tool-name {
-		font-family: var(--font-mono);
-		font-size: 0.6rem;
-		color: oklch(0.78 0.12 75 / 55%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		letter-spacing: 0.04em;
 	}
 
 	.trace-tool-input {
-		font-family: var(--font-mono);
-		font-size: 0.58rem;
-		color: oklch(var(--ink) / 28%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		margin: 0.15rem 0 0;
 		white-space: pre-wrap;
 		word-break: break-all;
@@ -1118,14 +1133,14 @@
 		margin-top: 0.25rem;
 		padding: 0.35rem 0.5rem;
 		border-radius: 0.25rem;
-		background: oklch(var(--ink) / 2%);
-		border: 1px solid oklch(var(--ink) / 4%);
+		background: var(--card);
+		border: 1px solid var(--border);
 	}
 
 	.trace-tool-output {
-		font-family: var(--font-mono);
-		font-size: 0.58rem;
-		color: oklch(var(--ink) / 30%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		margin: 0;
 		white-space: pre-wrap;
 		word-break: break-all;
@@ -1138,11 +1153,11 @@
 		margin-top: 0.375rem;
 		padding: 0.4rem 0.625rem;
 		border-radius: 0.375rem;
-		background: oklch(0.65 0.15 25 / 5%);
-		border: 1px solid oklch(0.65 0.15 25 / 10%);
-		font-family: var(--font-mono);
-		font-size: 0.62rem;
-		color: oklch(0.65 0.15 25 / 60%);
+		background: var(--card);
+		border: 1px solid var(--border);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--destructive);
 		line-height: 1.4;
 	}
 
@@ -1150,7 +1165,7 @@
 	.agent-config {
 		padding: 0.75rem 1rem;
 		margin: -0.25rem 0 0;
-		border-top: 1px solid oklch(var(--ink) / 5%);
+		border-top: 1px solid var(--border);
 		display: flex;
 		flex-direction: column;
 		gap: 0.625rem;
@@ -1173,9 +1188,9 @@
 	}
 
 	.config-label {
-		font-family: var(--font-mono);
-		font-size: 0.6rem;
-		color: oklch(var(--ink) / 25%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		letter-spacing: 0.05em;
 		min-width: 50px;
 		flex-shrink: 0;
@@ -1192,70 +1207,70 @@
 	}
 
 	.config-input {
-		font-family: var(--font-mono);
-		font-size: 0.72rem;
+		font-family: var(--font-body);
+		font-size: 0.75rem;
 		padding: 0.3rem 0.5rem;
 		border-radius: 0.375rem;
-		border: 1px solid oklch(var(--ink) / 8%);
-		background: oklch(var(--ink) / 3%);
+		border: 1px solid var(--border);
+		background: var(--card);
 		color: var(--foreground);
 		outline: none;
 	}
-	.config-input:focus { border-color: oklch(0.78 0.12 75 / 30%); }
+	.config-input:focus { border-color: var(--border); }
 	.config-input-sm { width: 70px; }
 
 	.config-unit {
-		font-family: var(--font-mono);
-		font-size: 0.58rem;
-		color: oklch(var(--ink) / 20%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 	}
 
 	.config-hint {
-		font-family: var(--font-mono);
-		font-size: 0.55rem;
-		color: oklch(0.78 0.12 75 / 35%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 	}
 
 	.config-chip {
-		font-family: var(--font-mono);
-		font-size: 0.58rem;
+		font-family: var(--font-body);
+		font-size: 0.75rem;
 		padding: 0.2rem 0.5rem;
 		border-radius: 0.375rem;
-		border: 1px solid oklch(var(--ink) / 8%);
-		background: oklch(var(--ink) / 2%);
-		color: oklch(var(--ink) / 30%);
+		border: 1px solid var(--border);
+		background: var(--card);
+		color: var(--text-secondary);
 		cursor: pointer;
 		transition: all 0.15s ease;
 		letter-spacing: 0.03em;
 	}
-	.config-chip:hover { border-color: oklch(var(--ink) / 15%); color: oklch(var(--ink) / 50%); }
+	.config-chip:hover { border-color: var(--border); color: var(--text-secondary); }
 	.config-chip-active {
-		background: oklch(0.78 0.12 75 / 8%);
-		border-color: oklch(0.78 0.12 75 / 20%);
-		color: oklch(0.78 0.12 75 / 65%);
+		background: var(--card);
+		border-color: var(--border);
+		color: var(--text-secondary);
 	}
 
 	.config-textarea {
-		font-family: var(--font-mono);
-		font-size: 0.68rem;
+		font-family: var(--font-body);
+		font-size: 0.75rem;
 		line-height: 1.5;
 		padding: 0.5rem;
 		border-radius: 0.375rem;
-		border: 1px solid oklch(var(--ink) / 8%);
-		background: oklch(var(--ink) / 3%);
+		border: 1px solid var(--border);
+		background: var(--card);
 		color: var(--foreground);
 		outline: none;
 		resize: vertical;
 		min-height: 80px;
 	}
-	.config-textarea:focus { border-color: oklch(0.78 0.12 75 / 30%); }
+	.config-textarea:focus { border-color: var(--border); }
 
 	.config-reset {
-		font-family: var(--font-mono);
-		font-size: 0.6rem;
-		color: oklch(0.60 0.12 25 / 50%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		background: none;
-		border: 1px solid oklch(0.60 0.12 25 / 12%);
+		border: 1px solid var(--border);
 		padding: 0.25rem 0.6rem;
 		border-radius: 0.375rem;
 		cursor: pointer;
@@ -1263,9 +1278,9 @@
 		transition: all 0.2s ease;
 	}
 	.config-reset:hover {
-		color: oklch(0.60 0.12 25 / 75%);
-		border-color: oklch(0.60 0.12 25 / 25%);
-		background: oklch(0.60 0.12 25 / 5%);
+		color: var(--text-secondary);
+		border-color: var(--border);
+		background: var(--card);
 	}
 
 	@media (max-width: 640px) {
@@ -1273,4 +1288,39 @@
 		.config-row { flex-direction: column; align-items: stretch; }
 		.config-label { min-width: unset; }
 	}
+
+/* Little Moon surfaces, controls, and readable content. */
+
+.agents-page { padding: 32px; color: var(--foreground); }
+.agents-header, .agents-hint, .agents-list, .activity-section { max-width: 1040px; margin-left: auto; margin-right: auto; }
+.agents-title { font-size: 24px; color: var(--foreground); font-family: var(--font-display); }
+.agents-count { color: var(--primary); }
+.agents-hint { font-size: 14px; line-height: 1.6; }
+.agent-card, .run-card, .agent-config, .agent-history, .run-trace { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 20px; }
+.agent-disabled { opacity: 1; }
+.agent-name { font: 500 18px var(--font-body); }
+.agent-desc, .history-content, .run-summary { font-size: 14px; line-height: 1.6; }
+.agent-btn { width: 44px; height: 44px; border-radius: 8px; border-color: var(--border); color: var(--text-secondary); }
+.agent-btn:hover, .agent-btn-active, .config-chip-active { background: var(--accent); color: var(--primary); border-color: var(--primary); }
+.agents-add { background: var(--primary); color: var(--primary-foreground); border: 1px solid var(--primary); padding: 8px 16px; }
+.agents-add:hover { background: var(--primary); color: var(--primary-foreground); filter: brightness(1.06); }
+.config-field { flex-wrap: wrap; }
+.config-chip, .config-reset { min-height: 44px; padding: 8px 12px; }
+.config-input, .config-textarea { font-size: 16px; min-height: 44px; border-color: var(--input); background: var(--background); }
+.config-label { font-size: 14px; color: var(--text-secondary); }
+.empty-text { font: 400 28px var(--font-display); color: var(--foreground); }
+.empty-sub { font-size: 14px; max-width: 42ch; }
+.run-status-fail, .trace-error { color: var(--destructive); }
+.trace-text, .trace-tool-input, .trace-tool-output { font-family: var(--font-mono); font-size: 13px; }
+@media (max-width: 640px) { .agents-page { padding: 20px; } .agent-card { flex-wrap: wrap; gap: 12px; } .agent-actions { width: 100%; justify-content: flex-end; } .agent-main { min-width: 0; } .agent-top { flex-wrap: wrap; } }
+
+button { min-height: 44px; font-family: var(--font-body); }
+
+button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+.pulse-dot { background: var(--primary); }
+
+.agent-model { opacity: 1; }
 </style>

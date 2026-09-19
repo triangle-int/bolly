@@ -12,21 +12,20 @@
 	let expanded = $state(false);
 </script>
 
-<button
+<article
 	class="skill-card"
 	class:skill-card-expanded={expanded}
 	class:skill-card-builtin={skill.builtin}
-	onclick={() => (expanded = !expanded)}
 >
 	<div class="skill-card-header">
 		<span class="skill-card-icon">{skill.icon || "~"}</span>
-		<span class="skill-card-name">{skill.name}</span>
+		<button class="skill-card-name card-expand" aria-expanded={expanded} onclick={() => expanded = !expanded}>{skill.name}</button>
 		{#if skill.kind === "anthropic"}
-			<span class="skill-card-badge skill-card-badge-anthropic">anthropic</span>
+			<span class="skill-card-badge skill-card-badge-anthropic">Anthropic</span>
 		{:else if skill.builtin}
-			<span class="skill-card-badge">built-in</span>
+			<span class="skill-card-badge">Built-in</span>
 		{:else if skill.source}
-			<span class="skill-card-badge skill-card-badge-community">community</span>
+			<span class="skill-card-badge skill-card-badge-community">Community</span>
 		{/if}
 	</div>
 
@@ -34,14 +33,14 @@
 
 	{#if expanded && skill.instructions}
 		<div class="skill-card-instructions">
-			<span class="skill-card-instructions-label">instructions</span>
+			<span class="skill-card-instructions-label">Instructions</span>
 			<p class="skill-card-instructions-text">{skill.instructions}</p>
 		</div>
 	{/if}
 
 	{#if expanded && skill.resources && skill.resources.length > 0}
 		<div class="skill-card-instructions">
-			<span class="skill-card-instructions-label">resources</span>
+			<span class="skill-card-instructions-label">Resources</span>
 			<ul class="skill-card-resources">
 				{#each skill.resources as resource}
 					<li class="skill-card-resource">{resource}</li>
@@ -51,25 +50,18 @@
 	{/if}
 
 	{#if expanded && !skill.builtin}
-		<span
-			role="button"
-			tabindex="0"
+		<button
+			type="button"
 			class="skill-card-delete"
 			onclick={(e) => {
 				e.stopPropagation();
 				ondelete();
 			}}
-			onkeydown={(e) => {
-				if (e.key === "Enter") {
-					e.stopPropagation();
-					ondelete();
-				}
-			}}
 		>
-			delete
-		</span>
+			Delete
+		</button>
 	{/if}
-</button>
+</article>
 
 <style>
 	.skill-card {
@@ -79,18 +71,18 @@
 		gap: 0.5rem;
 		padding: 1rem 1.125rem;
 		border-radius: 0.75rem;
-		background: oklch(0.09 0.018 278 / 60%);
-		border: 1px solid oklch(var(--ink) / 4%);
+		background: var(--card);
+		border: 1px solid var(--border);
 		cursor: pointer;
 		transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 		text-align: left;
 		width: 100%;
-		animation: skill-emerge 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+		animation: none;
 	}
 
 	@keyframes skill-emerge {
 		from {
-			opacity: 0;
+			opacity: 1;
 			transform: translateY(8px);
 		}
 		to {
@@ -100,18 +92,18 @@
 	}
 
 	.skill-card:hover {
-		background: oklch(0.10 0.020 278 / 70%);
-		border-color: oklch(0.78 0.12 75 / 10%);
-		box-shadow: 0 0 20px oklch(0.78 0.12 75 / 5%);
+		background: var(--card);
+		border-color: var(--border);
+		box-shadow: none;
 	}
 
 	.skill-card-expanded {
-		border-color: oklch(0.78 0.12 75 / 15%);
-		box-shadow: 0 0 30px oklch(0.78 0.12 75 / 8%);
+		border-color: var(--border);
+		box-shadow: none;
 	}
 
 	.skill-card-builtin {
-		border-color: oklch(0.78 0.12 75 / 8%);
+		border-color: var(--border);
 	}
 
 	.skill-card-header {
@@ -121,9 +113,9 @@
 	}
 
 	.skill-card-icon {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.85rem;
-		color: oklch(0.78 0.12 75 / 60%);
+		color: var(--text-secondary);
 		width: 1.25rem;
 		text-align: center;
 		flex-shrink: 0;
@@ -138,19 +130,19 @@
 
 	.skill-card-badge {
 		margin-left: auto;
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.75rem;
-		color: oklch(0.78 0.12 75 / 35%);
-		background: oklch(0.78 0.12 75 / 6%);
+		color: var(--text-secondary);
+		background: var(--card);
 		padding: 0.15rem 0.45rem;
 		border-radius: 0.25rem;
 		letter-spacing: 0.06em;
-		text-transform: uppercase;
+		text-transform: none;
 	}
 
 	.skill-card-desc {
 		font-size: 0.78rem;
-		color: oklch(0.78 0.12 75 / 45%);
+		color: var(--text-secondary);
 		line-height: 1.5;
 	}
 
@@ -159,20 +151,20 @@
 		flex-direction: column;
 		gap: 0.35rem;
 		padding-top: 0.5rem;
-		border-top: 1px solid oklch(var(--ink) / 4%);
+		border-top: 1px solid var(--border);
 	}
 
 	.skill-card-instructions-label {
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		color: oklch(0.78 0.12 75 / 35%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		letter-spacing: 0.06em;
-		text-transform: uppercase;
+		text-transform: none;
 	}
 
 	.skill-card-instructions-text {
-		font-size: 0.72rem;
-		color: oklch(0.78 0.12 75 / 40%);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		line-height: 1.55;
 		white-space: pre-wrap;
 	}
@@ -187,26 +179,26 @@
 	}
 
 	.skill-card-resource {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.75rem;
-		color: oklch(0.78 0.12 75 / 35%);
+		color: var(--text-secondary);
 	}
 
 	.skill-card-badge-community {
-		color: oklch(0.7 0.08 200 / 50%);
-		background: oklch(0.7 0.08 200 / 8%);
+		color: var(--text-secondary);
+		background: var(--card);
 	}
 
 	.skill-card-badge-anthropic {
-		color: oklch(0.78 0.12 75 / 60%);
-		background: oklch(0.78 0.12 75 / 10%);
+		color: var(--text-secondary);
+		background: var(--card);
 	}
 
 	.skill-card-delete {
 		align-self: flex-end;
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		color: oklch(0.65 0.15 20 / 50%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--destructive);
 		background: none;
 		border: none;
 		cursor: pointer;
@@ -216,7 +208,26 @@
 	}
 
 	.skill-card-delete:hover {
-		color: oklch(0.65 0.15 20 / 80%);
-		background: oklch(0.65 0.15 20 / 8%);
+		color: var(--destructive);
+		background: var(--card);
 	}
+
+/* Little Moon surfaces, controls, and readable content. */
+
+.skill-card { background: var(--card); border-color: var(--border); border-radius: 16px; padding: 24px; }
+.skill-card:hover, .skill-card-expanded { background: var(--card); border-color: var(--primary); }
+.skill-card-name { font: 500 18px var(--font-body); }
+.skill-card-desc, .skill-card-instructions-text { font-size: 14px; line-height: 1.6; }
+.skill-card-header { flex-wrap: wrap; }
+.skill-card-badge { color: var(--primary); background: var(--accent); }
+.skill-card-delete { min-height: 44px; display: inline-flex; align-items: center; padding: 8px 12px; color: var(--destructive); }
+.skill-card-delete:hover { color: var(--destructive); background: var(--accent); }
+
+button { min-height: 44px; font-family: var(--font-body); }
+
+button:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+.card-expand { color: var(--foreground); text-align: left; background: none; border: none; padding: 0; cursor: pointer; font: inherit; }
 </style>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { Dialog } from "bits-ui";
 	import { submitSecret, cancelSecret } from "$lib/api/client.js";
 
 	interface Props {
@@ -16,7 +17,7 @@
 	let error = $state("");
 
 	async function handleSubmit() {
-		if (!value.trim()) return;
+		if (!value.trim() || submitting) return;
 		submitting = true;
 		error = "";
 		try {
@@ -30,189 +31,51 @@
 	}
 
 	function handleCancel() {
+		if (submitting) return;
 		cancelSecret(instanceSlug, requestId).catch(() => {});
 		onclose();
 	}
 
-	function handleKeydown(e: KeyboardEvent) {
-		if (e.key === "Escape") handleCancel();
-	}
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<Dialog.Root open={true} onOpenChange={(open) => { if (!open) handleCancel(); }}>
+<Dialog.Portal><Dialog.Overlay class="fixed inset-0 z-[200] bg-background/80" />
+<Dialog.Content class="fixed left-1/2 top-1/2 z-[201] w-[calc(100%-32px)] max-w-sm -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-border bg-card p-6" escapeKeydownBehavior={submitting ? "ignore" : "close"} interactOutsideBehavior={submitting ? "ignore" : "close"}>
 
-<!-- svelte-ignore a11y_click_events_have_key_events -->
-<!-- svelte-ignore a11y_no_static_element_interactions -->
-<div class="overlay" onclick={handleCancel}>
-	<!-- svelte-ignore a11y_click_events_have_key_events -->
-	<!-- svelte-ignore a11y_no_static_element_interactions -->
-	<div class="dialog" onclick={(e) => e.stopPropagation()}>
 		<div class="header">
 			<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="icon">
 				<rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
 				<path d="M7 11V7a5 5 0 0 1 10 0v4" />
 			</svg>
-			<span class="title">secret required</span>
+			<Dialog.Title class="text-lg font-medium">Secret required</Dialog.Title>
 		</div>
 
-		<p class="prompt">{prompt}</p>
+		<Dialog.Description class="text-sm text-secondary-foreground">{prompt}</Dialog.Description>
 		<p class="target">{target}</p>
 
 		<form onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
-			<input
+			<label for="secret-value">Secret value</label>
+			<input id="secret-value"
 				type="password"
 				bind:value
-				placeholder="enter value…"
+				placeholder="Enter value…"
 				autocomplete="off"
 				disabled={submitting}
 			/>
 			{#if error}
-				<p class="error">{error}</p>
+				<p class="error" role="alert">{error}</p>
 			{/if}
 			<div class="actions">
 				<button type="button" class="btn-cancel" onclick={handleCancel} disabled={submitting}>
-					cancel
+					Cancel
 				</button>
 				<button type="submit" class="btn-submit" disabled={submitting || !value.trim()}>
-					{submitting ? "saving…" : "save"}
+					{submitting ? "Saving…" : "Save"}
 				</button>
 			</div>
 		</form>
-	</div>
-</div>
+</Dialog.Content></Dialog.Portal></Dialog.Root>
 
 <style>
-	.overlay {
-		position: fixed;
-		inset: 0;
-		z-index: 200;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		background: oklch(var(--shade) / 60%);
-		backdrop-filter: blur(8px);
-		animation: fade-in 0.2s ease;
-	}
-
-	@keyframes fade-in {
-		from { opacity: 0; }
-	}
-
-	.dialog {
-		width: min(24rem, calc(100vw - 2rem));
-		padding: 1.5rem;
-		border-radius: 1rem;
-		background: oklch(0.08 0.015 280);
-		border: 1px solid oklch(0.2 0.02 280);
-		animation: dialog-enter 0.25s cubic-bezier(0.16, 1, 0.3, 1);
-	}
-
-	@keyframes dialog-enter {
-		from { opacity: 0; transform: scale(0.95) translateY(8px); }
-	}
-
-	.header {
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		margin-bottom: 1rem;
-	}
-
-	.icon {
-		width: 1.125rem;
-		height: 1.125rem;
-		color: oklch(0.78 0.12 75 / 80%);
-	}
-
-	.title {
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: oklch(0.78 0.12 75 / 70%);
-	}
-
-	.prompt {
-		font-size: 0.875rem;
-		color: oklch(0.85 0.02 280);
-		margin-bottom: 0.375rem;
-		line-height: 1.4;
-	}
-
-	.target {
-		font-family: var(--font-mono);
-		font-size: 0.68rem;
-		color: oklch(0.5 0.02 280);
-		margin-bottom: 1rem;
-	}
-
-	input {
-		width: 100%;
-		padding: 0.6rem 0.75rem;
-		border-radius: 0.5rem;
-		background: oklch(0.05 0.01 280);
-		border: 1px solid oklch(0.2 0.02 280);
-		color: oklch(0.9 0.02 280);
-		font-family: var(--font-mono);
-		font-size: 0.8rem;
-		outline: none;
-		transition: border-color 0.2s;
-	}
-
-	input:focus {
-		border-color: oklch(0.78 0.12 75 / 40%);
-	}
-
-	input:disabled {
-		opacity: 0.5;
-	}
-
-	.error {
-		font-size: 0.75rem;
-		color: oklch(0.7 0.15 25);
-		margin-top: 0.375rem;
-	}
-
-	.actions {
-		display: flex;
-		justify-content: flex-end;
-		gap: 0.5rem;
-		margin-top: 1rem;
-	}
-
-	.btn-cancel,
-	.btn-submit {
-		padding: 0.4rem 0.875rem;
-		border-radius: 0.5rem;
-		font-family: var(--font-mono);
-		font-size: 0.68rem;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		cursor: pointer;
-		transition: all 0.2s;
-	}
-
-	.btn-cancel {
-		background: transparent;
-		border: 1px solid oklch(0.25 0.02 280);
-		color: oklch(0.55 0.02 280);
-	}
-	.btn-cancel:hover {
-		border-color: oklch(0.35 0.02 280);
-		color: oklch(0.7 0.02 280);
-	}
-
-	.btn-submit {
-		background: oklch(0.78 0.12 75 / 15%);
-		border: 1px solid oklch(0.78 0.12 75 / 35%);
-		color: oklch(0.78 0.12 75 / 90%);
-	}
-	.btn-submit:hover:not(:disabled) {
-		background: oklch(0.78 0.12 75 / 35%);
-		border-color: oklch(0.78 0.12 75 / 40%);
-	}
-	.btn-submit:disabled {
-		opacity: 0.4;
-		cursor: default;
-	}
+.header{display:flex;align-items:center;gap:12px;margin-bottom:16px}.icon{width:20px;height:20px;color:var(--primary)}.target{font:12px/1.5 var(--font-mono);color:var(--text-muted);margin:8px 0 24px;overflow-wrap:anywhere}label{display:block;font-size:14px;margin-bottom:8px}input{width:100%;min-height:44px;padding:10px 12px;border-radius:8px;border:1px solid var(--input);background:var(--background);color:var(--foreground);font-size:16px}input::placeholder{color:var(--text-placeholder)}.error{font-size:14px;color:var(--destructive);margin-top:8px}.actions{display:flex;justify-content:flex-end;gap:8px;margin-top:24px}.actions button{min-height:44px;padding:10px 16px;border-radius:8px;font-size:14px;cursor:pointer}.btn-cancel{background:var(--secondary);color:var(--foreground);border:1px solid var(--border)}.btn-submit{background:var(--primary);color:var(--primary-foreground)}button:disabled{opacity:.5;cursor:not-allowed}
 </style>

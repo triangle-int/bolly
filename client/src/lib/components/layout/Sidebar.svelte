@@ -38,7 +38,7 @@
 <aside class="flex h-full w-60 flex-col border-r border-sidebar-border bg-sidebar">
 	<div class="flex items-center gap-2.5 px-5 py-5">
 		<div class="flex h-8 w-8 items-center justify-center rounded-lg bg-warm/15">
-			<span class="text-sm font-bold text-warm">B</span>
+			<img src="/skins/moon/character.svg" alt="" class="h-7 w-7" />
 		</div>
 		<span class="font-display text-base font-bold tracking-tight text-sidebar-foreground">
 			nolune

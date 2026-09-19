@@ -81,24 +81,15 @@ Nolune is self-hosted and BYOK. There is no required Nolune cloud account, and N
 
 <br>
 
-## Companion skins
+## Your companion
 
-<table>
-<tr>
-<td align="center" width="50%">
-<img src="landing/static/assets/nolune-moon.svg" alt="Nolune Little Moon skin" width="280" />
-<br><br>
-<strong>Nolune · Little Moon</strong> — a curious lavender crescent
-</td>
-<td align="center" width="50%">
-<img src="client/static/skins/mint/character.png" alt="Minty skin" width="280" />
-<br><br>
-<strong>Minty</strong> — a friendly, animated character
-</td>
-</tr>
-</table>
+<p align="center">
+  <img src="client/static/skins/moon/character.svg" alt="Nolune Little Moon companion" width="200" />
+</p>
 
-Skins change how your companion looks and feels without replacing its memory or identity. More customization is planned.
+**Nolune · Little Moon** — a curious lavender crescent. One familiar identity across your computers, with memories and personality that stay yours.
+
+Our [design system](docs/design-system.md) documents the visual language, reusable UI patterns, and accessibility rules. Run the client and open `/design-system` for the interactive reference.
 
 <br>
 

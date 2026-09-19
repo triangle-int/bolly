@@ -1,0 +1,57 @@
+/* Nolune Little Moon tokens. Keep docs/design-system.md in sync. */
+:root.dark {
+  color-scheme: dark;
+  --background: #201d29;
+  --foreground: #f6f3ec;
+  --card: #282432;
+  --card-foreground: #f6f3ec;
+  --popover: #312c3c;
+  --popover-foreground: #f6f3ec;
+  --primary: #b7a9e7;
+  --primary-foreground: #201d29;
+  --secondary: #373142;
+  --secondary-foreground: #f6f3ec;
+  --muted: #282432;
+  --muted-foreground: #b5adc2;
+  --accent: #3b334d;
+  --accent-foreground: #e4d9ff;
+  --destructive: #f39b9b;
+  --border: #51485f;
+  --input: #625770;
+  --ring: #b7a9e7;
+  --sidebar: #24202e;
+  --sidebar-foreground: #f6f3ec;
+  --sidebar-primary: #b7a9e7;
+  --sidebar-primary-foreground: #201d29;
+  --sidebar-accent: #3b334d;
+  --sidebar-accent-foreground: #e4d9ff;
+  --sidebar-border: #51485f;
+  --sidebar-ring: #b7a9e7;
+  /* Compatibility aliases: new work should use primary, not warm. */
+  --warm: var(--primary);
+  --warm-foreground: var(--primary-foreground);
+  --warm-muted: #b7a9e71f;
+  --glass-bg: var(--card);
+  --glass-border: var(--border);
+  --glass-border-top: var(--border);
+  --glass-highlight: transparent;
+  --glass-blur: none;
+  --ink: 0.96 0.01 85;
+  --shade: 0.17 0.025 300;
+  --accent-hue: 300;
+  --text-primary: #f6f3ec;
+  --text-secondary: #d0c9dc;
+  --text-muted: #b5adc2;
+  --text-faint: #aaa0b8;
+  --text-placeholder: #b5adc2;
+  --text-link: #c9baf4;
+  --text-timestamp: #aaa0b8;
+  --surface-input: #282432;
+  --surface-input-focus: #312c3c;
+  --surface-input-border: #625770;
+  --surface-elevated: #312c3c;
+  --surface-overlay: #282432;
+  --surface-tab: #24202e;
+  --surface-tab-active: #3b334d;
+}
+

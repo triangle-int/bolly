@@ -1,4 +1,7 @@
 <script lang="ts">
+	import * as Select from "$lib/components/ui/select/index.js";
+	import DOMPurify from "dompurify";
+	import { getToasts } from "$lib/stores/toast.svelte.js";
 	import { goto } from "$app/navigation";
 	import { onMount } from "svelte";
 	import { getInstances } from "$lib/stores/instances.svelte.js";
@@ -8,6 +11,14 @@
 
 	const instances = getInstances();
 	const scene = getSceneStore();
+	let channelSaving = $state(false);
+	async function changeChannel(next: string) {
+		if (!next || channelSaving) return;
+		channelSaving = true;
+		try { await setUpdateChannel(next); channel = next; }
+		catch { getToasts().error("Could not change update channel."); }
+		finally { channelSaving = false; }
+	}
 
 	let version = $state("");
 	let commit = $state("");
@@ -75,6 +86,8 @@
 
 <div class="home">
 	<div class="home-ui" class:home-ui-hidden={!uiVisible}>
+        <header class="home-header"><a class="home-brand" href="/"><img src="/skins/moon/character.svg" width="32" height="32" alt="" />nolune</a><a href="/design-system">Design system ↗</a></header>
+        {#if instances.error}<div class="connection-notice" role="status"><span>{instances.error}</span><button class="nl-button nl-button-secondary" onclick={() => instances.refresh().catch(() => {})}>Retry connection</button></div>{/if}
 		{#if instances.loading}
 			<div class="empty-state">
 				<div class="loading-dot"></div>
@@ -83,19 +96,19 @@
 			<!-- Empty state: big centered get started -->
 			<div class="empty-state">
 				<div class="empty-glow"></div>
-				<p class="empty-greeting">{getGreeting()}</p>
-				<h1 class="empty-title">get started</h1>
-				<p class="empty-sub">create your first companion</p>
+				<img class="welcome-moon" src="/skins/moon/character.svg" alt="Nolune, your Little Moon companion" /><p class="empty-greeting">A personal AI, entirely yours</p>
+				<h1 class="empty-title">A little more space.<br />A companion of your own.</h1>
+				<p class="empty-sub">Meet Nolune. A familiar presence that remembers you<br />and works across your devices.</p>
 
 				{#if !showCreate}
-					<button class="empty-cta" onclick={() => showCreate = true}>
+					<button class="empty-cta" disabled={!!instances.error} onclick={() => showCreate = true}>
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="empty-cta-icon"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
-						<span>new companion</span>
+						<span>Create your companion</span>
 					</button>
 				{:else}
 					<div class="create-field">
 						<!-- svelte-ignore a11y_autofocus -->
-						<input bind:value={newSlug} onkeydown={handleKeydown} placeholder="what's your name?" autofocus class="create-input" />
+						<input bind:value={newSlug} onkeydown={handleKeydown} aria-label="Your name" placeholder="What should Nolune call you?" autofocus class="create-input" />
 						{#if newSlug.trim()}
 							<button onclick={create} class="create-go" aria-label="Create">
 								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><path d="M5 12h14" stroke-linecap="round"/><path d="m12 5 7 7-7 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -105,11 +118,11 @@
 				{/if}
 
 				<div class="empty-hints">
-					<span>helps you study</span>
+					<span>Remembers you</span>
 					<span class="sep">·</span>
-					<span>thinks with you</span>
+					<span>Works with you</span>
 					<span class="sep">·</span>
-					<span>feels your mood</span>
+					<span>Belongs to you</span>
 				</div>
 			</div>
 		{:else}
@@ -117,8 +130,8 @@
 			<div class="hero">
 				<p class="greeting">{getGreeting()}</p>
 				<h1 class="title">
-					your friend that<br/>
-					<span class="title-accent">actually gets you</span>
+					A familiar face.<br/>
+					<span class="title-accent">Ready when you are.</span>
 				</h1>
 			</div>
 
@@ -127,7 +140,7 @@
 				<div class="mobile-list">
 					{#each instances.list as inst (inst.slug)}
 						<button class="mobile-card" onclick={() => goto(`/${inst.slug}`)}>
-							<div class="mobile-card-orb"></div>
+							<img class="mobile-card-orb" src="/skins/moon/character.svg" alt="" />
 							<div class="mobile-card-info">
 								<span class="mobile-card-name">{inst.companion_name || inst.slug}</span>
 								<span class="mobile-card-slug">{inst.slug}</span>
@@ -142,14 +155,14 @@
 				{#if !showCreate}
 					<button class="new-btn" onclick={() => showCreate = true}>
 						<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" class="new-icon"><path d="M12 5v14M5 12h14" stroke-linecap="round"/></svg>
-						<span>new companion</span>
+						<span>Create your companion</span>
 					</button>
 				{/if}
 
 				{#if showCreate}
 					<div class="create-field">
 						<!-- svelte-ignore a11y_autofocus -->
-						<input bind:value={newSlug} onkeydown={handleKeydown} placeholder="what's your name?" autofocus class="create-input" />
+						<input bind:value={newSlug} onkeydown={handleKeydown} aria-label="Your name" placeholder="What should Nolune call you?" autofocus class="create-input" />
 						{#if newSlug.trim()}
 							<button onclick={create} class="create-go" aria-label="Create">
 								<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" class="w-4 h-4"><path d="M5 12h14" stroke-linecap="round"/><path d="m12 5 7 7-7 7" stroke-linecap="round" stroke-linejoin="round"/></svg>
@@ -164,11 +177,11 @@
 				{/if}
 
 				<div class="hints">
-					<span>helps you study</span>
+					<span>Remembers you</span>
 					<span class="sep">·</span>
-					<span>thinks with you</span>
+					<span>Works with you</span>
 					<span class="sep">·</span>
-					<span>feels your mood</span>
+					<span>Belongs to you</span>
 				</div>
 			</div>
 		{/if}
@@ -186,19 +199,11 @@
 	{#if showChangelog && uiVisible}
 		<div class="changelog-panel">
 			<div class="changelog-header">
-				<span class="changelog-title">what's new</span>
-				<select
-					class="changelog-channel"
-					value={channel}
-					onchange={async (e) => {
-						const val = (e.target as HTMLSelectElement).value;
-						channel = val;
-						await setUpdateChannel(val);
-					}}
-				>
-					<option value="stable">stable</option>
-					<option value="nightly">nightly</option>
-				</select>
+				<span class="changelog-title">What’s new</span>
+<Select.Root type="single" value={channel} onValueChange={changeChannel} disabled={channelSaving}>
+<Select.Trigger aria-label="Update channel" class="ml-auto h-11 w-28"><span>{channel === 'nightly' ? 'Nightly' : 'Stable'}</span></Select.Trigger>
+<Select.Content side="top" class="z-[210]"><Select.Item value="stable" class="min-h-11">Stable</Select.Item><Select.Item value="nightly" class="min-h-11">Nightly</Select.Item></Select.Content>
+</Select.Root>
 				<button class="changelog-close" aria-label="Close" onclick={() => showChangelog = false}>
 					<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" width="16" height="16"><path d="M18 6L6 18M6 6l12 12"/></svg>
 				</button>
@@ -207,7 +212,7 @@
 				{#each changelog.slice(0, 5) as entry}
 					<div class="changelog-entry">
 						<div class="changelog-version">{entry.version}</div>
-						<div class="changelog-body">{@html md.parse(entry.body)}</div>
+						<div class="changelog-body">{@html DOMPurify.sanitize(md.parse(entry.body) as string)}</div>
 					</div>
 				{/each}
 			</div>
@@ -383,15 +388,16 @@
 		color: var(--foreground); font-family: var(--font-display);
 		font-size: 0.875rem; font-style: italic; outline: none; transition: all 0.4s ease;
 	}
-	.create-input::placeholder { color: oklch(0.50 0.05 240 / 30%); font-style: italic; }
+	.create-input::placeholder { color: var(--text-placeholder); opacity: 1; font-style: normal; }
 	.create-input:focus { border-color: oklch(var(--ink) / 16%); box-shadow: 0 0 0 4px oklch(0.40 0.06 var(--accent-hue) / 8%); }
 	.create-go {
-		position: absolute; right: 0.375rem; top: 50%; transform: translateY(-50%);
+		position: absolute; right: 4px; top: 50%; transform: translateY(-50%);
 		display: flex; align-items: center; justify-content: center;
-		width: 2rem; height: 2rem; border-radius: 50%;
-		background: oklch(0.50 0.08 240 / 50%); color: oklch(0.065 0.015 280); transition: all 0.2s ease;
+		width: 44px; height: 44px; border-radius: 6px;
+		background: var(--primary); color: var(--primary-foreground); cursor: pointer; transition: filter 0.2s ease;
 	}
-	.create-go:hover { background: oklch(0.50 0.08 240 / 70%); }
+	.create-go:hover { filter: brightness(1.08); }
+	.create-input, .empty-state .create-input { min-height: 52px; padding-right: 60px; }
 
 	.hover-name {
 		font-family: var(--font-display); font-size: 0.85rem; font-weight: 300;
@@ -497,9 +503,10 @@
 	@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 
 	.version {
+		min-height:44px;
 		position: fixed; bottom: calc(0.5rem + env(safe-area-inset-bottom, 0px));
 		left: 0; right: 0; text-align: center;
-		font-family: var(--font-body); font-size: 0.68rem; letter-spacing: 0.05em;
+		font-family: var(--font-body); font-size: 0.75rem; letter-spacing: 0.05em;
 		color: var(--foreground); cursor: pointer; z-index: 100;
 		animation: enter-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both; animation-delay: 1s;
 		display: flex; align-items: center; justify-content: center; gap: 0.375rem;
@@ -510,8 +517,8 @@
 	.version:hover { color: var(--foreground); }
 	.version-dot {
 		width: 4px; height: 4px; border-radius: 50%;
-		background: oklch(0.78 0.12 75);
-		box-shadow: 0 0 6px oklch(0.78 0.12 75 / 50%);
+		background: var(--card);
+		box-shadow:none;
 	}
 
 	.changelog-panel {
@@ -519,13 +526,13 @@
 		left: 50%; transform: translateX(-50%);
 		width: 380px; max-width: calc(100vw - 2rem); max-height: 50vh;
 		z-index: 200; pointer-events: auto;
-		background: oklch(0.06 0.015 260 / 90%);
-		backdrop-filter: blur(32px) saturate(160%);
-		-webkit-backdrop-filter: blur(32px) saturate(160%);
-		border: 1px solid oklch(var(--ink) / 8%);
-		border-top-color: oklch(var(--ink) / 14%);
+		background: var(--card);
+
+
+		border: 1px solid var(--border);
+		border-top-color: var(--border);
 		border-radius: 1rem;
-		box-shadow: 0 8px 40px oklch(var(--shade) / 40%);
+		box-shadow:none;
 		animation: changelog-in 0.3s cubic-bezier(0.16, 1, 0.3, 1) both;
 		display: flex; flex-direction: column;
 	}
@@ -537,39 +544,19 @@
 	.changelog-header {
 		display: flex; align-items: center; justify-content: space-between;
 		padding: 0.875rem 1rem 0.5rem;
-		border-bottom: 1px solid oklch(var(--ink) / 6%);
+		border-bottom: 1px solid var(--border);
 	}
 	.changelog-title {
-		font-family: var(--font-display); font-style: italic;
+		font-family: var(--font-display); font-style:normal;
 		font-size: 0.9rem; color: var(--foreground);
 	}
-	.changelog-channel {
-		font-family: var(--font-mono);
-		font-size: 0.68rem;
-		color: oklch(var(--ink) / 35%);
-		background: none;
-		border: 1px solid oklch(var(--ink) / 8%);
-		border-radius: 4px;
-		padding: 0.15rem 0.35rem;
-		cursor: pointer;
-		outline: none;
-		margin-left: auto;
-		transition: all 0.2s ease;
-	}
-	.changelog-channel:hover {
-		border-color: oklch(var(--ink) / 15%);
-		color: oklch(var(--ink) / 55%);
-	}
-	.changelog-channel option {
-		background: oklch(0.1 0.01 240);
-		color: oklch(0.8 0.04 240);
-	}
 	.changelog-close {
-		color: oklch(var(--ink) / 30%); cursor: pointer;
+		min-width:44px;min-height:44px;display:grid;place-items:center;
+		color: var(--text-muted); cursor: pointer;
 		background: none; border: none; padding: 0.25rem;
 		transition: color 0.2s ease;
 	}
-	.changelog-close:hover { color: oklch(var(--ink) / 60%); }
+	.changelog-close:hover { color: var(--foreground); }
 
 	.changelog-scroll {
 		overflow-y: auto; padding: 0.75rem 1rem; display: flex;
@@ -577,14 +564,14 @@
 	}
 	.changelog-entry {
 		padding: 0.625rem 0.75rem; border-radius: 0.5rem;
-		background: oklch(var(--ink) / 3%); border: 1px solid oklch(var(--ink) / 5%);
+		background: var(--card); border: 1px solid var(--border);
 	}
 	.changelog-version {
-		font-family: var(--font-mono); font-size: 0.68rem;
-		color: oklch(0.78 0.12 75 / 70%); margin-bottom: 0.25rem; letter-spacing: 0.03em;
+		font-family: var(--font-mono); font-size: 0.75rem;
+		color: var(--text-muted); margin-bottom: 0.25rem; letter-spacing: 0.03em;
 	}
 	.changelog-body {
-		font-size: 0.75rem; line-height: 1.55; color: var(--foreground);
+		font-size: 0.875rem; line-height: 1.55; color: var(--foreground);
 	}
 	.changelog-body :global(h2) {
 		font-size: 0.8rem; font-weight: 600; color: var(--foreground);
@@ -601,7 +588,11 @@
 		max-width: 100%; border-radius: 0.5rem; margin: 0.5rem 0;
 	}
 	.changelog-body :global(a) {
-		color: oklch(0.65 0.1 190 / 60%); text-decoration: none;
+		color: var(--text-muted); text-decoration: none;
 	}
 	.changelog-body :global(a:hover) { text-decoration: underline; }
+
+/* Little Moon home */
+.home{overflow-y:auto;pointer-events:auto;background:var(--background)}.home-ui{min-height:100%;height:auto;padding:0 40px 48px;gap:28px}.home-header{width:100%;display:flex;justify-content:space-between;align-items:center;padding:24px 0;border-bottom:1px solid var(--border);font-size:13px;color:var(--text-secondary)}.home-brand{display:flex;gap:8px;align-items:center;font:500 24px var(--font-body);color:var(--foreground);letter-spacing:-.04em}.connection-notice{width:100%;display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 18px;background:var(--card);border:1px solid var(--border);border-radius:12px;color:var(--text-secondary);font-size:13px;line-height:1.5}.connection-notice button{flex-shrink:0}.empty-state{position:relative;inset:auto;padding:20px 0 30px;animation:none;width:100%}.empty-glow{display:none}.welcome-moon{width:140px;height:140px;margin-bottom:24px}.empty-greeting{font:500 11px var(--font-body);text-transform:uppercase;letter-spacing:.13em;color:var(--primary);animation:none;margin-bottom:18px}.empty-title{font:400 clamp(2.4rem,5vw,4.5rem)/1.1 var(--font-display);letter-spacing:-.035em;animation:none;margin-bottom:20px}.empty-sub{font:400 16px/1.7 var(--font-body);color:var(--text-secondary);text-align:center;letter-spacing:0;animation:none;margin-bottom:28px}.empty-cta,.new-btn{font:500 14px var(--font-body);color:var(--primary-foreground);background:var(--primary);border:0;border-radius:8px;box-shadow:none;padding:14px 22px;animation:none;min-height:44px}.empty-cta:hover,.new-btn:hover{background:var(--primary);color:var(--primary-foreground);box-shadow:none;transform:none;filter:brightness(1.08)}.empty-cta:disabled{opacity:.5;cursor:not-allowed}.empty-hints,.hints{font:400 12px var(--font-body);color:var(--text-secondary);animation:none;margin-top:32px}.empty-hints .sep,.hints .sep{color:var(--text-muted)}.create-field{max-width:100%}.create-input,.empty-state .create-input{width:min(360px,80vw);border-radius:8px;font:400 16px var(--font-body);background:var(--surface-input);border:1px solid var(--input);color:var(--foreground);box-shadow:none}.hero{padding:28px 0 0}.greeting{color:var(--text-muted)}.title{font:400 clamp(2.5rem,5vw,4rem)/1.15 var(--font-display)}.title-accent{color:var(--primary)}.mobile-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));width:100%;max-width:900px;gap:16px;position:relative;inset:auto;padding:0}.mobile-card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:24px;box-shadow:none;min-height:100px}.mobile-card-orb{width:56px;height:56px;background:none;box-shadow:none;border:0;border-radius:0;object-fit:contain}.mobile-card-name{font:500 16px var(--font-body);color:var(--foreground)}.mobile-card-slug{color:var(--text-muted)}.bottom{position:relative;inset:auto;padding:0;gap:16px}.hover-name{display:none}.version{color:var(--text-muted)}
+@media(max-width:600px){.home-ui{padding:0 20px 40px}.home-header{padding:20px 0}.connection-notice{align-items:flex-start;flex-direction:column}.welcome-moon{width:104px;height:104px}.empty-state{padding-top:8px}.empty-title{font-size:2.4rem}.empty-sub br{display:none}.empty-hints{flex-direction:row;flex-wrap:wrap;justify-content:center;font-size:11px;gap:10px}.empty-hints .sep{display:none}.mobile-list{grid-template-columns:1fr}}
 </style>

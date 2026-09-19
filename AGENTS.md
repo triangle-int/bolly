@@ -1,5 +1,10 @@
 # Project conventions
 
+## Design system
+
+Before changing client or landing UI, read [docs/design-system.md](docs/design-system.md). Use the Little Moon tokens and shared UI patterns; keep the `/design-system` reference page in sync. Little Moon is the only skin; do not reintroduce Minty or the golden orb.
+
+
 ## Versioning
 
 Single source of truth: `VERSION` file in repo root.
@@ -30,35 +35,9 @@ Use `pnpm` (not npm) for client and landing.
 
 Never write migrations manually — always use `drizzle-kit generate`.
 
-## Transparent video (skin clips)
+## Avatar assets
 
-Skin clips need transparent video in two formats:
-- **WebM** (VP9 alpha) — Chrome/Firefox
-- **MOV** (HEVC alpha) — Safari
-
-### Pipeline
-
-1. **Remove background** via Bria video background removal on fal.ai:
-   - Use `mov_proresks` output (ProRes with alpha) — webm_vp9 from Bria loses alpha
-   - `background_color: "Transparent"`
-
-2. **ProRes → WebM** (VP9 alpha):
-   ```sh
-   ffmpeg -i prores-alpha.mov -c:v libvpx-vp9 -pix_fmt yuva420p output.webm
-   ```
-
-3. **WebM → MOV** (HEVC alpha via macOS VideoToolbox):
-   ```sh
-   ffmpeg -c:v libvpx-vp9 -i input.webm -c:v hevc_videotoolbox -alpha_quality 0.75 -vtag hvc1 output.mov
-   ```
-
-### Important
-- `ffmpeg -c:v hevc_videotoolbox` with `-vtag hvc1` is the **only** way to get HEVC alpha that Safari plays correctly
-- `avconvert --preset PresetHEVCHighestQualityWithAlpha` does NOT produce working alpha
-- Finder "Encode Selected Video Files" with "Preserve Transparency" also does NOT work
-- `ffprobe` shows `yuv420p` for all VP9 alpha webm files — this is misleading, alpha is there
-- Skin files go in `client/static/skins/{skin_name}/`
-- Test page: `client/static/video-test.html`
+Little Moon uses SVG assets in `client/static/skins/moon/`. Keep the desktop overlay and landing copies consistent. Test expressions in `/design-system`; no video skin pipeline is needed.
 
 ## Uploading local files to fal.ai
 

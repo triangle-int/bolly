@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount, onDestroy } from "svelte";
 	import { getSceneStore } from "$lib/stores/scene.svelte.js";
-	import { getSkinStore, clipSrc, type ClipSource } from "$lib/stores/skin.svelte.js";
+	import { getSkinStore } from "$lib/stores/skin.svelte.js";
 
 	const store = getSceneStore();
 	const skinStore = getSkinStore();
@@ -12,106 +12,6 @@
 	function easeInOutQuart(x: number) {
 		return x < 0.5 ? 8 * x * x * x * x : 1 - Math.pow(-2 * x + 2, 4) / 2;
 	}
-
-	// ── Video Animator ──
-	// States: intro → idle ↔ thinking
-	// Clips are provided by the active skin definition.
-
-	type VideoPhase = 'intro' | 'idle' | 'thinking';
-
-	let introPlayed = $state(store.mode === 'chat');
-	let orbState = $state<VideoPhase>(store.mode === 'onboarding' ? 'intro' : 'idle');
-	let thinkingIdx = $state(0);
-	let lastThinkingIdx = $state(-1);
-
-	function pickThinkingIdx(): number {
-		const clips = skinStore.skin.clips.thinking;
-		if (clips.length <= 1) return 0;
-		const available = Array.from({ length: clips.length }, (_, i) => i).filter(i => i !== lastThinkingIdx);
-		return available[Math.floor(Math.random() * available.length)];
-	}
-
-	let videoSrc = $derived.by(() => {
-		const clips = skinStore.skin.clips;
-		switch (orbState) {
-			case 'intro': return clips.onboarding;
-			case 'idle': return clips.idle;
-			case 'thinking': return clips.thinking[thinkingIdx] ?? clips.idle;
-		}
-	});
-	let isLooping = $derived(orbState === 'idle');
-	let isOnboarding = $derived(store.mode === 'onboarding');
-
-	// React to mode/thinking changes
-	$effect(() => {
-		if (skinStore.skin.avatar) return;
-		const mode = store.mode;
-		const thinking = store.thinking;
-
-		// Trigger intro only for onboarding (new instance), not regular navigation
-		if (mode === 'onboarding' && !introPlayed && orbState === 'idle') {
-			orbState = 'intro';
-			return;
-		}
-
-		// Start thinking: pick a clip
-		if (mode === 'chat' && thinking && orbState === 'idle') {
-			thinkingIdx = pickThinkingIdx();
-			lastThinkingIdx = thinkingIdx;
-			orbState = 'thinking';
-		}
-	});
-
-	// Handle clip ended — advance to next state
-	function handleVideoEnded() {
-		switch (orbState) {
-			case 'intro':
-				introPlayed = true;
-				orbState = 'idle';
-				break;
-			case 'thinking':
-				if (store.thinking) {
-					// Still thinking — pick next clip
-					thinkingIdx = pickThinkingIdx();
-					lastThinkingIdx = thinkingIdx;
-					orbState = 'thinking';
-				} else {
-					orbState = 'idle';
-				}
-				break;
-		}
-	}
-
-	// One video element per orb — track by slug
-	let videoRefs: Record<string, HTMLVideoElement> = {};
-	let lastClipKey = '';
-
-	function applyClip(el: HTMLVideoElement, clip: ClipSource, loop: boolean) {
-		el.src = clipSrc(clip);
-		el.loop = loop;
-		el.load();
-		el.play().catch(() => {
-			setTimeout(() => el?.play().catch(() => {}), 100);
-		});
-	}
-
-	$effect(() => {
-		if (skinStore.skin.avatar) return;
-		const clip = videoSrc;
-		const loop = isLooping;
-		const key = clip.webm;
-		if (key !== lastClipKey) {
-			lastClipKey = key;
-			for (const el of Object.values(videoRefs)) {
-				if (!el) continue;
-				applyClip(el, clip, loop);
-			}
-		} else {
-			for (const el of Object.values(videoRefs)) {
-				if (el) el.loop = loop;
-			}
-		}
-	});
 
 	// ── Orb state ──
 	interface OrbState {
@@ -200,9 +100,7 @@
 				if (isSelected) {
 					tx = 50; ty = 50;
 					// Full viewport background - use container size
-					const cw = container?.clientWidth ?? 1200;
-					const ch = container?.clientHeight ?? 800;
-					ts = skinStore.skin.avatar ? baseSize() : Math.max(cw, ch) * 1.2;
+					ts = baseSize();
 					to = 0.6;
 				} else {
 					ts = 0; to = 0;
@@ -277,12 +175,6 @@
 		orbs = newOrbs;
 		// (all videos are now square — no format compensation needed)
 
-		// Keep active videos playing (browser may suspend them)
-		for (const el of Object.values(videoRefs)) {
-			if (el && el.paused && el.readyState >= 2) {
-				el.play().catch(() => {});
-			}
-		}
 
 		if (m !== lastMode) {
 			lastMode = m;
@@ -346,18 +238,7 @@
 				style="left: {orb.x}%; top: {orb.y}%; width: {orb.size}px; height: {orb.size}px; opacity: {orb.opacity};"
 				disabled={store.mode !== "home"}
 			>
-				{#if skinStore.skin.avatar}
-					<img class="moon-avatar" src={store.thinking ? skinStore.skin.avatar.thinking : skinStore.skin.avatar.idle} alt={store.thinking ? "Nolune is thinking" : "Nolune"} />
-				{:else}
-				<video
-					bind:this={videoRefs[orb.slug]}
-					autoplay muted playsinline
-					src={clipSrc(videoSrc)}
-					loop={isLooping}
-					class="orb-vid"
-					onended={handleVideoEnded}
-				></video>
-				{/if}
+                <img class="moon-avatar" src={store.thinking ? skinStore.skin.avatar.thinking : skinStore.skin.avatar.idle} alt={store.thinking ? "Nolune is thinking" : "Nolune"} />
 			</button>
 		{/if}
 	{/each}
@@ -417,6 +298,7 @@
 	}
 
 	.orb-btn {
+		display:flex;align-items:center;justify-content:center;
 		position: absolute;
 		background: none;
 		border: none;
@@ -432,16 +314,8 @@
 		cursor: default;
 	}
 
-	.moon-avatar { width: 70%; height: 70%; object-fit: contain; pointer-events: none; }
+	.moon-avatar { width: 70%; height: 70%; max-width:320px; max-height:320px; object-fit: contain; pointer-events: none; }
 
-	.orb-vid {
-		position: absolute;
-		inset: 0;
-		width: 100%;
-		height: 100%;
-		object-fit: contain;
-		pointer-events: none;
-	}
 
 	/* ── Memory clouds (above orb) ── */
 	/* ── Memory orbit ── */
@@ -456,10 +330,11 @@
 	}
 
 	.memory-orbit-glow {
+		display:none;
 		position: absolute;
 		inset: 25%;
 		border-radius: 50%;
-		background: radial-gradient(circle, oklch(0.78 0.12 75 / 12%) 0%, transparent 70%);
+		background: radial-gradient(circle, var(--primary) 0%, transparent 70%);
 		animation: glow-pulse 2s ease-in-out infinite;
 	}
 
@@ -499,8 +374,8 @@
 			rotate(calc(var(--angle) + 180deg));
 		background: linear-gradient(
 			90deg,
-			oklch(0.78 0.12 75 / 30%) 0%,
-			oklch(0.78 0.12 75 / 6%) 60%,
+			var(--primary) 0%,
+			var(--primary) 60%,
 			transparent 100%
 		);
 		pointer-events: none;
@@ -509,33 +384,34 @@
 	.memory-node-label {
 		position: absolute;
 		transform: translate(-50%, -50%);
-		padding: 0.2rem 0.5rem;
+		padding: 12px;
+		min-height:44px;
 		border-radius: 0.75rem;
-		background: oklch(0.06 0.02 280 / 70%);
-		backdrop-filter: blur(12px);
-		-webkit-backdrop-filter: blur(12px);
-		border: 1px solid oklch(0.78 0.12 75 / 15%);
+		background: var(--card);
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+		border: 1px solid var(--primary);
 		white-space: nowrap;
-		font-family: var(--font-display);
-		font-style: italic;
-		font-size: 0.6rem;
+		font-family: var(--font-body);
+		font-style: normal;
+		font-size: 0.75rem;
 		letter-spacing: 0.02em;
-		color: oklch(0.78 0.12 75 / 55%);
+		color: var(--primary);
 		transition: all 0.25s ease;
 	}
 
 	.memory-node:hover .memory-node-label {
-		color: oklch(0.78 0.12 75 / 90%);
-		border-color: oklch(0.78 0.12 75 / 30%);
-		background: oklch(0.78 0.12 75 / 10%);
-		box-shadow: 0 0 16px oklch(0.78 0.12 75 / 12%);
+		color: var(--primary);
+		border-color: var(--primary);
+		background: var(--primary);
+		box-shadow: none;
 	}
 
 	.memory-node:hover .memory-node-line {
 		background: linear-gradient(
 			90deg,
-			oklch(0.78 0.12 75 / 50%) 0%,
-			oklch(0.78 0.12 75 / 15%) 60%,
+			var(--primary) 0%,
+			var(--primary) 60%,
 			transparent 100%
 		);
 	}
@@ -574,15 +450,12 @@
 	}
 
 	@media (max-width: 640px) {
+		.moon-avatar{max-width:200px;max-height:200px;}
 		.scene-root {
 			pointer-events: none;
 		}
 		.orb-btn {
 			pointer-events: none;
-		}
-		.orb-vid {
-			filter: blur(4px);
-			opacity: 0.5;
 		}
 		.memory-orbit {
 			display: none;
@@ -606,16 +479,17 @@
 		.memory-strip::-webkit-scrollbar { display: none; }
 		.memory-strip-chip {
 			flex-shrink: 0;
-			padding: 0.25rem 0.625rem;
+			padding: 12px;
+			min-height:44px;
 			border-radius: 1rem;
-			background: oklch(0.06 0.02 280 / 70%);
-			backdrop-filter: blur(12px);
-			-webkit-backdrop-filter: blur(12px);
-			border: 1px solid oklch(0.78 0.12 75 / 15%);
-			font-family: var(--font-display);
-			font-style: italic;
-			font-size: 0.6rem;
-			color: oklch(0.78 0.12 75 / 55%);
+			background: var(--card);
+			backdrop-filter: none;
+			-webkit-backdrop-filter: none;
+			border: 1px solid var(--primary);
+			font-family: var(--font-body);
+			font-style: normal;
+			font-size: 0.75rem;
+			color: var(--primary);
 			white-space: nowrap;
 			text-decoration: none;
 			opacity: 0;
@@ -623,9 +497,9 @@
 			transition: all 0.2s ease;
 		}
 		.memory-strip-chip:active {
-			color: oklch(0.78 0.12 75 / 90%);
-			border-color: oklch(0.78 0.12 75 / 30%);
-			background: oklch(0.78 0.12 75 / 10%);
+			color: var(--primary);
+			border-color: var(--primary);
+			background: var(--primary);
 		}
 		@keyframes strip-chip-in {
 			from { opacity: 0; transform: translateY(8px); }
@@ -634,6 +508,6 @@
 	}
 
 	@media (prefers-reduced-motion: reduce) {
-		.orb-vid { display: none; }
+		.memory-orbit { animation: none; }
 	}
 </style>

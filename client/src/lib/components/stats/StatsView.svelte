@@ -8,12 +8,15 @@
 
 	let stats = $state<Stats | null>(null);
 	let loading = $state(true);
+	let loadError = $state("");
 
 	async function load() {
 		loading = true;
+		loadError = "";
 		try {
 			stats = await fetchStats(slug);
 		} catch {
+			loadError = "Could not load statistics. Please try again.";
 			toast.error("failed to load stats");
 		} finally {
 			loading = false;
@@ -30,12 +33,12 @@
 	);
 
 	let peakHour = $derived.by(() => {
-		if (!stats) return 0;
+		if (!stats || !stats.hourly_activity.some(count => count > 0)) return -1;
 		return stats.hourly_activity.indexOf(Math.max(...stats.hourly_activity));
 	});
 
 	let peakDay = $derived.by(() => {
-		if (!stats) return 0;
+		if (!stats || !stats.daily_activity.some(count => count > 0)) return -1;
 		return stats.daily_activity.indexOf(Math.max(...stats.daily_activity));
 	});
 
@@ -110,18 +113,18 @@
 	});
 
 	const moodColors: Record<string, string> = {
-		calm: "oklch(0.68 0.12 220)", curious: "oklch(0.65 0.14 200)",
-		excited: "oklch(0.75 0.14 75)", warm: "oklch(0.75 0.14 75)",
-		happy: "oklch(0.72 0.16 145)", playful: "oklch(0.68 0.14 170)",
-		thoughtful: "oklch(0.60 0.10 270)", focused: "oklch(0.62 0.12 240)",
-		tender: "oklch(0.65 0.14 350)", loving: "oklch(0.62 0.16 340)",
-		creative: "oklch(0.65 0.16 300)", energetic: "oklch(0.75 0.14 90)",
-		melancholic: "oklch(0.55 0.06 260)", anxious: "oklch(0.65 0.10 50)",
-		grateful: "oklch(0.68 0.14 155)", nostalgic: "oklch(0.58 0.08 320)",
+		calm: "var(--primary)", curious: "var(--primary)",
+		excited: "var(--primary)", warm: "var(--primary)",
+		happy: "var(--primary)", playful: "var(--primary)",
+		thoughtful: "var(--primary)", focused: "var(--primary)",
+		tender: "var(--primary)", loving: "var(--primary)",
+		creative: "var(--primary)", energetic: "var(--primary)",
+		melancholic: "var(--primary)", anxious: "var(--primary)",
+		grateful: "var(--primary)", nostalgic: "var(--primary)",
 	};
 
 	function getMoodColor(mood: string): string {
-		return moodColors[mood] ?? "oklch(0.55 0.06 240)";
+		return moodColors[mood] ?? "var(--primary)";
 	}
 
 	function formatInterval(secs: number): string {
@@ -133,22 +136,25 @@
 
 <div class="stats-container">
 	{#if loading}
+		<span class="sr-only" role="status">Loading statistics…</span>
 		<div class="stats-loading"><div class="stats-loading-dot"></div></div>
+	{:else if loadError}
+		<div class="load-error" role="alert"><p>{loadError}</p><button class="nl-button-secondary" onclick={load}>Try again</button></div>
 	{:else if stats}
 		<div class="stats-scroll">
 			<!-- Hero numbers -->
 			<div class="stats-hero">
 				<div class="hero-card" style="animation-delay: 0ms">
 					<span class="hero-value">{stats.total_messages.toLocaleString()}</span>
-					<span class="hero-label">messages</span>
+					<span class="hero-label">Messages</span>
 				</div>
 				<div class="hero-card" style="animation-delay: 60ms">
 					<span class="hero-value">{daysSinceFirst}</span>
-					<span class="hero-label">days together</span>
+					<span class="hero-label">Days together</span>
 				</div>
 				<div class="hero-card" style="animation-delay: 120ms">
 					<span class="hero-value">{stats.streak_days}</span>
-					<span class="hero-label">day streak</span>
+					<span class="hero-label">Day streak</span>
 					{#if stats.streak_days > 0}
 						<div class="streak-glow"></div>
 					{/if}
@@ -157,7 +163,7 @@
 
 			<!-- Contribution heatmap -->
 			<section class="glass-card" style="animation-delay: 150ms">
-				<h3 class="card-title">activity</h3>
+				<h3 class="card-title">Activity</h3>
 				<div class="heatmap-container">
 					<div class="heatmap-months">
 						{#each monthLabels as { label, col }, i}
@@ -197,13 +203,13 @@
 						</div>
 					</div>
 					<div class="heatmap-legend">
-						<span class="heatmap-legend-label">less</span>
+						<span class="heatmap-legend-label">Less</span>
 						<div class="heatmap-cell heatmap-0"></div>
 						<div class="heatmap-cell heatmap-1"></div>
 						<div class="heatmap-cell heatmap-2"></div>
 						<div class="heatmap-cell heatmap-3"></div>
 						<div class="heatmap-cell heatmap-4"></div>
-						<span class="heatmap-legend-label">more</span>
+						<span class="heatmap-legend-label">More</span>
 					</div>
 				</div>
 			</section>
@@ -211,8 +217,8 @@
 			<!-- Hourly activity -->
 			<section class="glass-card" style="animation-delay: 200ms">
 				<h3 class="card-title">
-					peak hours
-					<span class="card-hint">most active at {HOUR_LABELS[peakHour]}</span>
+					Peak hours
+					<span class="card-hint">{peakHour >= 0 ? `Most active at ${HOUR_LABELS[peakHour]}` : "No hourly activity yet"}</span>
 				</h3>
 				<div class="bar-chart">
 					{#each stats.hourly_activity as count, i}
@@ -221,7 +227,7 @@
 							<div
 								class="bar-fill"
 								class:bar-fill-peak={i === peakHour}
-								style="height: {Math.max(pct * 100, 2)}%"
+								style="height: {count > 0 ? Math.max(pct * 100, 2) : 0}%; min-height: {count > 0 ? 2 : 0}px"
 							></div>
 							{#if i % 3 === 0}
 								<span class="bar-label">{HOUR_LABELS[i]}</span>
@@ -234,8 +240,8 @@
 			<!-- Day of week -->
 			<section class="glass-card" style="animation-delay: 250ms">
 				<h3 class="card-title">
-					day of week
-					<span class="card-hint">{DAY_LABELS[peakDay]} is your day</span>
+					Day of week
+					<span class="card-hint">{peakDay >= 0 ? `${DAY_LABELS[peakDay]} is your most active day` : "No daily activity yet"}</span>
 				</h3>
 				<div class="day-bars">
 					{#each stats.daily_activity as count, i}
@@ -255,12 +261,12 @@
 			<!-- Mood distribution -->
 			{#if topMoods.length > 0}
 				<section class="glass-card" style="animation-delay: 300ms">
-					<h3 class="card-title">mood palette</h3>
+					<h3 class="card-title">Mood palette</h3>
 					<div class="mood-chart">
 						{#each topMoods as [mood, count]}
 							{@const pct = (count / totalMoodCount) * 100}
 							<div class="mood-row">
-								<div class="mood-dot" style="background: {getMoodColor(mood)}; box-shadow: 0 0 8px {getMoodColor(mood)}"></div>
+								<div class="mood-dot" style="background: {getMoodColor(mood)}"></div>
 								<span class="mood-name">{mood}</span>
 								<div class="mood-track">
 									<div class="mood-fill" style="width: {pct}%; background: {getMoodColor(mood)}"></div>
@@ -274,33 +280,34 @@
 
 			<!-- Quick stats -->
 			<section class="glass-card" style="animation-delay: 350ms">
-				<h3 class="card-title">details</h3>
+				<h3 class="card-title">Details</h3>
 				<div class="detail-grid">
 					<div class="detail-item">
 						<span class="detail-value">{Math.round(stats.avg_message_length)}</span>
-						<span class="detail-label">avg chars/msg</span>
+						<span class="detail-label">Average message length</span>
 					</div>
 					<div class="detail-item">
 						<span class="detail-value">{formatInterval(stats.avg_response_interval_secs)}</span>
-						<span class="detail-label">avg interval</span>
+						<span class="detail-label">Average reply interval</span>
 					</div>
 					<div class="detail-item">
 						<span class="detail-value">{stats.daily_history.length}</span>
-						<span class="detail-label">active days</span>
+						<span class="detail-label">Active days</span>
 					</div>
 					<div class="detail-item">
 						<span class="detail-value">{stats.total_messages > 0 && stats.daily_history.length > 0 ? (stats.total_messages / stats.daily_history.length).toFixed(1) : "0"}</span>
-						<span class="detail-label">msgs/day</span>
+						<span class="detail-label">Messages per day</span>
 					</div>
 				</div>
 			</section>
 		</div>
 	{:else}
-		<div class="stats-empty">no data yet</div>
+		<div class="stats-empty">No activity yet</div>
 	{/if}
 </div>
 
 <style>
+	.load-error { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; min-height: 220px; padding: 24px; color: var(--text-secondary); text-align: center; }
 	.stats-container {
 		height: 100%;
 		overflow: hidden;
@@ -318,8 +325,8 @@
 		width: 6px;
 		height: 6px;
 		border-radius: 50%;
-		background: oklch(0.55 0.12 220 / 40%);
-		animation: pulse-alive 2s ease-in-out infinite;
+		background: var(--card);
+		animation:none;
 	}
 
 	.stats-empty {
@@ -327,9 +334,9 @@
 		align-items: center;
 		justify-content: center;
 		height: 100%;
-		font-family: var(--font-mono);
-		font-size: 0.72rem;
-		color: oklch(0.55 0.08 220 / 40%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 	}
 
 	.stats-scroll {
@@ -351,24 +358,16 @@
 		position: relative;
 		padding: 1.125rem 1.25rem;
 		border-radius: 1rem;
-		border: 1px solid oklch(0.5 0.08 220 / 8%);
-		border-top-color: oklch(0.6 0.10 220 / 14%);
-		background: linear-gradient(
-			165deg,
-			oklch(0.5 0.06 220 / 6%) 0%,
-			oklch(0.4 0.04 230 / 4%) 50%,
-			oklch(0.5 0.06 220 / 5%) 100%
-		);
-		backdrop-filter: blur(16px) saturate(140%) brightness(1.04);
-		-webkit-backdrop-filter: blur(16px) saturate(140%) brightness(1.04);
-		box-shadow:
-			0 2px 16px oklch(var(--shade) / 20%),
-			0 8px 32px oklch(0.3 0.06 220 / 6%),
-			inset 0 1px 0 oklch(var(--ink) / 5%);
+		border: 1px solid var(--border);
+		border-top-color: var(--border);
+		background: var(--card);
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+		box-shadow: none;
 		display: flex;
 		flex-direction: column;
 		gap: 0.875rem;
-		animation: card-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+		animation: none;
 	}
 
 	/* Specular top highlight */
@@ -379,20 +378,20 @@
 		left: 15%;
 		right: 15%;
 		height: 1px;
-		background: linear-gradient(90deg, transparent, oklch(0.6 0.10 220 / 20%), transparent);
+		background: var(--card);
 		pointer-events: none;
 	}
 
 	@keyframes card-enter {
-		from { opacity: 0; transform: translateY(12px); filter: blur(4px); }
+		from { opacity: 1; transform: translateY(12px); filter: blur(4px); }
 		to { opacity: 1; transform: translateY(0); filter: blur(0px); }
 	}
 
 	.card-title {
-		font-family: var(--font-mono);
-		font-size: 0.72rem;
+		font-family: var(--font-body);
+		font-size: 0.75rem;
 		font-weight: 400;
-		color: oklch(0.70 0.08 220 / 50%);
+		color: var(--text-secondary);
 		letter-spacing: 0.06em;
 		display: flex;
 		align-items: baseline;
@@ -401,9 +400,9 @@
 
 	.card-hint {
 		font-family: var(--font-body);
-		font-size: 0.68rem;
-		color: oklch(0.65 0.06 220 / 35%);
-		font-style: italic;
+		font-size: 0.75rem;
+		color: var(--text-secondary);
+		font-style: normal;
 	}
 
 	/* ═══ Hero ═══ */
@@ -424,20 +423,13 @@
 		gap: 0.375rem;
 		padding: 1.25rem 0.75rem;
 		border-radius: 1rem;
-		border: 1px solid oklch(0.5 0.08 220 / 8%);
-		border-top-color: oklch(0.6 0.10 220 / 14%);
-		background: linear-gradient(
-			170deg,
-			oklch(0.5 0.06 220 / 6%) 0%,
-			oklch(0.4 0.04 230 / 3%) 100%
-		);
-		backdrop-filter: blur(16px) saturate(140%) brightness(1.04);
-		-webkit-backdrop-filter: blur(16px) saturate(140%) brightness(1.04);
-		box-shadow:
-			0 2px 16px oklch(var(--shade) / 20%),
-			0 8px 32px oklch(0.3 0.06 220 / 6%),
-			inset 0 1px 0 oklch(var(--ink) / 5%);
-		animation: card-enter 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+		border: 1px solid var(--border);
+		border-top-color: var(--border);
+		background: var(--card);
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+		box-shadow: none;
+		animation: none;
 		overflow: hidden;
 	}
 
@@ -448,7 +440,7 @@
 		left: 20%;
 		right: 20%;
 		height: 1px;
-		background: linear-gradient(90deg, transparent, oklch(0.6 0.10 220 / 20%), transparent);
+		background: var(--card);
 		pointer-events: none;
 	}
 
@@ -456,14 +448,14 @@
 		font-family: var(--font-display);
 		font-size: 1.75rem;
 		font-weight: 300;
-		color: oklch(0.82 0.08 220 / 80%);
+		color: var(--text-secondary);
 		line-height: 1;
 	}
 
 	.hero-label {
-		font-family: var(--font-mono);
-		font-size: 0.68rem;
-		color: oklch(0.65 0.06 220 / 40%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		letter-spacing: 0.06em;
 	}
 
@@ -471,13 +463,9 @@
 		position: absolute;
 		inset: 0;
 		border-radius: inherit;
-		background: radial-gradient(
-			ellipse at 50% 30%,
-			oklch(0.60 0.14 220 / 8%) 0%,
-			transparent 70%
-		);
+		background: var(--card);
 		pointer-events: none;
-		animation: streak-pulse 3s ease-in-out infinite;
+		animation: none;
 	}
 
 	@keyframes streak-pulse {
@@ -508,9 +496,9 @@
 	}
 
 	.heatmap-month-label {
-		font-family: var(--font-mono);
-		font-size: 0.68rem;
-		color: oklch(0.65 0.06 220 / 35%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		flex-shrink: 0;
 	}
 
@@ -528,9 +516,9 @@
 	}
 
 	.heatmap-day-label {
-		font-family: var(--font-mono);
-		font-size: 0.62rem;
-		color: oklch(0.65 0.06 220 / 35%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		height: 9px;
 		line-height: 9px;
 		text-align: right;
@@ -549,11 +537,11 @@
 		transition: background 0.2s ease;
 	}
 
-	.heatmap-0 { background: oklch(0.4 0.04 220 / 8%); }
-	.heatmap-1 { background: oklch(0.55 0.12 220 / 20%); }
-	.heatmap-2 { background: oklch(0.58 0.14 220 / 38%); }
-	.heatmap-3 { background: oklch(0.62 0.16 220 / 55%); }
-	.heatmap-4 { background: oklch(0.68 0.18 220 / 75%); box-shadow: 0 0 4px oklch(0.60 0.14 220 / 25%); }
+	.heatmap-0 { background: var(--card); }
+	.heatmap-1 { background: var(--card); }
+	.heatmap-2 { background: var(--card); }
+	.heatmap-3 { background: var(--card); }
+	.heatmap-4 { background: var(--card); box-shadow: none; }
 
 	.heatmap-legend {
 		display: flex;
@@ -563,9 +551,9 @@
 	}
 
 	.heatmap-legend-label {
-		font-family: var(--font-mono);
-		font-size: 0.62rem;
-		color: oklch(0.65 0.06 220 / 30%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		margin: 0 2px;
 	}
 
@@ -598,22 +586,22 @@
 	.bar-fill {
 		width: 100%;
 		border-radius: 2px 2px 0 0;
-		background: oklch(0.58 0.14 220 / 35%);
+		background: var(--card);
 		min-height: 2px;
 		transition: height 0.4s cubic-bezier(0.16, 1, 0.3, 1);
 	}
 
 	.bar-fill-peak {
-		background: oklch(0.65 0.18 220 / 65%);
-		box-shadow: 0 0 8px oklch(0.60 0.14 220 / 20%);
+		background: var(--card);
+		box-shadow: none;
 	}
 
 	.bar-label {
 		position: absolute;
 		bottom: -14px;
-		font-family: var(--font-mono);
-		font-size: 0.62rem;
-		color: oklch(0.65 0.06 220 / 30%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 	}
 
 	/* ═══ Day bars ═══ */
@@ -631,42 +619,42 @@
 	}
 
 	.day-label {
-		font-family: var(--font-mono);
-		font-size: 0.68rem;
-		color: oklch(0.65 0.06 220 / 35%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		width: 28px;
 		text-align: right;
 		transition: color 0.2s ease;
 	}
 
 	.day-label-peak {
-		color: oklch(0.72 0.10 220 / 65%);
+		color: var(--text-secondary);
 	}
 
 	.day-track {
 		flex: 1;
 		height: 8px;
 		border-radius: 4px;
-		background: oklch(0.4 0.04 220 / 8%);
+		background: var(--card);
 		overflow: hidden;
 	}
 
 	.day-fill {
 		height: 100%;
 		border-radius: 4px;
-		background: oklch(0.58 0.14 220 / 40%);
+		background: var(--card);
 		transition: width 0.5s cubic-bezier(0.16, 1, 0.3, 1);
 	}
 
 	.day-fill-peak {
-		background: oklch(0.65 0.18 220 / 60%);
-		box-shadow: 0 0 6px oklch(0.60 0.14 220 / 15%);
+		background: var(--card);
+		box-shadow: none;
 	}
 
 	.day-count {
-		font-family: var(--font-mono);
-		font-size: 0.62rem;
-		color: oklch(0.65 0.06 220 / 30%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		width: 28px;
 	}
 
@@ -692,9 +680,9 @@
 	}
 
 	.mood-name {
-		font-family: var(--font-mono);
-		font-size: 0.68rem;
-		color: oklch(0.80 0.02 220 / 50%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		width: 72px;
 	}
 
@@ -702,7 +690,7 @@
 		flex: 1;
 		height: 6px;
 		border-radius: 3px;
-		background: oklch(0.4 0.04 220 / 8%);
+		background: var(--card);
 		overflow: hidden;
 	}
 
@@ -714,9 +702,9 @@
 	}
 
 	.mood-pct {
-		font-family: var(--font-mono);
-		font-size: 0.62rem;
-		color: oklch(0.65 0.06 220 / 35%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		width: 28px;
 		text-align: right;
 	}
@@ -735,21 +723,21 @@
 		gap: 0.2rem;
 		padding: 0.75rem;
 		border-radius: 0.625rem;
-		background: oklch(0.4 0.04 220 / 6%);
-		border: 1px solid oklch(0.5 0.06 220 / 6%);
+		background: var(--card);
+		border: 1px solid var(--border);
 	}
 
 	.detail-value {
 		font-family: var(--font-display);
 		font-size: 1.1rem;
 		font-weight: 300;
-		color: oklch(0.75 0.10 220 / 65%);
+		color: var(--text-secondary);
 	}
 
 	.detail-label {
-		font-family: var(--font-mono);
-		font-size: 0.62rem;
-		color: oklch(0.65 0.06 220 / 30%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		letter-spacing: 0.04em;
 	}
 
@@ -762,4 +750,36 @@
 		.hero-card { padding: 1rem 0.5rem; }
 		.glass-card { padding: 1rem; }
 	}
+
+/* Little Moon surfaces, controls, and readable content. */
+
+.stats-scroll { padding: 32px; max-width: 1040px; width: 100%; margin-inline: auto; }
+.glass-card, .hero-card { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; }
+.glass-card::before, .hero-card::before, .streak-glow { display: none; }
+.card-title { font: 500 18px var(--font-body); color: var(--foreground); flex-wrap: wrap; }
+.hero-value { color: var(--primary); font-size: 32px; font-weight: 400; }
+.hero-label, .card-hint, .detail-label { font-size: 13px; }
+.detail-value { color: var(--foreground); font-size: 24px; }
+.detail-item { background: var(--background); border-color: var(--border); padding: 16px; }
+.heatmap-0, .day-track, .mood-track { background: var(--accent); }
+.heatmap-1 { background: color-mix(in srgb, var(--primary) 25%, var(--card)); }
+.heatmap-2 { background: color-mix(in srgb, var(--primary) 45%, var(--card)); }
+.heatmap-3 { background: color-mix(in srgb, var(--primary) 70%, var(--card)); }
+.heatmap-4, .bar-fill-peak, .day-fill-peak { background: var(--primary); }
+.bar-fill, .day-fill { background: color-mix(in srgb, var(--primary) 65%, var(--card)); }
+.mood-fill { opacity: 1; }
+.heatmap-cell { height: 12px; width: 9px; }
+.heatmap-day-label { height: 12px; line-height: 12px; }
+.heatmap-day-labels { width: 32px; }
+.heatmap-months { padding-left: 35px; }
+.day-label, .day-count, .mood-pct { width: 36px; }
+@media (max-width: 640px) { .stats-scroll { padding: 20px; } .hero-card { padding: 16px 8px; } .hero-value { font-size: 26px; } .hero-label { text-align: center; } }
+
+button { min-height: 44px; font-family: var(--font-body); }
+
+button:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+.stats-loading-dot { background: var(--primary); }
 </style>

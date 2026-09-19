@@ -9,11 +9,10 @@
   let actionQueue = $state<{ id: number; text: string; icon: string }[]>([]);
   let idCounter = 0;
   let hideTimer: ReturnType<typeof setTimeout> | null = null;
-  let videoEl: HTMLVideoElement | undefined = $state();
 
-  // Video source from server
-  const videoSrc = $derived(
-    serverUrl ? `${serverUrl}/skins/orb/orb-idle-loop.webm` : ""
+  // Little Moon avatar from server
+  const avatarSrc = $derived(
+    serverUrl ? `${serverUrl}/skins/moon/character.svg` : ""
   );
 
   function resetHideTimer() {
@@ -49,15 +48,6 @@
     actionQueue = [...actionQueue, { id, text, icon }];
     setTimeout(() => { actionQueue = actionQueue.filter(a => a.id !== id); }, 3000);
   }
-
-  // Load video when src changes
-  $effect(() => {
-    if (videoEl && videoSrc) {
-      videoEl.src = videoSrc;
-      videoEl.load();
-      videoEl.play().catch(() => {});
-    }
-  });
 
   onMount(() => {
     let disposed = false;
@@ -116,16 +106,8 @@
       <div class="pip-ring pip-ring-2"></div>
     {/if}
 
-    {#if videoSrc}
-      <!-- svelte-ignore a11y_media_has_caption -->
-      <video
-        bind:this={videoEl}
-        class="pip-video"
-        muted
-        playsinline
-        autoplay
-        loop
-      ></video>
+    {#if avatarSrc}
+      <img src={avatarSrc} class="pip-avatar" alt="Nolune" />
     {:else}
       <div class="pip-placeholder"></div>
     {/if}
@@ -183,19 +165,19 @@
     to { opacity: 1; transform: scale(1) translateY(0); }
   }
 
-  .pip-video {
+  .pip-avatar {
     width: 100%;
     height: 100%;
-    object-fit: cover;
+    object-fit: contain;
     border-radius: 50%;
-    border: 2px solid oklch(0.78 0.12 75 / 30%);
+    border: 2px solid #B7A9E7;
   }
 
   .pip-placeholder {
     width: 100%;
     height: 100%;
     border-radius: 50%;
-    border: 2px solid oklch(0.78 0.12 75 / 20%);
+    border: 2px solid #51485F;
   }
 
   /* Recording rings */
@@ -217,7 +199,7 @@
     50% { transform: scale(1.08); opacity: 0.2; }
   }
 
-  .pip-recording .pip-video {
+  .pip-recording .pip-avatar {
     border-color: oklch(0.65 0.22 25 / 40%);
   }
 

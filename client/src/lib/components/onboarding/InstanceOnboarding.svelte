@@ -1,4 +1,7 @@
 <script lang="ts">
+	import MoonBirth from "./MoonBirth.svelte";
+	import { saveOnboardingProvider } from "./provider.js";
+	import ArrowRight from "@lucide/svelte/icons/arrow-right";
 	import {
 		sendMessage,
 		fetchSoulTemplates,
@@ -33,6 +36,7 @@
 		| "picking-language"
 		| "naming-companion"
 		| "picking-skin"
+		| "being-born"
 		| "picking-soul"
 		| "picking-provider"
 		| "waiting-first"
@@ -43,6 +47,11 @@
 	let revealed = $state(false);
 	let firstMessage = $state("");
 	let companionNameInput = $state("");
+	let selectedProvider = $state<"anthropic" | "openai">("anthropic");
+	const providerLabel = $derived(selectedProvider === "openai" ? "OpenAI" : "Anthropic");
+	const providerKeyUrl = $derived(selectedProvider === "openai"
+		? "https://platform.openai.com/api-keys"
+		: "https://console.anthropic.com/settings/keys");
 	let apiKeyInput = $state("");
 	let apiKeyError = $state("");
 	let messageInput: HTMLTextAreaElement | undefined = $state();
@@ -141,6 +150,7 @@
 	}
 
 	async function pickSkin(skinId: string) {
+		if (stage !== "picking-skin") return;
 		skinStore.setSkin(skinId);
 		stage = "intro";
 		await pause(200);
@@ -148,10 +158,14 @@
 		await typewrite(`${skin?.label ?? skinId}. let me show you.`);
 		await pause(400);
 
-		// Now trigger the onboarding animation with the chosen skin
 		play("intro_reveal");
+		stage = "being-born";
+	}
+
+	async function finishBirth() {
+		if (stage !== "being-born") return;
+		stage = "intro";
 		scene.enterOnboarding(slug);
-		await pause(3000);
 
 		let hasSoul = false;
 		try {
@@ -202,17 +216,12 @@
 		stage = "picking-provider";
 	}
 
-	async function pickProviderApi() {
+	async function pickProvider(provider: "anthropic" | "openai") {
+		selectedProvider = provider;
+		apiKeyInput = "";
+		apiKeyError = "";
 		stage = "intro";
-		await typewrite("got it. i'll need an anthropic api key.");
-		stage = "waiting-key";
-		await pause(100);
-		apiKeyInputEl?.focus();
-	}
-
-	async function pickProviderOpenai() {
-		stage = "intro";
-		await typewrite("got it. i'll need an openai api key.");
+		await typewrite(`got it. i'll need an ${providerLabel} API key.`);
 		stage = "waiting-key";
 		await pause(100);
 		apiKeyInputEl?.focus();
@@ -220,12 +229,13 @@
 
 	async function submitApiKey() {
 		const key = apiKeyInput.trim();
-		if (!key) return;
+		if (!key || stage !== "waiting-key") return;
 		apiKeyError = "";
 		stage = "testing";
 
 		try {
-			await updateLlmConfig({ api_key: key });
+			await saveOnboardingProvider(selectedProvider, key, { updateLlmConfig, updateProvider });
+			apiKeyInput = "";
 			stage = "intro";
 			await pause(200);
 			await typewrite("connected.");
@@ -275,7 +285,10 @@
 	$effect(() => { runSequence(); });
 </script>
 
-<div class="ob" class:ob-depart={stage === "departing"} class:ob-hidden={stage === "reveal" && !revealed}>
+{#if stage === "being-born"}
+	<MoonBirth name={companionNameInput.trim() || "Nolune"} oncomplete={finishBirth} />
+{/if}
+<div class="ob" inert={stage === "being-born"} class:ob-birthing={stage === "being-born"} class:ob-depart={stage === "departing"} class:ob-hidden={stage === "reveal" && !revealed}>
 	<div class="ob-content">
 		<!-- Typewriter lines -->
 		<div class="ob-lines" class:ob-lines-hidden={stage === "reveal"}>
@@ -316,9 +329,10 @@
 			{#if stage === "naming-companion"}
 				<div class="ob-enter">
 					<div class="ob-field">
-						<input bind:this={nameInputEl} bind:value={companionNameInput} onkeydown={handleNameKeydown} placeholder="a name..." class="ob-input" />
+						<label class="ob-label" for="companion-name">Companion name</label>
+                        <input id="companion-name" bind:this={nameInputEl} bind:value={companionNameInput} onkeydown={handleNameKeydown} placeholder="A name for your companion" class="ob-input" />
 						{#if companionNameInput.trim()}
-							<button onclick={submitCompanionName} class="ob-go" aria-label="Confirm">→</button>
+							<button onclick={submitCompanionName} class="ob-go" aria-label="Confirm"><ArrowRight size={18} aria-hidden="true" /></button>
 						{/if}
 					</div>
 				</div>
@@ -353,11 +367,11 @@
 			{#if stage === "picking-provider"}
 				<div class="ob-enter">
 					<div class="ob-pills ob-pills-soul">
-						<button onclick={pickProviderApi} class="ob-pill ob-pill-col ob-pill-soul">
+						<button onclick={() => pickProvider("anthropic")} class="ob-pill ob-pill-col ob-pill-soul">
 							<span class="ob-pill-label">Anthropic</span>
 							<span class="ob-pill-note">pay-per-use</span>
 						</button>
-						<button onclick={pickProviderOpenai} class="ob-pill ob-pill-col ob-pill-soul">
+						<button onclick={() => pickProvider("openai")} class="ob-pill ob-pill-col ob-pill-soul">
 							<span class="ob-pill-label">OpenAI</span>
 							<span class="ob-pill-note">pay-per-use</span>
 						</button>
@@ -368,25 +382,27 @@
 			{#if stage === "waiting-key"}
 				<div class="ob-enter">
 					<div class="ob-field">
-						<!-- svelte-ignore a11y_autofocus -->
+						<label class="ob-label" for="provider-key">{providerLabel} API key</label>
+                        <!-- svelte-ignore a11y_autofocus -->
 						<input
-							bind:this={apiKeyInputEl}
+							id="provider-key"
+                            bind:this={apiKeyInputEl}
 							bind:value={apiKeyInput}
 							onkeydown={handleKeyKeydown}
-							placeholder="sk-ant-..."
+							placeholder={selectedProvider === "openai" ? "sk-..." : "sk-ant-..."}
 							class="ob-input ob-input-mono"
 							type="password"
 							autofocus
 						/>
 						{#if apiKeyInput.trim()}
-							<button onclick={submitApiKey} class="ob-go" aria-label="Submit">→</button>
+							<button onclick={submitApiKey} class="ob-go" aria-label="Submit"><ArrowRight size={18} aria-hidden="true" /></button>
 						{/if}
 					</div>
 					{#if apiKeyError}
-						<p class="ob-error">{apiKeyError}</p>
+						<p class="ob-error" role="alert">{apiKeyError}</p>
 					{/if}
-					<a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" class="ob-hint">
-						get your key at console.anthropic.com
+					<a href={providerKeyUrl} target="_blank" rel="noopener" class="ob-hint">
+						Get your {providerLabel} API key
 					</a>
 				</div>
 			{/if}
@@ -401,9 +417,10 @@
 			{#if stage === "waiting-first"}
 				<div class="ob-enter">
 					<div class="ob-field">
-						<textarea bind:this={messageInput} bind:value={firstMessage} onkeydown={handleMessageKeydown} placeholder="what's on your mind?" rows={3} class="ob-input ob-textarea"></textarea>
+						<label class="ob-label" for="first-message">Your first message</label>
+                        <textarea id="first-message" bind:this={messageInput} bind:value={firstMessage} onkeydown={handleMessageKeydown} placeholder="What’s on your mind?" rows={3} class="ob-input ob-textarea"></textarea>
 						{#if firstMessage.trim()}
-							<button onclick={submitFirst} class="ob-go ob-go-textarea" aria-label="Send">→</button>
+							<button onclick={submitFirst} class="ob-go ob-go-textarea" aria-label="Send"><ArrowRight size={18} aria-hidden="true" /></button>
 						{/if}
 					</div>
 				</div>
@@ -413,6 +430,7 @@
 </div>
 
 <style>
+	.ob-birthing{visibility:hidden;}
 	.ob {
 		position: relative;
 		display: flex;
@@ -452,7 +470,7 @@
 		font-family: var(--font-display);
 		font-size: 1.35rem;
 		font-weight: 400;
-		font-style: italic;
+		font-style: normal;
 		letter-spacing: -0.01em;
 		color: var(--foreground);
 		text-align: center;
@@ -462,7 +480,7 @@
 		font-family: var(--font-body);
 		font-size: 0.85rem;
 		line-height: 1.6;
-		color: oklch(var(--ink) / 45%);
+		color: var(--text-secondary);
 		text-align: center;
 	}
 
@@ -472,7 +490,7 @@
 		height: 1.05em;
 		margin-left: 1px;
 		vertical-align: text-bottom;
-		background: oklch(var(--ink) / 40%);
+		background: var(--accent);
 		animation: blink 0.8s steps(2) infinite;
 	}
 	@keyframes blink { 0% { opacity: 1; } 100% { opacity: 0; } }
@@ -490,44 +508,42 @@
 
 	.ob-center { display: flex; align-items: center; justify-content: center; gap: 0.625rem; }
 
-	/* ── Pills (liquid glass) ── */
+	/* Companion preferences */
 	.ob-pills { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-	.ob-pills-grid { display: grid; grid-template-columns: repeat(3, 1fr); }
 	.ob-pills-lang { display: grid; grid-template-columns: repeat(4, 1fr); gap: 0.375rem; }
 	.ob-pills-soul { display: grid; grid-template-columns: repeat(2, 1fr); }
 
 	.ob-pill {
+		min-height: 44px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
 		flex: 1;
 		padding: 0.55rem 0.75rem;
-		border-radius: 2rem;
-		background: var(--glass-bg);
-		backdrop-filter: var(--glass-blur);
-		-webkit-backdrop-filter: var(--glass-blur);
-		border: 1px solid var(--glass-border);
-		border-top-color: var(--glass-border-top);
-		font-family: var(--font-display);
-		font-size: 0.8rem;
-		font-style: italic;
-		color: oklch(var(--ink) / 50%);
+		border-radius: 8px;
+		background: var(--card);
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+		border: 1px solid var(--border);
+		border-top-color: var(--border);
+		font-family: var(--font-body);
+		font-size: 0.875rem;
+		font-style: normal;
+		color: var(--text-secondary);
 		cursor: pointer;
 		transition: all 0.3s ease;
-		box-shadow:
-			0 1px 4px oklch(var(--shade) / 8%),
-			inset 0 1px 0 oklch(var(--ink) / 5%);
+		box-shadow: none;
 	}
 	.ob-pill:hover {
-		border-color: oklch(var(--ink) / 20%);
-		background: oklch(var(--ink) / 8%);
-		color: oklch(var(--ink) / 75%);
-		box-shadow: 0 2px 12px oklch(var(--shade) / 12%), inset 0 1px 0 oklch(var(--ink) / 8%);
+		border-color: var(--text-secondary);
+		background: var(--accent);
+		color: var(--text-secondary);
+		box-shadow: none;
 	}
 	.ob-pill-active {
-		border-color: oklch(var(--ink) / 22%);
-		background: oklch(var(--ink) / 10%);
-		color: oklch(var(--ink) / 80%);
+		border-color: var(--text-secondary);
+		background: var(--accent);
+		color: var(--text-secondary);
 	}
 
 	.ob-pill-col {
@@ -542,43 +558,43 @@
 		gap: 0.25rem;
 	}
 	.ob-pill-label {
-		font-family: var(--font-display);
-		font-size: 0.8rem;
-		font-style: italic;
-		color: oklch(var(--ink) / 60%);
+		font-family: var(--font-body);
+		font-size: 0.875rem;
+		font-style: normal;
+		color: var(--text-secondary);
 	}
 	.ob-pill-note {
 		font-family: var(--font-body);
-		font-size: 0.6rem;
+		font-size: 0.75rem;
 		font-style: normal;
-		color: oklch(var(--ink) / 25%);
+		color: var(--text-secondary);
 	}
 
-	/* ── Input fields (liquid glass) ── */
+	/* Inputs */
 	.ob-field { position: relative; }
 
 	.ob-input {
 		width: 100%;
 		padding: 0.75rem 3rem 0.75rem 1.25rem;
-		border-radius: 2rem;
-		background: var(--glass-bg);
-		backdrop-filter: var(--glass-blur);
-		-webkit-backdrop-filter: var(--glass-blur);
-		border: 1px solid var(--glass-border);
-		border-top-color: var(--glass-border-top);
-		font-family: var(--font-display);
-		font-size: 0.9rem;
-		font-style: italic;
-		color: oklch(var(--ink) / 80%);
+		border-radius: 8px;
+		background: var(--card);
+		backdrop-filter: none;
+		-webkit-backdrop-filter: none;
+		border: 1px solid var(--border);
+		border-top-color: var(--border);
+		font-family: var(--font-body);
+		font-size: 1rem;
+		font-style: normal;
+		color: var(--text-secondary);
 		outline: none;
 		text-align: center;
 		transition: all 0.3s ease;
-		box-shadow: inset 0 1px 0 oklch(var(--ink) / 5%), inset 0 -1px 0 oklch(var(--shade) / 4%);
+		box-shadow: none;
 	}
-	.ob-input::placeholder { color: oklch(var(--ink) / 18%); font-style: italic; }
+	.ob-input::placeholder { color: var(--text-secondary); font-style: normal; }
 	.ob-input:focus {
-		border-color: oklch(var(--ink) / 20%);
-		box-shadow: 0 0 0 3px oklch(0.40 0.06 240 / 8%), inset 0 1px 0 oklch(var(--ink) / 8%);
+		border-color: var(--text-secondary);
+		box-shadow: none;
 	}
 	.ob-input-mono { font-family: var(--font-mono); font-size: 0.8rem; font-style: normal; text-align: left; }
 
@@ -601,46 +617,35 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		width: 2rem;
-		height: 2rem;
+		width: 44px;
+		height: 44px;
 		border-radius: 50%;
 		font-size: 0.9rem;
-		color: oklch(var(--ink) / 40%);
+		color: var(--text-secondary);
 		transition: all 0.3s ease;
 		cursor: pointer;
 	}
-	.ob-go:hover { color: oklch(var(--ink) / 70%); background: oklch(var(--ink) / 6%); }
+	.ob-go:hover { color: var(--text-secondary); background: var(--accent); }
 	.ob-go-textarea { top: auto; bottom: 0.5rem; transform: none; }
 
-	.ob-error { margin-top: 0.5rem; font-size: 0.72rem; color: oklch(0.65 0.15 25 / 60%); font-style: italic; text-align: center; }
-	.ob-skip {
-		margin-top: 0.75rem;
-		width: 100%;
-		font-size: 0.68rem;
-		color: oklch(var(--ink) / 18%);
-		font-style: italic;
-		transition: color 0.2s ease;
-		cursor: pointer;
-		text-align: center;
-	}
-	.ob-skip:hover { color: oklch(var(--ink) / 40%); }
+	.ob-error { margin-top: 0.5rem; font-size: 0.72rem; color: var(--destructive); font-style: normal; text-align: center; }
 
 	.ob-hint {
 		display: block;
 		margin-top: 0.5rem;
-		font-size: 0.68rem;
-		color: oklch(0.65 0.08 240 / 40%);
+		font-size: 0.75rem;
+		color: var(--primary);
 		text-decoration: none;
 		text-align: center;
 		transition: color 0.2s ease;
 	}
-	.ob-hint:hover { color: oklch(0.65 0.08 240 / 70%); }
+	.ob-hint:hover { color: var(--primary); }
 
 	/* ── Spinner ── */
 	.ob-spinner {
 		width: 12px; height: 12px;
-		border: 1.5px solid oklch(var(--ink) / 10%);
-		border-top-color: oklch(var(--ink) / 40%);
+		border: 1.5px solid var(--border);
+		border-top-color: var(--text-secondary);
 		border-radius: 50%;
 		animation: spin 0.7s linear infinite;
 	}
@@ -648,8 +653,8 @@
 	.ob-spinner-label {
 		font-family: var(--font-display);
 		font-size: 0.72rem;
-		font-style: italic;
-		color: oklch(var(--ink) / 30%);
+		font-style: normal;
+		color: var(--text-secondary);
 	}
 
 	/* ── Skin picker ── */
@@ -670,4 +675,28 @@
 	/* ── Depart ── */
 	.ob-depart { animation: depart 0.5s cubic-bezier(0.55, 0, 1, 0.45) forwards; }
 	@keyframes depart { to { opacity: 0; transform: scale(0.98); } }
+
+    .ob { overflow-y: auto; padding: 32px 0; }
+    .ob-content { max-width: 520px; margin-block: auto; }
+    .ob-title { font-size: 2rem; line-height: 1.2; }
+    .ob-text { font-size: 1rem; }
+    .ob-pill { background: var(--card); border-color: var(--border); box-shadow: none; backdrop-filter: none; }
+    .ob-pill:hover { background: var(--popover); border-color: var(--primary); box-shadow: none; color: var(--foreground); }
+    .ob-pill-active { background: var(--accent); border-color: var(--primary); color: var(--foreground); }
+    .ob-pill-label { color: var(--foreground); }
+    .ob-pill-note { color: var(--text-secondary); line-height: 1.5; }
+    .ob-label { display: block; margin-bottom: 8px; color: var(--text-secondary); font-size: 14px; }
+    .ob-input { min-height: 56px; padding: 12px 60px 12px 16px; background: var(--card); border-color: var(--input); color: var(--foreground); text-align: left; box-shadow: none; backdrop-filter: none; }
+    .ob-input:focus { border-color: var(--ring); box-shadow: none; }
+    .ob-input::placeholder { color: var(--text-muted); opacity: 1; }
+    .ob-input-mono, .ob-textarea { font-size: 1rem; }
+    .ob-textarea { padding-bottom: 60px; }
+    .ob-go { top: auto; bottom: 6px; right: 6px; transform: none; border-radius: 8px; background: var(--primary); color: var(--primary-foreground); }
+    .ob-go:hover { background: var(--primary); color: var(--primary-foreground); filter: brightness(1.06); }
+    .ob-error { color: var(--destructive); font-size: 14px; }
+    .ob-hint, .ob-hint:hover { color: var(--primary); font-size: 13px; min-height: 44px; padding-top: 12px; text-decoration: underline; text-underline-offset: 3px; }
+    .ob-spinner-label { font-family: var(--font-body); font-size: 14px; }
+    .ob-spinner { width: 16px; height: 16px; border-color: var(--border); border-top-color: var(--primary); }
+    .ob-cursor { background: var(--primary); }
+    @media (max-width: 480px) { .ob-pills-lang { grid-template-columns: repeat(2, minmax(0, 1fr)); } .ob-pills-soul { grid-template-columns: 1fr; } }
 </style>
