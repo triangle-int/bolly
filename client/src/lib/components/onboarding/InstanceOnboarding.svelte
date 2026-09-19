@@ -1,4 +1,5 @@
 <script lang="ts">
+	import MoonBirth from "./MoonBirth.svelte";
 	import { saveOnboardingProvider } from "./provider.js";
 	import ArrowRight from "@lucide/svelte/icons/arrow-right";
 	import {
@@ -35,6 +36,7 @@
 		| "picking-language"
 		| "naming-companion"
 		| "picking-skin"
+		| "being-born"
 		| "picking-soul"
 		| "picking-provider"
 		| "waiting-first"
@@ -148,6 +150,7 @@
 	}
 
 	async function pickSkin(skinId: string) {
+		if (stage !== "picking-skin") return;
 		skinStore.setSkin(skinId);
 		stage = "intro";
 		await pause(200);
@@ -155,10 +158,14 @@
 		await typewrite(`${skin?.label ?? skinId}. let me show you.`);
 		await pause(400);
 
-		// Now trigger the onboarding animation with the chosen skin
 		play("intro_reveal");
+		stage = "being-born";
+	}
+
+	async function finishBirth() {
+		if (stage !== "being-born") return;
+		stage = "intro";
 		scene.enterOnboarding(slug);
-		await pause(3000);
 
 		let hasSoul = false;
 		try {
@@ -278,7 +285,10 @@
 	$effect(() => { runSequence(); });
 </script>
 
-<div class="ob" class:ob-depart={stage === "departing"} class:ob-hidden={stage === "reveal" && !revealed}>
+{#if stage === "being-born"}
+	<MoonBirth name={companionNameInput.trim() || "Nolune"} oncomplete={finishBirth} />
+{/if}
+<div class="ob" inert={stage === "being-born"} class:ob-birthing={stage === "being-born"} class:ob-depart={stage === "departing"} class:ob-hidden={stage === "reveal" && !revealed}>
 	<div class="ob-content">
 		<!-- Typewriter lines -->
 		<div class="ob-lines" class:ob-lines-hidden={stage === "reveal"}>
@@ -420,6 +430,7 @@
 </div>
 
 <style>
+	.ob-birthing{visibility:hidden;}
 	.ob {
 		position: relative;
 		display: flex;

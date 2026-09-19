@@ -103,3 +103,5 @@ The same tokens apply to settings, onboarding, authentication, agent management,
 - Navigation has `aria-current`, horizontal scrolling on phones, and a lavender active indicator.
 - The working moon is centered within its scene element and capped at 200px on phones so it does not clip or compete with the composer.
 - Conversation history failures remain visible with Retry and Settings actions. Provider setup is required for live chat; the design-system example stays explicitly local and simulated.
+
+Onboarding uses `MoonBirth.svelte` after skin selection: the crescent gently grows into place, opens its eyes, blinks, and greets the user. It completes automatically, has a Continue control, and shows a still moon with a shorter hold for reduced motion. Replay the same component in `/design-system`.
