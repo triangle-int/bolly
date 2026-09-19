@@ -55,6 +55,8 @@ export interface ServerMeta {
 	commit: string;
 	port: number;
 	workspace_dir: string;
+	/** Stable slug of the one companion this server owns. */
+	companion_slug: string;
 	instances_count: number;
 	skills_count: number;
 	llm: LlmSummary;

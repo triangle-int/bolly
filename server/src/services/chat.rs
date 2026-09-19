@@ -1083,46 +1083,34 @@ pub fn notify_restart(
     workspace_dir: &Path,
     events: &broadcast::Sender<ServerEvent>,
 ) -> Vec<(String, String)> {
-    let instances_dir = workspace_dir.join("instances");
-    let entries = match fs::read_dir(&instances_dir) {
-        Ok(e) => e,
-        Err(_) => return vec![],
-    };
+    // One companion per server: obsolete sibling directories are never resumed.
+    let instance_dir = crate::services::companion::companion_dir(workspace_dir);
+    let slug = crate::domain::companion::CANONICAL_SLUG.to_owned();
+    if !instance_dir.join("soul.md").exists()
+        || !was_agent_interrupted(workspace_dir, &slug, "default")
+    {
+        return Vec::new();
+    }
 
     let mut notified = Vec::new();
 
-    for entry in entries.filter_map(Result::ok) {
-        let instance_dir = entry.path();
-        if !instance_dir.is_dir() || !instance_dir.join("soul.md").exists() {
-            continue;
-        }
-        let slug = entry.file_name().to_string_lossy().to_string();
+    // Clear the stale marker — the new agent loop will set its own
+    clear_agent_running(workspace_dir, &slug, "default");
 
-        // Only resume if the agent was actually running when the server stopped
-        if !was_agent_interrupted(workspace_dir, &slug, "default") {
-            continue;
-        }
+    let now = crate::routes::instances::format_instance_now(&instance_dir);
+    let content = format!(
+        "[restart] server restarted at {now}. \
+         you were interrupted — review your recent tool activity above and continue where you left off."
+    );
 
-        // Clear the stale marker — the new agent loop will set its own
-        clear_agent_running(workspace_dir, &slug, "default");
-
-        let now = crate::routes::instances::format_instance_now(&instance_dir);
-        let content = format!(
-            "[restart] server restarted at {now}. \
-             you were interrupted — review your recent tool activity above and continue where you left off."
-        );
-
-        if let Ok(msg) = save_user_message(workspace_dir, &slug, "default", &content) {
-            let _ = events.send(ServerEvent::ChatMessageCreated {
-                instance_slug: slug.clone(),
-                chat_id: "default".to_string(),
-                message: msg,
-            });
-            notified.push((slug.clone(), "default".to_string()));
-            log::info!(
-                "[restart] agent was interrupted for {slug}/default, injecting restart message"
-            );
-        }
+    if let Ok(msg) = save_user_message(workspace_dir, &slug, "default", &content) {
+        let _ = events.send(ServerEvent::ChatMessageCreated {
+            instance_slug: slug.clone(),
+            chat_id: "default".to_string(),
+            message: msg,
+        });
+        notified.push((slug.clone(), "default".to_string()));
+        log::info!("[restart] agent was interrupted for {slug}/default, injecting restart message");
     }
 
     notified
@@ -2010,5 +1998,43 @@ mod self_hosted_prompt_tests {
         assert!(!prompt.contains("managed AI companion platform"));
         assert!(!prompt.contains("unique subdomain"));
         assert!(!prompt.contains("pricing"));
+    }
+}
+
+#[cfg(test)]
+mod companion_boundary_tests {
+    use super::*;
+    use crate::domain::companion::CANONICAL_SLUG;
+
+    fn interrupted_companion(workspace: &Path, slug: &str) {
+        let dir = workspace.join("instances").join(slug);
+        fs::create_dir_all(dir.join("chats/default")).unwrap();
+        fs::write(dir.join("soul.md"), "soul").unwrap();
+        set_agent_running(workspace, slug, "default");
+        assert!(dir.join("chats/default/agent_running").is_file());
+    }
+
+    #[test]
+    fn restart_recovery_resumes_only_the_canonical_companion() {
+        let workspace = tempfile::tempdir().unwrap();
+        interrupted_companion(workspace.path(), CANONICAL_SLUG);
+        interrupted_companion(workspace.path(), "alice");
+        let (events, _rx) = broadcast::channel(16);
+
+        let resumed = notify_restart(workspace.path(), &events);
+
+        assert_eq!(
+            resumed,
+            vec![(CANONICAL_SLUG.to_owned(), "default".to_owned())]
+        );
+        let alice = workspace.path().join("instances/alice/chats/default");
+        assert!(
+            alice.join("agent_running").is_file(),
+            "obsolete markers are never cleared"
+        );
+        assert!(
+            !alice.join("messages.jsonl").exists() && fs::read_dir(&alice).unwrap().count() == 1,
+            "no restart message is written into an obsolete directory"
+        );
     }
 }

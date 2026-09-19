@@ -16,6 +16,9 @@ pub struct ServerMetaResponse {
     pub commit: &'static str,
     pub port: u16,
     pub workspace_dir: String,
+    /// Stable slug of the one companion this server owns.
+    pub companion_slug: &'static str,
+    /// 1 once the canonical companion exists, otherwise 0.
     pub instances_count: usize,
     pub skills_count: usize,
     pub llm: LlmSummary,

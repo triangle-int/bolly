@@ -13,7 +13,7 @@ use crate::{
     app::state::AppState,
     domain::instance::InstanceSummary,
     domain::memory::MemoryEntry,
-    services::{chat, memory, tools, workspace},
+    services::{chat, companion, memory, tools, workspace},
 };
 
 /// Public memory file route (no auth middleware) — uses ?token= query param.
@@ -117,10 +117,22 @@ pub fn router() -> Router<AppState> {
         )
 }
 
-async fn list_instances(State(state): State<AppState>) -> Json<Vec<InstanceSummary>> {
-    let instances =
-        workspace::read_instances(&state.workspace_dir.join("instances")).unwrap_or_default();
-    Json(instances)
+/// The one canonical companion, or an empty list until it has been created.
+/// An unsupported identity marker fails closed instead of listing anything.
+async fn list_instances(
+    State(state): State<AppState>,
+) -> Result<Json<Vec<InstanceSummary>>, axum::response::Response> {
+    match companion::read_identity(&state.workspace_dir) {
+        Ok(Some(_)) => Ok(Json(
+            workspace::companion_summary(&state.workspace_dir)
+                .into_iter()
+                .collect(),
+        )),
+        Ok(None) => Ok(Json(Vec::new())),
+        Err(error) => {
+            Err(crate::app::companion_boundary::CompanionRejection::from(error).into_response())
+        }
+    }
 }
 
 async fn delete_instance(

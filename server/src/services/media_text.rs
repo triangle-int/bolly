@@ -1569,7 +1569,10 @@ mod tests {
 
         let main = include_str!("../main.rs");
         assert!(!main.contains("std::fs::read_dir"));
-        assert!(main.contains("media.instance_slugs()"));
+        assert!(main.contains("services::companion::obsolete_instance_dirs("));
+        let companion = include_str!("companion.rs");
+        assert!(companion.contains("store.instance_slugs()"));
+        assert!(!companion.contains("fs::read_dir"));
 
         let import_route = routes
             .split("async fn import_instance")

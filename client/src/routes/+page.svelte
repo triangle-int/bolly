@@ -6,7 +6,7 @@
 	import { onMount } from "svelte";
 	import { getInstances } from "$lib/stores/instances.svelte.js";
 	import { getSceneStore } from "$lib/stores/scene.svelte.js";
-	import { fetchMeta, fetchChangelog, getUpdateChannel, setUpdateChannel, type ChangelogEntry } from "$lib/api/client.js";
+	import { fetchMeta, fetchChangelog, getUpdateChannel, setUpdateChannel, getCompanionSlug, refreshCompanionSlug, type ChangelogEntry } from "$lib/api/client.js";
 	import { Marked } from "marked";
 
 	const instances = getInstances();
@@ -34,6 +34,7 @@
 			version = meta.version;
 			commit = meta.commit;
 		} catch {}
+		refreshCompanionSlug().catch(() => {});
 		fetchChangelog().then(c => changelog = c).catch(() => {});
 		getUpdateChannel().then(r => channel = r.channel).catch(() => {});
 	});
@@ -57,14 +58,10 @@
 	function create() {
 		const name = newSlug.trim();
 		if (!name) return;
-		const slug = name
-			.toLowerCase()
-			.replace(/[^a-z0-9_-]/g, "-")
-			.replace(/-+/g, "-")
-			.replace(/^-|-$/g, "");
-		if (!slug) return;
+		// One companion per server (#103): the name personalises onboarding,
+		// it never selects a separate identity.
 		localStorage.setItem("nolune:preferredName", name);
-		goto(`/${slug}`);
+		goto(`/${getCompanionSlug()}`);
 	}
 
 	function handleKeydown(e: KeyboardEvent) {

@@ -118,6 +118,25 @@ export function fetchMeta(): Promise<ServerMeta> {
 	return json("/api/meta");
 }
 
+/**
+ * The one companion this server owns (#103). Mirrors the server default and is
+ * refreshed from `/api/meta` so the client never invents a second identity.
+ */
+export const DEFAULT_COMPANION_SLUG = "companion";
+let companionSlug = DEFAULT_COMPANION_SLUG;
+
+export function getCompanionSlug(): string {
+	return companionSlug;
+}
+
+export async function refreshCompanionSlug(): Promise<string> {
+	try {
+		const meta = await fetchMeta();
+		if (meta.companion_slug) companionSlug = meta.companion_slug;
+	} catch {}
+	return companionSlug;
+}
+
 export function fetchInstances(): Promise<InstanceSummary[]> {
 	return json("/api/instances");
 }
