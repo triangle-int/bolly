@@ -1894,6 +1894,7 @@ impl Tool for CallAgentTool {
             &format!("tool:call_agent:{}", agent.name),
             None,
             &self.resources,
+            None,
         )
         .await
         .map_err(|e| ToolExecError(format!("agent '{}' failed: {e}", agent.name)))?;

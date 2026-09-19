@@ -17,6 +17,7 @@ fn api_router(state: &AppState) -> Router<AppState> {
     Router::new()
         .merge(routes::meta::router())
         .merge(routes::companion::router())
+        .merge(routes::activity::router())
         .merge(routes::resources::issuance_router())
         .merge(routes::instances::router())
         .merge(routes::chat::router())

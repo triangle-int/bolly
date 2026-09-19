@@ -14,8 +14,10 @@ use tokio::sync::{RwLock, broadcast};
 use crate::domain::child_agent::ChildAgentConfig;
 use crate::domain::companion::CANONICAL_SLUG;
 use crate::domain::events::ServerEvent;
+use crate::domain::proactive::{Target, Trigger};
 use crate::domain::thought::Thought;
 use crate::services::machine_registry::MachineRegistry;
+use crate::services::proactive::{Admission, ProactiveLoop, outcome_from_trace};
 use crate::services::tools::load_mood_state;
 use crate::services::{chat, companion, llm::LlmBackend, rhythm, thoughts};
 
@@ -26,6 +28,7 @@ pub fn start(
     vector_store: Arc<crate::services::vector::VectorStore>,
     machine_registry: MachineRegistry,
     resources: crate::services::resource_access::ResourceAccess,
+    proactive: ProactiveLoop,
 ) {
     // One companion per server: only the canonical identity has an inner life.
     let slug = CANONICAL_SLUG.to_owned();
@@ -53,12 +56,13 @@ pub fn start(
         let vs = vector_store.clone();
         let mr = machine_registry.clone();
         let resources = resources.clone();
+        let pl = proactive.clone();
         let agent_name = agent.name.clone();
         let agent_hours = agent.interval_hours;
         let agent_clone = agent.clone();
 
         tokio::spawn(async move {
-            run_agent_loop(&ws, &s, &agent_clone, l, ev, vs, mr, resources).await;
+            run_agent_loop(&ws, &s, &agent_clone, l, ev, vs, mr, resources, pl).await;
         });
 
         log::info!(
@@ -77,6 +81,7 @@ async fn run_agent_loop(
     vector_store: Arc<crate::services::vector::VectorStore>,
     machine_registry: MachineRegistry,
     resources: crate::services::resource_access::ResourceAccess,
+    proactive: ProactiveLoop,
 ) {
     let interval_secs = (agent.interval_hours * 3600.0) as u64;
     let instance_dir = workspace_dir.join("instances").join(slug);
@@ -148,6 +153,7 @@ async fn run_agent_loop(
                 agent,
                 &machine_registry,
                 &resources,
+                &proactive,
             )
             .await;
         }
@@ -168,8 +174,29 @@ async fn run_agent_tick(
     agent: &ChildAgentConfig,
     machine_registry: &MachineRegistry,
     resources: &crate::services::resource_access::ResourceAccess,
+    proactive: &ProactiveLoop,
 ) {
-    log::info!("[heartbeat] {slug}: running '{}'", agent.name);
+    // Every wake-up is one run in the proactive loop (#92).
+    let handle = match proactive.begin(
+        Trigger::Heartbeat {
+            agent: agent.name.clone(),
+        },
+        &agent.description,
+        Target::Companion,
+    ) {
+        Admission::Admitted(handle) => handle,
+        Admission::Skipped(run) => {
+            log::info!(
+                "[heartbeat] {slug}/{}: skipped ({:?})",
+                agent.name,
+                run.status
+            );
+            return;
+        }
+    };
+    let run_id = handle.id().to_owned();
+    let cancelled = handle.token();
+    log::info!("[heartbeat] {slug}: running '{}' ({run_id})", agent.name);
 
     // ── Rhythm update (companion only) ──
     if agent.name == "companion" {
@@ -187,7 +214,7 @@ async fn run_agent_tick(
     }
 
     // Run the agent
-    match crate::services::child_agents::run_single_agent(
+    let work = crate::services::child_agents::run_single_agent(
         workspace_dir,
         slug,
         instance_dir,
@@ -199,9 +226,17 @@ async fn run_agent_tick(
         "heartbeat",
         Some(machine_registry),
         resources,
-    )
-    .await
-    {
+        Some((proactive, run_id.as_str())),
+    );
+    let result = tokio::select! {
+        result = work => result,
+        _ = cancelled.cancelled() => {
+            handle.cancel();
+            log::info!("[heartbeat] {slug}/{}: cancelled", agent.name);
+            return;
+        }
+    };
+    match result {
         Ok(r) => {
             // Mark as run
             let marker = workspace_dir
@@ -241,9 +276,11 @@ async fn run_agent_tick(
                 instance_slug: slug.to_string(),
                 thought,
             });
+            handle.complete(outcome_from_trace(&r.trace, r.tokens));
         }
         Err(e) => {
             log::warn!("[heartbeat] {slug}/{}: failed: {e}", agent.name);
+            handle.fail(&e.to_string(), true);
         }
     }
 }

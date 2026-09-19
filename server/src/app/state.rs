@@ -41,6 +41,8 @@ pub struct AppState {
     pub vector_store: Arc<VectorStore>,
     /// Registry of connected Tauri agent machines (for computer use).
     pub machine_registry: MachineRegistry,
+    /// The one proactive companion loop (#92): every self-started run is admitted here.
+    pub proactive: crate::services::proactive::ProactiveLoop,
     /// Paired browsers and pending pairing codes (#112). In memory until
     /// `attach_storage` is called by the server entrypoint.
     pub browser_sessions: Arc<BrowserSessionStore>,
@@ -80,6 +82,10 @@ impl AppState {
             http_client,
             vector_store: Arc::new(vector_store),
             machine_registry: MachineRegistry::new(),
+            proactive: crate::services::proactive::ProactiveLoop::new(
+                &config::workspace_root(),
+                crate::domain::companion::CANONICAL_SLUG,
+            ),
             browser_sessions: Arc::new(BrowserSessionStore::new()),
         }
     }

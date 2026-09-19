@@ -119,6 +119,20 @@ async fn main() {
     // Start background scheduler for scheduled messages
     services::scheduler::start(state.clone());
 
+    // One proactive loop (#92): finish what a previous process left running,
+    // then trim old receipts.
+    {
+        let now = chrono::Utc::now().timestamp();
+        let recovered = state.proactive.recover_on_restart(now);
+        if recovered > 0 {
+            log::warn!("[proactive] marked {recovered} interrupted run(s) failed and retryable");
+        }
+        let removed = state.proactive.enforce_retention(now);
+        if removed > 0 {
+            info!("[proactive] removed {removed} old activity record(s)");
+        }
+    }
+
     // Start heartbeat — companion's autonomous inner life
     {
         services::heartbeat::start(
@@ -128,6 +142,7 @@ async fn main() {
             state.vector_store.clone(),
             state.machine_registry.clone(),
             state.resources.clone(),
+            state.proactive.clone(),
         );
 
         // Backfill missing or invalid local indexes from memory files (background, non-blocking)
