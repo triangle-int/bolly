@@ -30,7 +30,7 @@
 			<h2>2. The Service</h2>
 			<p>
 				Nolune provides AI companion instances that run on dedicated servers. Each companion has persistent memory,
-				tool access, and optional integrations (Google, web browsing, etc.). The companion uses third-party LLM
+				tool access and optional installable skills. The companion uses third-party LLM
 				providers to generate responses.
 			</p>
 
@@ -50,13 +50,12 @@
 				See our <a href="/privacy">Privacy Policy</a> for details.
 			</p>
 
-			<h2>6. Google integrations</h2>
+			<h2>6. Optional Google Workspace skill</h2>
 			<p>
-				If you connect your Google account, you authorize your companion to access Gmail, Google Calendar, and
-				Google Drive on your behalf. Your companion can send emails, read your inbox, create calendar events, and
-				access drive files as directed by you or its autonomous behavior (heartbeat). You can revoke access at any
-				time from the dashboard or from your
-				<a href="https://myaccount.google.com/permissions" target="_blank">Google account settings</a>.
+				Nolune does not include a Google account connection or token broker. If you install the optional official
+				<code>gog</code> skill, you configure and authorize the external gog CLI yourself. gog owns those credentials
+				locally through its configured keyring or credential backend; Nolune does not copy or store them. Review every side effect and revoke access with
+				gog or from your <a href="https://myaccount.google.com/permissions" target="_blank">Google account settings</a>.
 			</p>
 
 			<h2>7. Acceptable use</h2>

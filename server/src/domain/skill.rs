@@ -51,6 +51,39 @@ pub struct SkillSource {
     pub repo: String,
     /// Git ref that was installed (branch, tag, or commit SHA).
     pub version: String,
+    /// Subdirectory within the repository, when the skill did not come from its root.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub path: Option<String>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::SkillSource;
+
+    #[test]
+    fn skill_source_path_is_optional_and_round_trips_when_present() {
+        let legacy: SkillSource =
+            serde_json::from_str(r#"{"repo":"owner/repo","version":"v1"}"#).unwrap();
+        assert_eq!(legacy.path, None);
+        assert_eq!(
+            serde_json::to_value(&legacy).unwrap(),
+            serde_json::json!({"repo": "owner/repo", "version": "v1"})
+        );
+
+        let source = SkillSource {
+            repo: "openclaw/gogcli".into(),
+            version: "v0.15.0".into(),
+            path: Some(".agents/skills/gog".into()),
+        };
+        assert_eq!(
+            serde_json::to_value(&source).unwrap(),
+            serde_json::json!({
+                "repo": "openclaw/gogcli",
+                "version": "v0.15.0",
+                "path": ".agents/skills/gog"
+            })
+        );
+    }
 }
 
 /// YAML frontmatter parsed from a SKILL.md file (Agent Skills spec).

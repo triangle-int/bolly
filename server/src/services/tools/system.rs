@@ -876,22 +876,15 @@ pub struct GetSettingsTool {
     workspace_dir: PathBuf,
     instance_slug: String,
     instance_dir: PathBuf,
-    google: Option<crate::services::google::GoogleClient>,
 }
 
 impl GetSettingsTool {
-    pub fn new(
-        config_path: &Path,
-        workspace_dir: &Path,
-        instance_slug: &str,
-        google: Option<crate::services::google::GoogleClient>,
-    ) -> Self {
+    pub fn new(config_path: &Path, workspace_dir: &Path, instance_slug: &str) -> Self {
         Self {
             config_path: config_path.to_path_buf(),
             workspace_dir: workspace_dir.to_path_buf(),
             instance_slug: instance_slug.to_string(),
             instance_dir: workspace_dir.join("instances").join(instance_slug),
-            google,
         }
     }
 }
@@ -908,7 +901,7 @@ impl Tool for GetSettingsTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "get_settings".into(),
-            description: "Get all current settings and status: companion name, timezone, LLM model, connected accounts (Google, email, GitHub), MCP servers, mood.".into(),
+            description: "Get all current settings and status: companion name, timezone, LLM model, connected email and GitHub accounts, MCP servers, mood.".into(),
             parameters: openai_schema::<GetSettingsArgs>(),
         }
     }
@@ -993,19 +986,6 @@ impl Tool for GetSettingsTool {
                     lines.push(format!("extensions (mcp): {}", names.join(", ")));
                 }
             }
-        }
-
-        // Google accounts
-        let google_accounts = if let Some(ref g) = self.google {
-            g.accounts(&self.instance_slug).await.unwrap_or_default()
-        } else {
-            vec![]
-        };
-        if google_accounts.is_empty() {
-            lines.push("google accounts: none connected".into());
-        } else {
-            let emails: Vec<&str> = google_accounts.iter().map(|a| a.email.as_str()).collect();
-            lines.push(format!("google accounts: {}", emails.join(", ")));
         }
 
         // Email accounts (SMTP/IMAP)

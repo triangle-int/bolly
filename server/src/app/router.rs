@@ -7,9 +7,8 @@ use crate::{app::state::AppState, routes};
 
 use super::auth::auth_middleware;
 
-pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
-    // API routes — protected by auth middleware
-    let api = Router::new()
+fn api_router(state: &AppState) -> Router<AppState> {
+    Router::new()
         .merge(routes::meta::router())
         .merge(routes::instances::router())
         .merge(routes::chat::router())
@@ -20,7 +19,6 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .merge(routes::uploads::router())
         .merge(routes::skills::router())
         .merge(routes::usage::router())
-        .merge(routes::google::router())
         .merge(routes::heartbeat::router())
         .merge(routes::ws::router())
         .merge(routes::update::router())
@@ -31,7 +29,12 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
-        ));
+        ))
+}
+
+pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
+    // API routes — protected by auth middleware
+    let api = api_router(&state);
 
     // Public routes — no auth
     let health = routes::health::router();
@@ -57,5 +60,42 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
         app.fallback_service(serve)
     } else {
         app.fallback_service(super::embedded_static::EmbeddedStaticService)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::{body::Body, http::Request};
+    use tower::ServiceExt;
+
+    #[tokio::test]
+    async fn removed_google_workspace_routes_are_not_in_api_router() {
+        let state = AppState::new(crate::config::Config::default()).await;
+        let account_routes = format!("/api/instances/moon/google/{}", "accounts");
+        let connect_route = format!("/api/instances/moon/google/{}", "connect");
+        let disconnect_route = format!("{account_routes}/user@example.com");
+        for (method, uri) in [
+            ("GET", account_routes),
+            ("GET", connect_route),
+            ("DELETE", disconnect_route),
+        ] {
+            let response = api_router(&state)
+                .with_state(state.clone())
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(&uri)
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(
+                response.status(),
+                axum::http::StatusCode::NOT_FOUND,
+                "{uri}"
+            );
+        }
     }
 }

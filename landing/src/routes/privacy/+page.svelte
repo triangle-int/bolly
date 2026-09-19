@@ -38,9 +38,9 @@
 				Your companion instance runs on a dedicated server with its own persistent storage. Conversations, memories, files, and any content you share with your companion are stored on that instance. We do not access, read, or analyze your companion data except when required to provide technical support you explicitly request, or when required by law.
 			</p>
 
-			<h3>Google account data</h3>
+			<h3>Optional Google Workspace access</h3>
 			<p>
-				If you connect your Google account, we store an OAuth refresh token and access token to enable Gmail, Google Calendar, and Google Drive integrations. These tokens are used solely to perform actions you or your companion initiate (sending emails, reading your calendar, accessing drive files). We do not read, store, or analyze the content of your emails, calendar events, or drive files on our servers — your companion processes this data in real-time on your dedicated instance.
+				Nolune does not provide a central Google OAuth service and does not copy or store Google OAuth credentials. If you install the optional official <code>gog</code> skill, the external gog CLI owns its credentials locally through gog's configured keyring or credential backend. Google content is requested only when you invoke the skill or CLI and remains subject to your Google account permissions.
 			</p>
 
 			<h3>Usage data</h3>
@@ -52,7 +52,6 @@
 				<li>To process payments via Stripe</li>
 				<li>To enforce rate limits and prevent abuse</li>
 				<li>To send transactional emails (password resets, billing notifications)</li>
-				<li>To facilitate Google integrations you explicitly authorize</li>
 			</ul>
 			<p>We do not sell your data. We do not use your data to train AI models. We do not share your data with third parties except as described below.</p>
 
@@ -63,47 +62,33 @@
 				<li><strong>Stripe</strong> — processes payments</li>
 				<li><strong>Cloudflare</strong> — DNS and TLS for your subdomain</li>
 				<li><strong>OpenRouter / OpenAI / Anthropic</strong> — LLM providers that process your companion's conversations (subject to their respective privacy policies)</li>
-				<li><strong>Google APIs</strong> — Gmail, Calendar, and Drive access when you connect your Google account (subject to <a href="https://policies.google.com/privacy" target="_blank">Google's Privacy Policy</a>)</li>
+				<li><strong>Google APIs</strong> — used directly by the optional, locally configured gog CLI when you choose to install and authorize it (subject to <a href="https://policies.google.com/privacy" target="_blank">Google's Privacy Policy</a>)</li>
 			</ul>
 
-			<h2>5. Google API Services User Data Policy</h2>
-			<p>
-				Nolune's use and transfer of information received from Google APIs adheres to the
-				<a href="https://developers.google.com/terms/api-services-user-data-policy" target="_blank">Google API Services User Data Policy</a>,
-				including the Limited Use requirements. Specifically:
-			</p>
-			<ul>
-				<li>We only request access to the Google API scopes necessary for the features you use</li>
-				<li>We do not use Google user data for advertising</li>
-				<li>We do not transfer Google user data to third parties except as necessary to provide the service or as required by law</li>
-				<li>We do not use Google user data to train AI models</li>
-				<li>Your Google data is processed on your dedicated companion instance and is not stored on shared infrastructure</li>
-			</ul>
-
-			<h2>6. Data retention</h2>
+			<h2>5. Data retention</h2>
 			<p>
 				Your account data is retained as long as your account is active. Your companion data is stored on your dedicated instance volume. If you cancel your subscription, your instance is stopped and data is retained for 30 days before deletion. You can request immediate deletion by contacting us.
 			</p>
-			<p>Google OAuth tokens are deleted immediately when you disconnect your Google account from the dashboard.</p>
+			<p>For optional gog access, use gog's authorization commands and your Google account security settings to inspect or revoke access. Nolune has no copy of those credentials to delete.</p>
 
-			<h2>7. Data security</h2>
+			<h2>6. Data security</h2>
 			<p>
 				All connections are encrypted via TLS. Passwords are hashed. API keys and tokens are stored encrypted at rest. Each companion keeps its data in a separate local workspace. We follow industry-standard security practices, but no system is perfectly secure.
 			</p>
 
-			<h2>8. Your rights</h2>
+			<h2>7. Your rights</h2>
 			<p>You can:</p>
 			<ul>
 				<li>Access, export, or delete your companion data at any time via the companion's tools</li>
-				<li>Disconnect your Google account at any time from the dashboard</li>
+				<li>Revoke optional gog access through gog and your Google account settings</li>
 				<li>Delete your account by contacting us</li>
 				<li>Request a copy of your personal data</li>
 			</ul>
 
-			<h2>9. Changes</h2>
+			<h2>8. Changes</h2>
 			<p>We may update this policy. Material changes will be communicated via email or a notice on the dashboard.</p>
 
-			<h2>10. Contact</h2>
+			<h2>9. Contact</h2>
 			<p>Questions? Email <a href="mailto:support@nolune.dev">support@nolune.dev</a>.</p>
 		</div>
 	</div>

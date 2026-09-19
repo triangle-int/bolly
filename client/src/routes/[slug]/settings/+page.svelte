@@ -4,7 +4,7 @@
 	import AudioLines from "@lucide/svelte/icons/audio-lines";
 	import Github from "@lucide/svelte/icons/github";
 	import Mail from "@lucide/svelte/icons/mail";
-	import Globe from "@lucide/svelte/icons/globe";
+
 	import Puzzle from "@lucide/svelte/icons/puzzle";
 	import Clock from "@lucide/svelte/icons/clock";
 	import Brain from "@lucide/svelte/icons/brain";
@@ -17,9 +17,7 @@
 	import { embeddingStatusText } from "$lib/embedding-status.js";
 	import type { EmbeddingStatus } from "$lib/api/client.js";
 	import {
-		fetchGoogleAccounts,
-		getGoogleConnectUrl,
-		disconnectGoogleAccount,
+
 		fetchMcpServers,
 		addMcpServer,
 		removeMcpServer,
@@ -171,12 +169,6 @@
 		}
 	}
 
-	// Google state
-	let accounts = $state<{ email: string }[]>([]);
-	let loading = $state(true);
-	let disconnecting = $state<string | null>(null);
-	let connecting = $state(false);
-	let error = $state("");
 
 	// MCP state
 	let mcpServers = $state<McpServerInfo[]>([]);
@@ -564,42 +556,6 @@
 		mcpServers.filter((s) => !suggestedMcp.some((c) => c.name === s.name)),
 	);
 
-	async function loadAccounts() {
-		loading = true;
-		error = "";
-		try {
-			accounts = await fetchGoogleAccounts(slug);
-		} catch (e) {
-			console.error("Failed to load Google accounts:", e);
-		} finally {
-			loading = false;
-		}
-	}
-
-	async function connectGoogle() {
-		connecting = true;
-		error = "";
-		try {
-			const url = await getGoogleConnectUrl(slug);
-			window.location.href = url;
-		} catch (e: any) {
-			error = e?.message || "Failed to start Google connection";
-			connecting = false;
-		}
-	}
-
-	async function disconnect(email: string) {
-		disconnecting = email;
-		error = "";
-		try {
-			await disconnectGoogleAccount(slug, email);
-			accounts = accounts.filter((a) => a.email !== email);
-		} catch (e) {
-			error = `Failed to disconnect ${email}`;
-		} finally {
-			disconnecting = null;
-		}
-	}
 
 	async function loadMcpServers() {
 		mcpLoading = true;
@@ -653,7 +609,7 @@
 
 	$effect(() => {
 		slug;
-		loadAccounts();
+
 		loadMcpServers();
 		loadGithub();
 		loadTimezone();
@@ -1165,57 +1121,6 @@
 		{/if}
 	</section>
 
-	<!-- Google Accounts -->
-	<section class="settings-section">
-		<div class="section-header">
-			<div class="section-icon" aria-hidden="true"><Globe size={20} strokeWidth={1.75} /></div>
-			<div>
-				<h3 class="section-label">Google accounts</h3>
-				<p class="section-desc">
-					Connect Google to enable Gmail, Calendar, and Drive tools.
-				</p>
-			</div>
-		</div>
-
-		{#if loading}
-			<div class="ext-loading">
-				<div class="loading-dot"></div>
-			</div>
-		{:else}
-			{#if accounts.length > 0}
-				<div class="accounts-list">
-					{#each accounts as account}
-						<div class="account-row">
-							<span class="account-email">{account.email}</span>
-							<button
-								class="ext-remove-btn"
-								disabled={disconnecting === account.email}
-								onclick={() => disconnect(account.email)}
-							>
-								{disconnecting === account.email
-									? "..."
-									: "disconnect"}
-							</button>
-						</div>
-					{/each}
-				</div>
-			{:else}
-				<p class="no-accounts">No Google accounts connected</p>
-			{/if}
-
-			<button
-				class="ext-form-btn ext-form-add"
-				disabled={connecting}
-				onclick={connectGoogle}
-			>
-				{connecting ? "Connecting..." : "+ connect google account"}
-			</button>
-		{/if}
-
-		{#if error}
-			<p class="error-msg" role="alert">{error}</p>
-		{/if}
-	</section>
 
 	<!-- Email (SMTP/IMAP) -->
 	<section class="settings-section">
@@ -1775,38 +1680,6 @@
 		background: var(--popover);
 	}
 
-	/* --- google / shared --- */
-
-	.accounts-list {
-		display: flex;
-		flex-direction: column;
-		gap: 0.375rem;
-		margin-bottom: 0.75rem;
-	}
-
-	.account-row {
-		display: flex;
-		align-items: center;
-		justify-content: space-between;
-		padding: 0.5rem 0.75rem;
-		border-radius: 0.5rem;
-		background: var(--popover);
-		border: 1px solid var(--border);
-	}
-
-	.account-email {
-		font-family: var(--font-body);
-		font-size: 0.8125rem;
-		color: var(--foreground);
-	}
-
-	.no-accounts {
-		font-family: var(--font-body);
-		font-size: 0.8125rem;
-		color: var(--foreground);
-		font-style: normal;
-		margin-bottom: 0.75rem;
-	}
 
 	.loading-dot {
 		width: 6px;
@@ -2172,8 +2045,8 @@
     .settings-section { padding: 24px; border-color: var(--border); min-width: 0; }
     .settings-section::before { display: none; }
     .section-label { font-size: 1.125rem; font-weight: 500; }
-    .section-desc, .mode-desc, .no-accounts, .data-hint { color: var(--text-secondary); line-height: 1.6; }
-    .section-header > div, .key-info, .account-email { min-width: 0; overflow-wrap: anywhere; }
+    .section-desc, .mode-desc, .data-hint { color: var(--text-secondary); line-height: 1.6; }
+    .section-header > div, .key-info { min-width: 0; overflow-wrap: anywhere; }
     .ext-input, .key-input, .setting-input { min-height: 44px; min-width: 0; font-size: 1rem; background: var(--background); border-color: var(--input); }
     .ext-input:focus, .key-input:focus, .setting-input:focus { border-color: var(--ring); }
     .ext-input::placeholder, .key-input::placeholder { color: var(--text-muted); opacity: 1; }

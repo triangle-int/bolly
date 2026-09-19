@@ -68,11 +68,9 @@ pub fn media_result_url(
 }
 
 // Sub-modules
-pub mod calendar;
 pub mod communication;
 pub mod companion;
 pub mod computer;
-pub mod drive;
 pub mod files;
 pub mod image;
 pub mod import_data;
@@ -83,13 +81,12 @@ pub mod skills;
 pub mod system;
 
 // Re-export public items so external code uses `tools::FooTool` paths
-pub use calendar::{CreateEventTool, ListEventsTool};
 pub use communication::{ReachOutTool, ReadEmailTool, ScheduledTask, SendEmailTool};
 pub use companion::{
     ALLOWED_MOODS, EditSoulTool, SetVoiceTool, get_voice_override, load_mood_state, save_mood_state,
 };
 pub use computer::{ComputerUseTool, ListMachinesTool, RemoteBashTool, RemoteFilesTool};
-pub use drive::{ListDriveFilesTool, ReadDriveFileTool, UploadDriveFileTool};
+
 pub use files::{EditFileTool, ListFilesTool, ReadFileTool, UploadFileTool, WriteFileTool};
 pub use image::ViewImageTool;
 pub use media::WatchVideoTool;
@@ -284,17 +281,7 @@ pub fn tool_summary(name: &str, args: &str) -> String {
             let count = v["count"].as_u64().unwrap_or(5);
             format!("reading {count} emails")
         }
-        "list_events" => {
-            let days = v["days_ahead"].as_u64().unwrap_or(7);
-            format!("listing calendar events ({days} days)")
-        }
-        "create_event" => format!("creating event: {}", v["summary"].as_str().unwrap_or("?")),
-        "list_drive_files" => "listing drive files".into(),
-        "read_drive_file" => format!(
-            "reading drive file {}",
-            v["file_id"].as_str().unwrap_or("?")
-        ),
-        "upload_drive_file" => format!("uploading {}", v["name"].as_str().unwrap_or("?")),
+
         "set_voice" => {
             let vid = v["voice_id"].as_str().unwrap_or("");
             if vid.is_empty() {
@@ -477,6 +464,18 @@ impl ToolDyn for ObservableTool {
     }
 }
 
+fn configured_email_tools(
+    email_accounts: Vec<crate::config::EmailConfig>,
+) -> Vec<Box<dyn ToolDyn>> {
+    if email_accounts.is_empty() {
+        return Vec::new();
+    }
+    vec![
+        Box::new(SendEmailTool::new(email_accounts.clone())),
+        Box::new(ReadEmailTool::new(email_accounts)),
+    ]
+}
+
 /// Build tools gated by category. Core is always loaded; others depend on triage.
 pub fn build_tools(
     workspace_dir: &Path,
@@ -491,7 +490,6 @@ pub fn build_tools(
         >,
     >,
     _plan: &str,
-    google: Option<crate::services::google::GoogleClient>,
     email_accounts: Vec<crate::config::EmailConfig>,
     sent_files: SentFiles,
     mcp_snapshot: Option<crate::services::mcp::McpAppSnapshot>,
@@ -592,7 +590,6 @@ pub fn build_tools(
         config_path,
         workspace_dir,
         instance_slug,
-        google.clone(),
     ))));
     tools.push(wrap(Box::new(UpdateConfigTool::new(
         config_path,
@@ -678,40 +675,9 @@ pub fn build_tools(
         ))));
     }
 
-    // ── Email (unified: Gmail + SMTP/IMAP) ──
-    let has_email = google.is_some() || !email_accounts.is_empty();
-    if has_email {
-        tools.push(wrap(Box::new(SendEmailTool::new(
-            google.clone(),
-            instance_slug,
-            email_accounts.clone(),
-        ))));
-        tools.push(wrap(Box::new(ReadEmailTool::new(
-            google.clone(),
-            instance_slug,
-            email_accounts,
-        ))));
-    }
-
-    // ── Google (calendar, drive) ──
-    if let Some(g) = google {
-        tools.push(wrap(Box::new(ListEventsTool::new(
-            g.clone(),
-            instance_slug,
-        ))));
-        tools.push(wrap(Box::new(CreateEventTool::new(
-            g.clone(),
-            instance_slug,
-        ))));
-        tools.push(wrap(Box::new(ListDriveFilesTool::new(
-            g.clone(),
-            instance_slug,
-        ))));
-        tools.push(wrap(Box::new(ReadDriveFileTool::new(
-            g.clone(),
-            instance_slug,
-        ))));
-        tools.push(wrap(Box::new(UploadDriveFileTool::new(g, instance_slug))));
+    // ── Email (SMTP/IMAP) ──
+    for email_tool in configured_email_tools(email_accounts) {
+        tools.push(wrap(email_tool));
     }
 
     // ── Computer use (multi-machine routing) ──
@@ -779,3 +745,30 @@ pub fn unix_millis() -> u128 {
 
 /// Shared collector for file attachments produced by send_file during a turn.
 pub type SentFiles = std::sync::Arc<std::sync::Mutex<Vec<String>>>;
+
+#[cfg(test)]
+mod email_tool_tests {
+    use super::*;
+
+    #[test]
+    fn configured_smtp_imap_builds_send_and_read_email_tools() {
+        let account = crate::config::EmailConfig {
+            smtp_host: "smtp.example.com".into(),
+            smtp_user: "user@example.com".into(),
+            smtp_from: "user@example.com".into(),
+            imap_host: "imap.example.com".into(),
+            imap_user: "user@example.com".into(),
+            ..Default::default()
+        };
+        let names: Vec<_> = configured_email_tools(vec![account])
+            .into_iter()
+            .map(|tool| tool.name())
+            .collect();
+        assert_eq!(names, ["send_email", "read_email"]);
+    }
+
+    #[test]
+    fn unconfigured_email_builds_no_email_tools() {
+        assert!(configured_email_tools(Vec::new()).is_empty());
+    }
+}

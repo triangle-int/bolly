@@ -3,7 +3,7 @@ pub mod auth;
 pub mod chat;
 pub mod config;
 pub mod drops;
-pub mod google;
+
 pub mod health;
 pub mod heartbeat;
 pub mod instances;
