@@ -173,9 +173,13 @@ async fn run_agent_tick(
 
     // ── Rhythm update (companion only) ──
     if agent.name == "companion" {
-        let rhythm_data = rhythm::recompute_rhythm(workspace_dir, slug);
-        rhythm::save_rhythm(instance_dir, &rhythm_data);
-        let rhythm_insights = rhythm::build_rhythm_insights(workspace_dir, slug, &rhythm_data);
+        // Incremental aggregate only; nothing rescans history here (#95).
+        let rhythm_insights = if rhythm::tracking_enabled(workspace_dir, slug) {
+            let rhythm_data = rhythm::load_rhythm(instance_dir);
+            rhythm::build_rhythm_insights(workspace_dir, slug, &rhythm_data)
+        } else {
+            String::new()
+        };
         if !rhythm_insights.trim().is_empty() {
             let label = format!("[system] rhythm update\n{rhythm_insights}");
             let _ = chat::save_system_message(workspace_dir, slug, "default", &label);

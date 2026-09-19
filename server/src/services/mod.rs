@@ -1,5 +1,4 @@
 pub mod chat;
-pub mod daily_stats;
 pub mod embedding;
 
 pub mod keyword_search;

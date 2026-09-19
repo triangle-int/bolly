@@ -3,7 +3,6 @@ pub mod chat;
 pub mod child_agent;
 pub mod companion;
 pub mod config;
-pub mod daily_stats;
 pub mod drop;
 pub mod events;
 pub mod memory;

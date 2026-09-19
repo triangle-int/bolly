@@ -39,6 +39,8 @@
 		fetchSuggestedMcp,
 		updateLlmConfig,
 		updateProvider,
+		fetchRhythmTracking,
+		updateRhythmTracking,
 		fetchMeta,
 		fetchChangelog,
 		getUpdateChannel,
@@ -53,6 +55,23 @@
 	import { SKINS } from "$lib/stores/skin.svelte.js";
 
 	const slug = $derived(page.params.slug!);
+
+	// --- interaction rhythm (#95): bounded aggregate with opt-out ---
+	let rhythmEnabled = $state(true);
+	let rhythmLoaded = $state(false);
+	let rhythmSaving = $state(false);
+	$effect(() => {
+		fetchRhythmTracking(slug)
+			.then((r) => { rhythmEnabled = r.enabled; rhythmLoaded = true; })
+			.catch(() => { rhythmLoaded = true; });
+	});
+	async function setRhythmTracking(next: boolean) {
+		if (rhythmSaving) return;
+		rhythmSaving = true;
+		try { await updateRhythmTracking(slug, next); rhythmEnabled = next; }
+		catch { getToasts().error("Could not update rhythm tracking."); }
+		finally { rhythmSaving = false; }
+	}
 
 	// --- updates (version, channel, what's new) ---
 	let version = $state("");
@@ -759,6 +778,23 @@
 					</div>
 				</div>
 			{/each}
+		</div>
+
+		<div class="setting-row">
+			<span class="setting-label" id="rhythm-label">Learn my rhythm</span>
+			<div class="setting-input-row">
+				<button
+					class="setting-btn"
+					role="switch"
+					aria-checked={rhythmEnabled}
+					aria-labelledby="rhythm-label"
+					disabled={!rhythmLoaded || rhythmSaving}
+					onclick={() => setRhythmTracking(!rhythmEnabled)}
+				>
+					{rhythmSaving ? "…" : rhythmEnabled ? "On" : "Off"}
+				</button>
+			</div>
+			<p class="setting-hint">Keeps only a bounded summary of when you tend to write and how quickly you reply, so check-ins land at good moments. Turning it off deletes the summary.</p>
 		</div>
 	</section>
 

@@ -1,12 +1,13 @@
-//! Rhythm — tracks user interaction patterns over time.
+//! Rhythm — the one bounded interaction-timing aggregate (#95).
 //!
-//! Analyzes message timestamps to detect when the user is typically active,
-//! how fast they respond, and how their current session compares to baseline.
+//! Folds each user message into fixed-size histograms and running averages so
+//! the companion can time proactive behavior. Consumed only by the heartbeat
+//! prompt insights; documented in docs/behavioral-metrics.md.
 
 use std::fs;
 use std::path::Path;
 
-use chrono::{DateTime, Datelike, TimeZone, Timelike, Utc};
+use chrono::{Datelike, TimeZone, Timelike, Utc};
 use chrono_tz;
 
 use crate::domain::chat::ChatRole;
@@ -14,182 +15,6 @@ use crate::domain::rhythm::InteractionRhythm;
 
 /// Session gap threshold: 2 hours of silence = new session.
 const SESSION_GAP_SECS: i64 = 2 * 3600;
-
-/// Save rhythm state to disk.
-pub fn save_rhythm(instance_dir: &Path, rhythm: &InteractionRhythm) {
-    let path = instance_dir.join("rhythm.json");
-    if let Ok(json) = serde_json::to_string_pretty(rhythm) {
-        let _ = fs::write(path, json);
-    }
-}
-
-/// Recompute rhythm from all message history across all chats.
-pub fn recompute_rhythm(workspace_dir: &Path, slug: &str) -> InteractionRhythm {
-    let chats_dir = workspace_dir.join("instances").join(slug).join("chats");
-
-    let mut all_user_msgs: Vec<(i64, usize)> = Vec::new(); // (unix_secs, content_len)
-
-    if let Ok(entries) = fs::read_dir(&chats_dir) {
-        for entry in entries.filter_map(Result::ok) {
-            if !entry.path().is_dir() {
-                continue;
-            }
-            let rig_path = entry.path().join("rig_history.json");
-            let history_entries = super::chat::load_rig_history(&rig_path).unwrap_or_default();
-            for he in &history_entries {
-                if let crate::services::llm::Message::User { content } = &he.message {
-                    // Use entry timestamp if available
-                    if let Some(ref ts_str) = he.ts {
-                        if let Ok(ts_millis) = ts_str.parse::<i64>() {
-                            let content_len: usize = content
-                                .iter()
-                                .map(|b| {
-                                    if let crate::services::llm::ContentBlock::Text { text } = b {
-                                        text.len()
-                                    } else {
-                                        0
-                                    }
-                                })
-                                .sum();
-                            all_user_msgs.push((ts_millis / 1000, content_len));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if all_user_msgs.is_empty() {
-        return InteractionRhythm::default();
-    }
-
-    // Sort by timestamp
-    all_user_msgs.sort_by_key(|(ts, _)| *ts);
-
-    let mut rhythm = InteractionRhythm {
-        total_messages: all_user_msgs.len() as u32,
-        updated_at: Utc::now().timestamp(),
-        ..Default::default()
-    };
-
-    // Compute hourly/daily histograms and average message length
-    let mut total_len: u64 = 0;
-    for &(ts, len) in &all_user_msgs {
-        total_len += len as u64;
-        if let Some(dt) = timestamp_to_utc(ts) {
-            let hour = dt.hour() as usize;
-            rhythm.hourly_activity[hour] += 1;
-            // Chrono: Mon=0..Sun=6
-            let weekday = dt.weekday().num_days_from_monday() as usize;
-            rhythm.daily_activity[weekday] += 1;
-        }
-    }
-    rhythm.avg_message_length = total_len as f64 / all_user_msgs.len() as f64;
-
-    // Compute average response interval (within sessions)
-    let mut intervals: Vec<i64> = Vec::new();
-    for window in all_user_msgs.windows(2) {
-        let gap = window[1].0 - window[0].0;
-        if gap > 0 && gap < SESSION_GAP_SECS {
-            intervals.push(gap);
-        }
-    }
-    if !intervals.is_empty() {
-        rhythm.avg_response_interval_secs =
-            intervals.iter().sum::<i64>() as f64 / intervals.len() as f64;
-    }
-
-    rhythm
-}
-
-/// Snapshot message data into rhythm.json before clearing messages.
-/// Merges current messages into the accumulated stats so nothing is lost.
-#[allow(dead_code)]
-pub fn snapshot_before_clear(workspace_dir: &Path, slug: &str) {
-    let instance_dir = workspace_dir.join("instances").join(slug);
-    let tz: chrono_tz::Tz = crate::routes::instances::read_timezone(&instance_dir)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(chrono_tz::UTC);
-
-    // Load existing rhythm (accumulated data)
-    let mut rhythm: InteractionRhythm = fs::read_to_string(instance_dir.join("rhythm.json"))
-        .ok()
-        .and_then(|r| serde_json::from_str(&r).ok())
-        .unwrap_or_default();
-
-    // Scan current messages
-    let chats_dir = workspace_dir.join("instances").join(slug).join("chats");
-    let mut msg_count = 0u32;
-    let mut total_chars = 0u64;
-    let mut timestamps: Vec<i64> = Vec::new();
-
-    if let Ok(entries) = fs::read_dir(&chats_dir) {
-        for entry in entries.filter_map(Result::ok) {
-            let rig_path = entry.path().join("rig_history.json");
-            let history_entries = super::chat::load_rig_history(&rig_path).unwrap_or_default();
-            for he in &history_entries {
-                if let crate::services::llm::Message::User { content } = &he.message {
-                    if let Some(ref ts_str) = he.ts {
-                        if let Ok(ts_ms) = ts_str.parse::<i64>() {
-                            let ts = ts_ms / 1000;
-                            let content_len: usize = content
-                                .iter()
-                                .map(|b| {
-                                    if let crate::services::llm::ContentBlock::Text { text } = b {
-                                        text.len()
-                                    } else {
-                                        0
-                                    }
-                                })
-                                .sum();
-                            timestamps.push(ts);
-                            msg_count += 1;
-                            total_chars += content_len as u64;
-
-                            if let Some(dt) = Utc.timestamp_opt(ts, 0).single() {
-                                let local = dt.with_timezone(&tz);
-                                rhythm.hourly_activity[local.hour() as usize] += 1;
-                                rhythm.daily_activity
-                                    [local.weekday().num_days_from_monday() as usize] += 1;
-                                let date = local.format("%Y-%m-%d").to_string();
-                                *rhythm.daily_history.entry(date).or_insert(0) += 1;
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    if msg_count == 0 {
-        return;
-    }
-
-    rhythm.total_messages += msg_count;
-    rhythm.total_chars += total_chars;
-    rhythm.avg_message_length = rhythm.total_chars as f64 / rhythm.total_messages as f64;
-
-    // Update avg response interval
-    timestamps.sort();
-    let mut intervals: Vec<i64> = Vec::new();
-    for w in timestamps.windows(2) {
-        let gap = w[1] - w[0];
-        if gap > 0 && gap < SESSION_GAP_SECS {
-            intervals.push(gap);
-        }
-    }
-    if !intervals.is_empty() {
-        rhythm.avg_response_interval_secs =
-            intervals.iter().sum::<i64>() as f64 / intervals.len() as f64;
-    }
-
-    rhythm.updated_at = Utc::now().timestamp();
-    save_rhythm(&instance_dir, &rhythm);
-    log::info!(
-        "[rhythm] snapshot before clear: {} messages accumulated for {slug}",
-        rhythm.total_messages
-    );
-}
 
 /// Build a human-readable rhythm insight string for injection into prompts.
 /// Compares current session behavior to historical baseline.
@@ -371,6 +196,180 @@ fn find_peak_hours(hourly: &[u32; 24]) -> Vec<usize> {
     peaks.into_iter().map(|(h, _)| h).collect()
 }
 
-fn timestamp_to_utc(secs: i64) -> Option<DateTime<Utc>> {
-    Utc.timestamp_opt(secs, 0).single()
+// ---------------------------------------------------------------------------
+// Incremental recording (#95)
+//
+// `rhythm.json` is the single behavioral aggregate: fixed-size histograms and
+// running totals, folded in one message at a time. No per-message history is
+// kept beyond `last_message_at`, and nothing rescans chat history.
+// ---------------------------------------------------------------------------
+
+const RHYTHM_FILE: &str = "rhythm.json";
+const RHYTHM_VERSION: u32 = 2;
+
+fn rhythm_path(instance_dir: &Path) -> std::path::PathBuf {
+    instance_dir.join(RHYTHM_FILE)
+}
+
+/// Load the persisted rhythm aggregate, or the empty default.
+pub fn load_rhythm(instance_dir: &Path) -> InteractionRhythm {
+    fs::read_to_string(rhythm_path(instance_dir))
+        .ok()
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+fn save_rhythm(instance_dir: &Path, rhythm: &InteractionRhythm) {
+    if let Ok(json) = serde_json::to_string_pretty(rhythm) {
+        let _ = fs::write(rhythm_path(instance_dir), json);
+    }
+}
+
+/// Whether the companion may keep interaction-timing aggregates.
+pub fn tracking_enabled(workspace_dir: &Path, slug: &str) -> bool {
+    crate::config::InstanceConfig::load(workspace_dir, slug).rhythm_tracking
+}
+
+/// Fold one user message into the bounded aggregate. No-op when tracking is off.
+pub fn record_user_message(workspace_dir: &Path, slug: &str, content_len: usize) {
+    record_user_message_at(workspace_dir, slug, content_len, Utc::now().timestamp());
+}
+
+pub fn record_user_message_at(workspace_dir: &Path, slug: &str, content_len: usize, now: i64) {
+    if !tracking_enabled(workspace_dir, slug) {
+        return;
+    }
+    let instance_dir = workspace_dir.join("instances").join(slug);
+    let tz: chrono_tz::Tz = crate::routes::instances::read_timezone(&instance_dir)
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(chrono_tz::UTC);
+    let Some(local) = Utc.timestamp_opt(now, 0).single() else {
+        return;
+    };
+    let local = local.with_timezone(&tz);
+
+    let mut rhythm = load_rhythm(&instance_dir);
+    rhythm.hourly_activity[local.hour() as usize] += 1;
+    rhythm.daily_activity[local.weekday().num_days_from_monday() as usize] += 1;
+    rhythm.total_messages += 1;
+    rhythm.total_chars += content_len as u64;
+    rhythm.avg_message_length = rhythm.total_chars as f64 / rhythm.total_messages as f64;
+
+    if rhythm.last_message_at > 0 {
+        let gap = now - rhythm.last_message_at;
+        if gap > 0 && gap < SESSION_GAP_SECS {
+            rhythm.interval_count += 1;
+            rhythm.interval_total_secs += gap as u64;
+            rhythm.avg_response_interval_secs =
+                rhythm.interval_total_secs as f64 / rhythm.interval_count as f64;
+        }
+    }
+    rhythm.last_message_at = now;
+    rhythm.updated_at = Utc::now().timestamp();
+    rhythm.version = RHYTHM_VERSION;
+    save_rhythm(&instance_dir, &rhythm);
+}
+
+/// Delete the aggregate. Used when the user opts out.
+pub fn clear_rhythm(instance_dir: &Path) -> std::io::Result<()> {
+    match fs::remove_file(rhythm_path(instance_dir)) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod incremental_tests {
+    use super::*;
+    use crate::domain::companion::CANONICAL_SLUG;
+
+    fn workspace() -> (tempfile::TempDir, std::path::PathBuf) {
+        let ws = tempfile::tempdir().unwrap();
+        let dir = ws.path().join("instances").join(CANONICAL_SLUG);
+        fs::create_dir_all(&dir).unwrap();
+        (ws, dir)
+    }
+
+    /// 2026-01-05 (a Monday) 09:00:00 UTC
+    const MONDAY_9_UTC: i64 = 1_767_603_600;
+
+    #[test]
+    fn messages_fold_into_bounded_aggregates_without_per_message_history() {
+        let (ws, dir) = workspace();
+        assert!(tracking_enabled(ws.path(), CANONICAL_SLUG), "on by default");
+
+        record_user_message_at(ws.path(), CANONICAL_SLUG, 10, MONDAY_9_UTC);
+        record_user_message_at(ws.path(), CANONICAL_SLUG, 30, MONDAY_9_UTC + 60);
+        // Three hours later: a new session, so no interval is counted.
+        record_user_message_at(ws.path(), CANONICAL_SLUG, 20, MONDAY_9_UTC + 3 * 3600 + 120);
+
+        let rhythm = load_rhythm(&dir);
+        assert_eq!(rhythm.total_messages, 3);
+        assert_eq!(rhythm.total_chars, 60);
+        assert!((rhythm.avg_message_length - 20.0).abs() < f64::EPSILON);
+        assert_eq!(rhythm.hourly_activity[9], 2);
+        assert_eq!(rhythm.hourly_activity[12], 1);
+        assert_eq!(rhythm.daily_activity[0], 3, "Monday");
+        assert_eq!(rhythm.interval_count, 1);
+        assert!((rhythm.avg_response_interval_secs - 60.0).abs() < f64::EPSILON);
+        assert_eq!(rhythm.last_message_at, MONDAY_9_UTC + 3 * 3600 + 120);
+
+        let raw = fs::read_to_string(dir.join("rhythm.json")).unwrap();
+        let value: serde_json::Value = serde_json::from_str(&raw).unwrap();
+        assert!(
+            value.get("daily_history").is_none(),
+            "per-day history is an engagement aggregate and must not persist"
+        );
+        assert_eq!(value["version"], 2);
+    }
+
+    #[test]
+    fn hour_and_weekday_follow_the_companion_timezone() {
+        let (ws, dir) = workspace();
+        fs::write(
+            dir.join("project_state.json"),
+            r#"{"timezone":"Asia/Tokyo"}"#,
+        )
+        .unwrap();
+        // 09:00 UTC Monday is 18:00 JST Monday.
+        record_user_message_at(ws.path(), CANONICAL_SLUG, 5, MONDAY_9_UTC);
+        let rhythm = load_rhythm(&dir);
+        assert_eq!(rhythm.hourly_activity[18], 1);
+        assert_eq!(rhythm.daily_activity[0], 1);
+    }
+
+    #[test]
+    fn opting_out_stops_recording_and_clears_the_aggregate() {
+        let (ws, dir) = workspace();
+        record_user_message_at(ws.path(), CANONICAL_SLUG, 5, MONDAY_9_UTC);
+        assert!(dir.join("rhythm.json").is_file());
+
+        let mut config = crate::config::InstanceConfig::load(ws.path(), CANONICAL_SLUG);
+        config.rhythm_tracking = false;
+        config.save(ws.path(), CANONICAL_SLUG).unwrap();
+        clear_rhythm(&dir).unwrap();
+        assert!(!tracking_enabled(ws.path(), CANONICAL_SLUG));
+        assert!(!dir.join("rhythm.json").exists());
+
+        record_user_message_at(ws.path(), CANONICAL_SLUG, 5, MONDAY_9_UTC + 10);
+        assert!(
+            !dir.join("rhythm.json").exists(),
+            "recording must not resume while opted out"
+        );
+        assert_eq!(load_rhythm(&dir), InteractionRhythm::default());
+        clear_rhythm(&dir).unwrap();
+    }
+
+    #[test]
+    fn insights_are_built_from_the_incremental_aggregate() {
+        let (ws, dir) = workspace();
+        for i in 0..12 {
+            record_user_message_at(ws.path(), CANONICAL_SLUG, 40, MONDAY_9_UTC + i * 20);
+        }
+        let rhythm = load_rhythm(&dir);
+        let insights = build_rhythm_insights(ws.path(), CANONICAL_SLUG, &rhythm);
+        assert!(insights.contains("most active around 9:00"), "{insights}");
+        assert!(insights.contains("very fast"), "{insights}");
+    }
 }

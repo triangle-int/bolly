@@ -49,7 +49,10 @@ pub fn router() -> Router<AppState> {
             "/api/instances/{instance_slug}/{chat_id}/context-stats",
             get(get_context_stats_chat),
         )
-        .route("/api/instances/{instance_slug}/stats", get(get_stats))
+        .route(
+            "/api/instances/{instance_slug}/rhythm",
+            get(get_rhythm_tracking).put(set_rhythm_tracking),
+        )
         .route("/api/instances/{instance_slug}/memory", get(list_memory))
         .route(
             "/api/instances/{instance_slug}/memory/search",
@@ -453,142 +456,43 @@ async fn get_context_stats_chat(
 // Stats / Analytics
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
-struct StatsResponse {
-    /// Messages per hour of day (0-23)
-    hourly_activity: [u32; 24],
-    /// Messages per day of week (0=Mon, 6=Sun)
-    daily_activity: [u32; 7],
-    /// Total user messages
-    total_messages: u32,
-    /// Average message length (chars)
-    avg_message_length: f64,
-    /// Average seconds between messages in a session
-    avg_response_interval_secs: f64,
-    /// Daily message counts: [(date_str, count)]
-    daily_history: Vec<(String, u32)>,
-    /// Mood distribution: {mood: count}
-    mood_counts: std::collections::HashMap<String, u32>,
-    /// Current streak (consecutive days with messages)
-    streak_days: u32,
-    /// First message timestamp (millis)
-    first_message_at: Option<String>,
+// ---------------------------------------------------------------------------
+// Interaction rhythm (#95): the one retained behavioral aggregate, with opt-out.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize)]
+struct RhythmTrackingResponse {
+    enabled: bool,
 }
 
-async fn get_stats(
+async fn get_rhythm_tracking(
     State(state): State<AppState>,
     Path(instance_slug): Path<String>,
-) -> Json<StatsResponse> {
-    let instance_dir = state.workspace_dir.join("instances").join(&instance_slug);
-
-    // Load all daily stats files — one per day, no double-counting
-    let days = crate::services::daily_stats::load_all(&state.workspace_dir, &instance_slug);
-
-    let mut hourly_activity = [0u32; 24];
-    let mut daily_activity = [0u32; 7];
-    let mut total_messages: u32 = 0;
-    let mut total_chars: u64 = 0;
-
-    for day in &days {
-        total_messages += day.messages;
-        total_chars += day.chars;
-        for (h, count) in day.hours.iter().enumerate() {
-            hourly_activity[h] += count;
-        }
-        daily_activity[day.weekday as usize % 7] += day.messages;
-    }
-
-    let daily_history: Vec<(String, u32)> =
-        days.iter().map(|d| (d.date.clone(), d.messages)).collect();
-
-    let avg_message_length = if total_messages > 0 {
-        total_chars as f64 / total_messages as f64
-    } else {
-        0.0
-    };
-
-    // Load avg_response_interval from rhythm.json (still computed by heartbeat)
-    let rhythm: crate::domain::rhythm::InteractionRhythm =
-        fs::read_to_string(instance_dir.join("rhythm.json"))
-            .ok()
-            .and_then(|r| serde_json::from_str(&r).ok())
-            .unwrap_or_default();
-    let avg_response_interval_secs = rhythm.avg_response_interval_secs;
-
-    // Scan thoughts for mood distribution
-    let mut mood_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-    let thoughts_dir = instance_dir.join("thoughts");
-    if let Ok(entries) = fs::read_dir(&thoughts_dir) {
-        for entry in entries.filter_map(Result::ok) {
-            if entry.path().extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            if let Ok(raw) = fs::read_to_string(entry.path()) {
-                if let Ok(thought) = serde_json::from_str::<serde_json::Value>(&raw) {
-                    if let Some(m) = thought["mood"].as_str() {
-                        if !m.is_empty() {
-                            *mood_counts.entry(m.to_string()).or_insert(0) += 1;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Streak: consecutive days ending today or yesterday (local time)
-    let tz: chrono_tz::Tz = read_timezone(&instance_dir)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(chrono_tz::UTC);
-    let local_now = chrono::Utc::now().with_timezone(&tz);
-    let today = local_now.format("%Y-%m-%d").to_string();
-    let yesterday = (local_now - chrono::Duration::days(1))
-        .format("%Y-%m-%d")
-        .to_string();
-    let dates: std::collections::HashSet<String> =
-        daily_history.iter().map(|(d, _)| d.clone()).collect();
-    let mut streak_days = 0u32;
-    let mut check_date = if dates.contains(&today) {
-        local_now.date_naive()
-    } else if dates.contains(&yesterday) {
-        (local_now - chrono::Duration::days(1)).date_naive()
-    } else {
-        local_now.date_naive()
-    };
-    loop {
-        if dates.contains(&check_date.format("%Y-%m-%d").to_string()) {
-            streak_days += 1;
-            check_date -= chrono::Duration::days(1);
-        } else {
-            break;
-        }
-    }
-
-    // First message: earliest date from daily stats
-    let first_message_at = days.first().and_then(|d| {
-        chrono::NaiveDate::parse_from_str(&d.date, "%Y-%m-%d")
-            .ok()
-            .map(|nd| {
-                let ts = nd.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-                (ts * 1000).to_string()
-            })
-    });
-
-    Json(StatsResponse {
-        hourly_activity,
-        daily_activity,
-        total_messages,
-        avg_message_length,
-        avg_response_interval_secs,
-        daily_history,
-        mood_counts,
-        streak_days,
-        first_message_at,
+) -> Json<RhythmTrackingResponse> {
+    Json(RhythmTrackingResponse {
+        enabled: crate::services::rhythm::tracking_enabled(&state.workspace_dir, &instance_slug),
     })
 }
 
-// ---------------------------------------------------------------------------
-// Memory library
-// ---------------------------------------------------------------------------
+/// Turning tracking off also deletes the aggregate; nothing is retained.
+async fn set_rhythm_tracking(
+    State(state): State<AppState>,
+    Path(instance_slug): Path<String>,
+    Json(req): Json<RhythmTrackingResponse>,
+) -> StatusCode {
+    let mut inst = crate::config::InstanceConfig::load(&state.workspace_dir, &instance_slug);
+    inst.rhythm_tracking = req.enabled;
+    if inst.save(&state.workspace_dir, &instance_slug).is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+    if !req.enabled {
+        let instance_dir = state.workspace_dir.join("instances").join(&instance_slug);
+        if crate::services::rhythm::clear_rhythm(&instance_dir).is_err() {
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+    }
+    StatusCode::OK
+}
 
 async fn list_memory(
     State(state): State<AppState>,

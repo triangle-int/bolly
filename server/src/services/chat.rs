@@ -13,9 +13,8 @@ use crate::{
     domain::chat::{ChatMessage, ChatResponse, ChatRole},
     domain::events::ServerEvent,
     services::{
-        daily_stats,
         llm::{self, LlmBackend},
-        memory, skills, tools,
+        memory, rhythm, skills, tools,
     },
 };
 
@@ -60,8 +59,8 @@ pub fn save_user_message(
     mood.last_interaction = chrono::Utc::now().timestamp();
     tools::save_mood_state(&instance_dir, &mood);
 
-    // Record in daily stats (persistent, survives context clears)
-    daily_stats::record_message(workspace_dir, &instance_slug, user_message.content.len());
+    // Fold into the bounded interaction-rhythm aggregate (#95).
+    rhythm::record_user_message(workspace_dir, &instance_slug, user_message.content.len());
 
     Ok(user_message)
 }
@@ -760,7 +759,6 @@ pub fn clear_context(workspace_dir: &Path, instance_slug: &str, chat_id: &str) {
 
     // Memory catalog removed from system prompt — no rebuild needed.
 
-    // No need to snapshot stats — daily_stats files are written incrementally
     // and never deleted by clear_context.
 
     let compact = compact_path(workspace_dir, &instance_slug, &chat_id);
