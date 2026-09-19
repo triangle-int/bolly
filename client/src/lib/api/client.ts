@@ -13,7 +13,6 @@ import type {
 	Thought,
 	UpdateLlmRequest,
 	MemoryEntry,
-	Stats,
 	UploadMeta,
 	ChildAgent,
 	AgentHistoryEntry,
@@ -473,8 +472,17 @@ export function fetchAgentRun(slug: string, runId: string): Promise<import("./ty
 	return json(`/api/instances/${encodeURIComponent(slug)}/agent-runs/${encodeURIComponent(runId)}`);
 }
 
-export function fetchStats(slug: string): Promise<Stats> {
-	return json(`/api/instances/${encodeURIComponent(slug)}/stats`);
+/** Interaction-rhythm tracking (#95): the one retained behavioral aggregate. */
+export function fetchRhythmTracking(slug: string): Promise<{ enabled: boolean }> {
+	return json(`/api/instances/${encodeURIComponent(slug)}/rhythm`);
+}
+
+export function updateRhythmTracking(slug: string, enabled: boolean): Promise<void> {
+	return json(`/api/instances/${encodeURIComponent(slug)}/rhythm`, {
+		method: "PUT",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ enabled }),
+	});
 }
 
 export function fetchMemory(slug: string): Promise<MemoryEntry[]> {

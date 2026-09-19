@@ -70,6 +70,9 @@ async fn main() {
     if let Err(error) = media_store.cleanup_legacy_screen_capture() {
         log::warn!("legacy passive screen-capture cleanup was incomplete: {error}");
     }
+    if let Err(error) = media_store.cleanup_legacy_stats() {
+        log::warn!("legacy stats aggregate cleanup was incomplete: {error}");
+    }
 
     // One companion per server (#103). Sibling directories from the unpublished
     // multi-instance layout are reported and otherwise ignored.

@@ -192,6 +192,14 @@ pub struct InstanceConfig {
     /// Visual skin for this instance. Default: "moon" (Little Moon).
     #[serde(default = "default_skin")]
     pub skin: String,
+    /// Whether the companion keeps a bounded interaction-rhythm aggregate
+    /// (peak hours, response pace) to time proactive behavior. Default: true.
+    #[serde(default = "default_true")]
+    pub rhythm_tracking: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 fn default_skin() -> String {
@@ -205,6 +213,7 @@ impl Default for InstanceConfig {
             elevenlabs_voice_id: String::new(),
             voice_enabled: false,
             skin: default_skin(),
+            rhythm_tracking: true,
         }
     }
 }

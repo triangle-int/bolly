@@ -210,18 +210,6 @@ export interface HeartbeatUpdate {
 	preview: string;
 }
 
-export interface Stats {
-	hourly_activity: number[];
-	daily_activity: number[];
-	total_messages: number;
-	avg_message_length: number;
-	avg_response_interval_secs: number;
-	daily_history: [string, number][];
-	mood_counts: Record<string, number>;
-	streak_days: number;
-	first_message_at: string | null;
-}
-
 export interface MemoryEntry {
 	path: string;
 	summary: string;

@@ -497,3 +497,71 @@ async fn every_persisted_subsystem_is_owned_by_the_canonical_companion() {
     assert!(entries.contains(&format!("{prefix}{IDENTITY_FILE}")));
     assert!(entries.contains(&format!("{prefix}soul.md")));
 }
+
+#[tokio::test]
+async fn stats_dashboard_route_is_gone_and_rhythm_tracking_has_an_opt_out() {
+    let h = harness().await;
+    companion::ensure_identity(h.workspace.path()).unwrap();
+    let ws = h.workspace.path();
+    let dir = companion::companion_dir(ws);
+
+    let (status, value) = h
+        .json(
+            Method::GET,
+            &format!("/api/instances/{CANONICAL_SLUG}/stats"),
+            None,
+        )
+        .await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(value["error"], "not_found");
+
+    let rhythm_uri = format!("/api/instances/{CANONICAL_SLUG}/rhythm");
+    let (status, value) = h.json(Method::GET, &rhythm_uri, None).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(value, serde_json::json!({ "enabled": true }));
+
+    crate::services::chat::save_user_message(ws, CANONICAL_SLUG, "default", "hello").unwrap();
+    assert!(
+        dir.join("rhythm.json").is_file(),
+        "messages feed the aggregate"
+    );
+    assert!(
+        !dir.join("stats").exists(),
+        "no per-day aggregate store may be written"
+    );
+
+    let (status, _) = h
+        .send(
+            Method::PUT,
+            &rhythm_uri,
+            Some(serde_json::json!({ "enabled": false })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        !dir.join("rhythm.json").exists(),
+        "opting out deletes the aggregate"
+    );
+    let (_, value) = h.json(Method::GET, &rhythm_uri, None).await;
+    assert_eq!(value["enabled"], false);
+
+    crate::services::chat::save_user_message(ws, CANONICAL_SLUG, "default", "still here").unwrap();
+    assert!(
+        !dir.join("rhythm.json").exists(),
+        "no recording while opted out"
+    );
+
+    let (status, _) = h
+        .send(
+            Method::PUT,
+            &rhythm_uri,
+            Some(serde_json::json!({ "enabled": true })),
+        )
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    crate::services::chat::save_user_message(ws, CANONICAL_SLUG, "default", "back").unwrap();
+    assert!(
+        dir.join("rhythm.json").is_file(),
+        "recording resumes after opting back in"
+    );
+}

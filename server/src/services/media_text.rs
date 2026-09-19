@@ -607,6 +607,50 @@ impl MediaStore {
         finish_aggregated(errors)
     }
 
+    /// Remove the retired per-day `stats/` aggregate store from the canonical
+    /// companion. Bounded, idempotent, and never touches obsolete siblings.
+    pub fn cleanup_legacy_stats(&self) -> io::Result<()> {
+        let Some(instances) = open_real_child_dir(&self.root, "instances")? else {
+            return Ok(());
+        };
+        let Some(companion) =
+            open_real_child_dir(&instances, crate::domain::companion::CANONICAL_SLUG)?
+        else {
+            return Ok(());
+        };
+        let Some(stats) = open_real_child_dir(&companion, "stats")? else {
+            return Ok(());
+        };
+        let mut errors = Vec::new();
+        let mut names = Vec::new();
+        for entry in stats.read_dir(".")? {
+            match entry {
+                Ok(entry) => names.push(entry.file_name()),
+                Err(error) => errors.push(format!("stats entry: {error}")),
+            }
+        }
+        for name in names {
+            let label = name.to_string_lossy().into_owned();
+            let is_daily_file = label.ends_with(".json")
+                && stats
+                    .symlink_metadata(&name)
+                    .map(|metadata| metadata.is_file())
+                    .unwrap_or(false);
+            if !is_daily_file {
+                errors.push(format!("stats/{label}: unexpected entry left in place"));
+                continue;
+            }
+            if let Err(error) = stats.remove_file(&name) {
+                errors.push(format!("stats/{label}: {error}"));
+            }
+        }
+        drop(stats);
+        if errors.is_empty() {
+            companion.remove_dir("stats")?;
+        }
+        finish_aggregated(errors)
+    }
+
     pub fn memory_exists(&self, slug: &str, path: &str) -> io::Result<bool> {
         let relative = self.memory_path(slug, path)?;
         reject_symlinks(&self.root, &relative, true)?;
@@ -2792,5 +2836,46 @@ mod tests {
             large_size
         );
         assert!(store.read_upload_inline("one", &text.id).is_err());
+    }
+}
+
+#[cfg(test)]
+mod legacy_stats_cleanup_tests {
+    use super::*;
+    use crate::domain::companion::CANONICAL_SLUG;
+
+    #[test]
+    fn legacy_stats_directory_is_removed_from_the_companion_only_and_idempotently() {
+        let ws = tempfile::tempdir().unwrap();
+        let companion = ws.path().join("instances").join(CANONICAL_SLUG);
+        std::fs::create_dir_all(companion.join("stats")).unwrap();
+        std::fs::write(companion.join("stats/2026-01-01.json"), "{}").unwrap();
+        std::fs::write(companion.join("stats/2026-01-02.json"), "{}").unwrap();
+        std::fs::write(companion.join("rhythm.json"), "{}").unwrap();
+        std::fs::write(companion.join("soul.md"), "soul").unwrap();
+        let obsolete = ws.path().join("instances/alice/stats");
+        std::fs::create_dir_all(&obsolete).unwrap();
+        std::fs::write(obsolete.join("2026-01-01.json"), "{}").unwrap();
+
+        let store = MediaStore::open(ws.path()).unwrap();
+        store.cleanup_legacy_stats().unwrap();
+        assert!(!companion.join("stats").exists());
+        assert!(companion.join("rhythm.json").is_file());
+        assert!(companion.join("soul.md").is_file());
+        assert!(
+            obsolete.join("2026-01-01.json").is_file(),
+            "obsolete sibling directories are never touched"
+        );
+
+        store.cleanup_legacy_stats().unwrap();
+        assert!(!companion.join("stats").exists());
+    }
+
+    #[test]
+    fn legacy_stats_cleanup_without_a_companion_is_a_no_op() {
+        let ws = tempfile::tempdir().unwrap();
+        let store = MediaStore::open(ws.path()).unwrap();
+        store.cleanup_legacy_stats().unwrap();
+        assert!(!ws.path().join("instances").exists());
     }
 }
