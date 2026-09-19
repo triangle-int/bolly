@@ -30,11 +30,14 @@ fn files(root: &Path, extensions: &[&str]) -> Vec<PathBuf> {
 }
 
 fn sources(repo: &Path, dir: &str) -> String {
-    files(&repo.join(dir), &["svelte", "ts", "js", "html", "css", "json"])
-        .into_iter()
-        .map(|path| fs::read_to_string(path).unwrap_or_default())
-        .collect::<Vec<_>>()
-        .join("\n")
+    files(
+        &repo.join(dir),
+        &["svelte", "ts", "js", "html", "css", "json"],
+    )
+    .into_iter()
+    .map(|path| fs::read_to_string(path).unwrap_or_default())
+    .collect::<Vec<_>>()
+    .join("\n")
 }
 
 #[test]
@@ -137,7 +140,8 @@ fn every_retained_static_asset_has_a_live_reference() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let mut violations = Vec::new();
 
-    let landing_src = sources(repo, "landing/src") + &fs::read_to_string(repo.join("README.md")).unwrap();
+    let landing_src =
+        sources(repo, "landing/src") + &fs::read_to_string(repo.join("README.md")).unwrap();
     for asset in files(&repo.join("landing/static/assets"), &[]) {
         let name = asset.file_name().unwrap().to_string_lossy().into_owned();
         if !landing_src.contains(&name) {
@@ -151,24 +155,38 @@ fn every_retained_static_asset_has_a_live_reference() {
         }
     }
 
-    let client_src = sources(repo, "client/src") + &fs::read_to_string(repo.join("README.md")).unwrap();
+    let client_src =
+        sources(repo, "client/src") + &fs::read_to_string(repo.join("README.md")).unwrap();
     for sound in files(&repo.join("client/static/sounds"), &["mp3"]) {
         let stem = sound.file_stem().unwrap().to_string_lossy().into_owned();
-        if !client_src.contains(&format!("\"{stem}\"")) && !client_src.contains(&format!("'{stem}'")) {
+        if !client_src.contains(&format!("\"{stem}\""))
+            && !client_src.contains(&format!("'{stem}'"))
+        {
             violations.push(format!("client/static/sounds/{stem}.mp3 is never played"));
         }
     }
     for skin in files(&repo.join("client/static/skins"), &[]) {
         let name = skin.file_name().unwrap().to_string_lossy().into_owned();
         if !client_src.contains(&name) {
-            violations.push(format!("client/static/skins asset {name} is not referenced"));
+            violations.push(format!(
+                "client/static/skins asset {name} is not referenced"
+            ));
         }
     }
     for extra in files(&repo.join("client/static"), &[]) {
         let relative = extra.strip_prefix(repo.join("client/static")).unwrap();
-        let top = relative.components().next().unwrap().as_os_str().to_string_lossy().into_owned();
+        let top = relative
+            .components()
+            .next()
+            .unwrap()
+            .as_os_str()
+            .to_string_lossy()
+            .into_owned();
         if !["sounds", "skins", "robots.txt"].contains(&top.as_str()) {
-            violations.push(format!("unexpected client static asset: {}", relative.display()));
+            violations.push(format!(
+                "unexpected client static asset: {}",
+                relative.display()
+            ));
         }
     }
 
