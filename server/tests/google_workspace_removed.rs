@@ -69,10 +69,6 @@ fn native_google_workspace_and_token_broker_surfaces_are_absent() {
         violations.join("\n")
     );
 
-    // Generic Gemini/Google AI media analysis remains intentionally supported.
-    let config = fs::read_to_string(repo.join("server/src/config.rs")).unwrap();
-    assert!(config.contains("google_ai"));
-    let settings =
-        fs::read_to_string(repo.join("client/src/routes/[slug]/settings/+page.svelte")).unwrap();
-    assert!(settings.contains("Google AI"));
+    // Gemini/Google AI video analysis was retired in #91; see
+    // tests/video_analysis_removed.rs for that guard.
 }

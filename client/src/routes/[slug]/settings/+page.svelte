@@ -350,7 +350,6 @@
 	const apiKeyDefs = [
 		{ id: "api_key", name: "Anthropic", hint: "sk-ant-...", required: false, configKey: "anthropic" },
 		{ id: "openai", name: "OpenAI", hint: "Chat + semantic memory (independent of chat provider)", required: false, configKey: "openai" },
-		{ id: "google_ai", name: "Google AI", hint: "Video analysis", required: false, configKey: "google_ai" },
 		{ id: "elevenlabs", name: "ElevenLabs", hint: "Text-to-speech voice", required: false, configKey: "elevenlabs" },
 	];
 

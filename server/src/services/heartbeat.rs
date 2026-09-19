@@ -24,7 +24,6 @@ pub fn start(
     llm: Arc<RwLock<Option<LlmBackend>>>,
     events: broadcast::Sender<ServerEvent>,
     vector_store: Arc<crate::services::vector::VectorStore>,
-    google_ai_key: String,
     machine_registry: MachineRegistry,
     resources: crate::services::resource_access::ResourceAccess,
 ) {
@@ -52,7 +51,6 @@ pub fn start(
         let l = llm.clone();
         let ev = events.clone();
         let vs = vector_store.clone();
-        let gai = google_ai_key.clone();
         let mr = machine_registry.clone();
         let resources = resources.clone();
         let agent_name = agent.name.clone();
@@ -60,7 +58,7 @@ pub fn start(
         let agent_clone = agent.clone();
 
         tokio::spawn(async move {
-            run_agent_loop(&ws, &s, &agent_clone, l, ev, vs, &gai, mr, resources).await;
+            run_agent_loop(&ws, &s, &agent_clone, l, ev, vs, mr, resources).await;
         });
 
         log::info!(
@@ -77,7 +75,6 @@ async fn run_agent_loop(
     llm: Arc<RwLock<Option<LlmBackend>>>,
     events: broadcast::Sender<ServerEvent>,
     vector_store: Arc<crate::services::vector::VectorStore>,
-    google_ai_key: &str,
     machine_registry: MachineRegistry,
     resources: crate::services::resource_access::ResourceAccess,
 ) {
@@ -148,7 +145,6 @@ async fn run_agent_loop(
                 backend,
                 &events,
                 &vector_store,
-                google_ai_key,
                 agent,
                 &machine_registry,
                 &resources,
@@ -169,7 +165,6 @@ async fn run_agent_tick(
     llm: &LlmBackend,
     events: &broadcast::Sender<ServerEvent>,
     vector_store: &Arc<crate::services::vector::VectorStore>,
-    google_ai_key: &str,
     agent: &ChildAgentConfig,
     machine_registry: &MachineRegistry,
     resources: &crate::services::resource_access::ResourceAccess,
@@ -199,7 +194,6 @@ async fn run_agent_tick(
         llm,
         events,
         vector_store,
-        google_ai_key,
         agent,
         None,
         "heartbeat",

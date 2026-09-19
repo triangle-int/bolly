@@ -77,7 +77,6 @@ pub mod companion;
 pub mod computer;
 pub mod files;
 pub mod image;
-pub mod media;
 pub mod memory_tools;
 pub mod project;
 pub mod skills;
@@ -92,7 +91,6 @@ pub use computer::{ComputerUseTool, ListMachinesTool, RemoteBashTool, RemoteFile
 
 pub use files::{EditFileTool, ListFilesTool, ReadFileTool, UploadFileTool, WriteFileTool};
 pub use image::ViewImageTool;
-pub use media::WatchVideoTool;
 pub use memory_tools::{
     MemoryConnectTool, MemoryForgetTool, MemoryListTool, MemoryReadTool, MemorySearchTool,
     MemoryWriteTool,
@@ -681,7 +679,6 @@ pub fn build_tools(
     mcp_tools: Vec<Box<dyn ToolDyn>>,
     github_token: Option<String>,
     vector_store: Arc<crate::services::vector::VectorStore>,
-    google_ai_key: &str,
     machine_registry: crate::services::machine_registry::MachineRegistry,
     public_url: &str,
     resources: &crate::services::resource_access::ResourceAccess,
@@ -810,15 +807,6 @@ pub fn build_tools(
     // ── Web ──
     // web_search and web_fetch are native Anthropic server tools (added in llm.rs)
     tools.push(wrap(Box::new(ViewImageTool)));
-    {
-        tools.push(wrap(Box::new(WatchVideoTool::new(
-            google_ai_key,
-            workspace_dir,
-            instance_slug,
-            public_url,
-            resources,
-        ))));
-    }
     // ── Agents ──
     tools.push(wrap(Box::new(CallAgentTool::new(
         workspace_dir,
@@ -826,7 +814,6 @@ pub fn build_tools(
         llm.clone(),
         events.clone(),
         vector_store.clone(),
-        google_ai_key,
         resources,
     ))));
 
