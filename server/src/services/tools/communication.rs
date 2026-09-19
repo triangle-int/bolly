@@ -13,7 +13,6 @@ use tokio::sync::broadcast;
 use super::companion::{load_mood_state, save_mood_state};
 use super::{ToolExecError, openai_schema};
 use crate::domain::events::ServerEvent;
-use crate::services::google::GoogleClient;
 
 // ---------------------------------------------------------------------------
 // schedule_agent
@@ -264,26 +263,16 @@ impl Tool for ReachOutTool {
 }
 
 // ---------------------------------------------------------------------------
-// send_email (unified: Gmail API + SMTP)
+// send_email (SMTP)
 // ---------------------------------------------------------------------------
 
 pub struct SendEmailTool {
-    google: Option<GoogleClient>,
-    instance_slug: String,
     imap_accounts: Vec<EmailConfig>,
 }
 
 impl SendEmailTool {
-    pub fn new(
-        google: Option<GoogleClient>,
-        instance_slug: &str,
-        imap_accounts: Vec<EmailConfig>,
-    ) -> Self {
-        Self {
-            google,
-            instance_slug: instance_slug.to_string(),
-            imap_accounts,
-        }
+    pub fn new(imap_accounts: Vec<EmailConfig>) -> Self {
+        Self { imap_accounts }
     }
 }
 
@@ -330,66 +319,15 @@ impl Tool for SendEmailTool {
             }
         }
 
-        // Try Gmail
-        if let Some(ref google) = self.google {
-            if let Ok((token, email)) = google
-                .access_token(&self.instance_slug, args.account.as_deref())
-                .await
-            {
-                return send_via_gmail(&token, &email, &args).await;
-            }
-        }
-
         // No account matched — fall back to first SMTP account
         if let Some(cfg) = self.imap_accounts.first() {
             return send_via_smtp(cfg, &args).await;
         }
 
         Err(ToolExecError(
-            "no email account available — connect Google or configure SMTP in settings".into(),
+            "no email account available — configure SMTP in settings".into(),
         ))
     }
-}
-
-async fn send_via_gmail(
-    token: &str,
-    email: &str,
-    args: &SendEmailArgs,
-) -> Result<String, ToolExecError> {
-    let mut rfc2822 = format!(
-        "From: {email}\r\nTo: {}\r\nSubject: {}\r\n",
-        args.to, args.subject
-    );
-    if let Some(cc) = &args.cc {
-        rfc2822.push_str(&format!("Cc: {cc}\r\n"));
-    }
-    if let Some(bcc) = &args.bcc {
-        rfc2822.push_str(&format!("Bcc: {bcc}\r\n"));
-    }
-    rfc2822.push_str("Content-Type: text/plain; charset=utf-8\r\n\r\n");
-    rfc2822.push_str(&args.body);
-
-    use base64::Engine;
-    let encoded = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(rfc2822.as_bytes());
-
-    let client = reqwest::Client::new();
-    let res = client
-        .post("https://gmail.googleapis.com/gmail/v1/users/me/messages/send")
-        .header("Authorization", format!("Bearer {token}"))
-        .json(&serde_json::json!({ "raw": encoded }))
-        .send()
-        .await
-        .map_err(|e| ToolExecError(format!("Gmail API request failed: {e}")))?;
-
-    if !res.status().is_success() {
-        let body = res.text().await.unwrap_or_default();
-        return Err(ToolExecError(format!("Gmail send failed: {body}")));
-    }
-
-    Ok(format!(
-        "email sent to {} (from {email}, via gmail)",
-        args.to
-    ))
 }
 
 async fn send_via_smtp(cfg: &EmailConfig, args: &SendEmailArgs) -> Result<String, ToolExecError> {
@@ -461,26 +399,16 @@ async fn send_via_smtp(cfg: &EmailConfig, args: &SendEmailArgs) -> Result<String
 }
 
 // ---------------------------------------------------------------------------
-// read_email (unified: Gmail API + IMAP)
+// read_email (IMAP)
 // ---------------------------------------------------------------------------
 
 pub struct ReadEmailTool {
-    google: Option<GoogleClient>,
-    instance_slug: String,
     imap_accounts: Vec<EmailConfig>,
 }
 
 impl ReadEmailTool {
-    pub fn new(
-        google: Option<GoogleClient>,
-        instance_slug: &str,
-        imap_accounts: Vec<EmailConfig>,
-    ) -> Self {
-        Self {
-            google,
-            instance_slug: instance_slug.to_string(),
-            imap_accounts,
-        }
+    pub fn new(imap_accounts: Vec<EmailConfig>) -> Self {
+        Self { imap_accounts }
     }
 }
 
@@ -489,7 +417,7 @@ pub struct ReadEmailArgs {
     /// Number of recent emails to fetch (default 5, max 20).
     #[serde(default = "default_email_count")]
     pub count: u32,
-    /// Search query. For Gmail: "from:alice@example.com", "is:unread". For IMAP: "UNSEEN", "FROM \"alice\"". Optional.
+    /// IMAP search query, for example "UNSEEN" or "FROM \"alice\"". Optional.
     pub query: Option<String>,
     /// Mailbox/label (e.g. "INBOX", "SENT", "STARRED"). Optional, defaults to INBOX.
     pub label: Option<String>,
@@ -528,109 +456,14 @@ impl Tool for ReadEmailTool {
             }
         }
 
-        // Try Gmail
-        if let Some(ref google) = self.google {
-            if let Ok((token, _email)) = google
-                .access_token(&self.instance_slug, args.account.as_deref())
-                .await
-            {
-                return read_via_gmail(&token, &args).await;
-            }
-        }
-
         // No account matched — fall back to first IMAP account
         if let Some(cfg) = self.imap_accounts.first() {
             return read_via_imap(cfg, &args).await;
         }
 
         Err(ToolExecError(
-            "no email account available — connect Google or configure IMAP in settings".into(),
+            "no email account available — configure IMAP in settings".into(),
         ))
-    }
-}
-
-async fn read_via_gmail(token: &str, args: &ReadEmailArgs) -> Result<String, ToolExecError> {
-    let count = args.count.min(20).max(1);
-    let client = reqwest::Client::new();
-
-    let mut params = vec![("maxResults".to_string(), count.to_string())];
-    if let Some(q) = &args.query {
-        params.push(("q".to_string(), q.clone()));
-    }
-    if let Some(label) = &args.label {
-        params.push(("labelIds".to_string(), label.clone()));
-    } else {
-        params.push(("labelIds".to_string(), "INBOX".to_string()));
-    }
-
-    let list_res = client
-        .get("https://gmail.googleapis.com/gmail/v1/users/me/messages")
-        .header("Authorization", format!("Bearer {token}"))
-        .query(&params)
-        .send()
-        .await
-        .map_err(|e| ToolExecError(format!("Gmail list failed: {e}")))?;
-
-    if !list_res.status().is_success() {
-        let body = list_res.text().await.unwrap_or_default();
-        return Err(ToolExecError(format!("Gmail list failed: {body}")));
-    }
-
-    let list_data: serde_json::Value = list_res
-        .json()
-        .await
-        .map_err(|e| ToolExecError(format!("Gmail parse failed: {e}")))?;
-
-    let messages = match list_data["messages"].as_array() {
-        Some(m) => m,
-        None => return Ok("no emails found".into()),
-    };
-
-    let mut result = String::new();
-    for msg_ref in messages {
-        let msg_id = match msg_ref["id"].as_str() {
-            Some(id) => id,
-            None => continue,
-        };
-
-        let msg_res = client
-            .get(&format!(
-                "https://gmail.googleapis.com/gmail/v1/users/me/messages/{msg_id}?format=metadata&metadataHeaders=From&metadataHeaders=Subject&metadataHeaders=Date"
-            ))
-            .header("Authorization", format!("Bearer {token}"))
-            .send()
-            .await
-            .map_err(|e| ToolExecError(format!("Gmail get message failed: {e}")))?;
-
-        if !msg_res.status().is_success() {
-            continue;
-        }
-
-        let msg_data: serde_json::Value = msg_res.json().await.unwrap_or_default();
-
-        let headers = msg_data["payload"]["headers"].as_array();
-        let get_header = |name: &str| -> String {
-            headers
-                .and_then(|h| h.iter().find(|hdr| hdr["name"].as_str() == Some(name)))
-                .and_then(|hdr| hdr["value"].as_str())
-                .unwrap_or("")
-                .to_string()
-        };
-
-        let from = get_header("From");
-        let subject = get_header("Subject");
-        let date = get_header("Date");
-        let snippet = msg_data["snippet"].as_str().unwrap_or("");
-
-        result.push_str(&format!(
-            "--- email ---\nfrom: {from}\ndate: {date}\nsubject: {subject}\nsnippet: {snippet}\n\n"
-        ));
-    }
-
-    if result.is_empty() {
-        Ok("no emails found".into())
-    } else {
-        Ok(result)
     }
 }
 
