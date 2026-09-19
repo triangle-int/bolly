@@ -11,6 +11,7 @@ pub mod heartbeat;
 pub mod llm;
 pub mod machine_registry;
 pub mod mcp;
+pub mod media_text;
 pub mod memory;
 pub mod memory_import;
 pub mod rhythm;

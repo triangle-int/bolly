@@ -94,12 +94,12 @@ static FROZEN_CATALOG: Mutex<Option<std::collections::HashMap<String, String>>> 
 /// First call loads from disk and caches; subsequent calls return the cached version.
 /// This prevents system prompt changes (and cache invalidation) when memories are written.
 #[allow(dead_code)]
-pub fn get_frozen_catalog(workspace_dir: &Path, instance_slug: &str) -> String {
+pub fn get_frozen_catalog(media: &super::media_text::MediaStore, instance_slug: &str) -> String {
     let key = instance_slug.to_string();
     let mut guard = FROZEN_CATALOG.lock().unwrap();
     let map = guard.get_or_insert_with(std::collections::HashMap::new);
     map.entry(key)
-        .or_insert_with(|| load_catalog_snapshot(workspace_dir, instance_slug))
+        .or_insert_with(|| load_catalog_snapshot(media, instance_slug))
         .clone()
 }
 
@@ -112,232 +112,74 @@ pub fn invalidate_frozen_catalog(instance_slug: &str) {
     }
 }
 
-fn memory_dir(workspace_dir: &Path, instance_slug: &str) -> std::path::PathBuf {
-    workspace_dir
-        .join("instances")
-        .join(instance_slug)
-        .join("memory")
-}
-
-/// Scan the memory library and return a catalog of all .md files.
-pub fn scan_library(workspace_dir: &Path, instance_slug: &str) -> Vec<MemoryEntry> {
-    let dir = memory_dir(workspace_dir, instance_slug);
-    if !dir.exists() {
-        return Vec::new();
-    }
-    let mut entries = Vec::new();
-    scan_dir_recursive(&dir, &dir, &mut entries);
-    entries.sort_by(|a, b| a.path.cmp(&b.path));
-    entries
-}
-
-/// Strict scan used for backfill, where an omitted file would make a complete
-/// replacement index silently incomplete.
+/// Strictly scan the memory library through the persistent workspace capability.
 pub fn scan_library_checked(
-    workspace_dir: &Path,
+    media: &super::media_text::MediaStore,
     instance_slug: &str,
 ) -> Result<Vec<MemoryEntry>, String> {
-    let dir = memory_dir(workspace_dir, instance_slug);
-    match std::fs::metadata(&dir) {
-        Ok(metadata) if metadata.is_dir() => {}
-        Ok(_) => return Err(format!("memory path is not a directory: {}", dir.display())),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(format!("scan memory directory {}: {error}", dir.display())),
-    }
     let mut entries = Vec::new();
-    scan_dir_recursive_checked(&dir, &dir, &mut entries)?;
-    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    for path in media
+        .memory_files(instance_slug)
+        .map_err(|error| format!("scan memory directory: {error}"))?
+    {
+        let metadata = media
+            .memory_metadata(instance_slug, &path)
+            .map_err(|error| format!("read memory metadata {path}: {error}"))?;
+        if let Some(source_type) = super::media_text::source_type(&path) {
+            let kind = source_type.strip_prefix("media_").unwrap_or("file");
+            let extension = Path::new(&path)
+                .extension()
+                .and_then(|value| value.to_str())
+                .unwrap_or("")
+                .to_ascii_lowercase();
+            entries.push(MemoryEntry {
+                path,
+                summary: format!("[{kind}: {extension}]"),
+                size: usize::try_from(metadata.len).unwrap_or(usize::MAX),
+            });
+            continue;
+        }
+        let content = media
+            .read_memory_text(instance_slug, &path)
+            .map_err(|error| format!("read memory text {path}: {error}"))?;
+        let (frontmatter, body) = parse_frontmatter(&content);
+        let date_prefix = frontmatter
+            .updated
+            .or(frontmatter.created)
+            .map(|date| format!("({}) ", format_date_short(&date)))
+            .unwrap_or_default();
+        let summary_text = body
+            .lines()
+            .find(|line| !line.trim().is_empty())
+            .unwrap_or("")
+            .trim()
+            .chars()
+            .take(120)
+            .collect::<String>();
+        entries.push(MemoryEntry {
+            path,
+            summary: format!("{date_prefix}{summary_text}"),
+            size: content.len(),
+        });
+    }
     Ok(entries)
 }
 
-fn scan_dir_recursive_checked(
-    base: &Path,
-    current: &Path,
-    entries: &mut Vec<MemoryEntry>,
-) -> Result<(), String> {
-    let read_dir = std::fs::read_dir(current)
-        .map_err(|error| format!("scan memory directory {}: {error}", current.display()))?;
-    for entry in read_dir {
-        let entry = entry
-            .map_err(|error| format!("scan memory directory {}: {error}", current.display()))?;
-        let path = entry.path();
-        let file_name = entry.file_name().to_string_lossy().to_string();
-        if file_name.starts_with('.') || file_name.starts_with('_') {
-            continue;
-        }
-        let metadata = std::fs::metadata(&path)
-            .map_err(|error| format!("read memory metadata {}: {error}", path.display()))?;
-        if metadata.is_dir() {
-            scan_dir_recursive_checked(base, &path, entries)?;
-            continue;
-        }
-
-        let ext = path
-            .extension()
-            .and_then(|extension| extension.to_str())
-            .unwrap_or("")
-            .to_lowercase();
-        let is_text = ext == "md";
-        let is_media = matches!(
-            ext.as_str(),
-            "jpg" | "jpeg" | "png" | "webp" | "gif" | "svg" | "pdf" | "mp4" | "mov" | "mp3" | "wav"
-        );
-        if !is_text && !is_media {
-            continue;
-        }
-        let relative = path
-            .strip_prefix(base)
-            .unwrap_or(&path)
-            .to_string_lossy()
-            .to_string();
-        if is_media {
-            let kind = match ext.as_str() {
-                "jpg" | "jpeg" | "png" | "webp" | "gif" | "svg" => "image",
-                "pdf" => "document",
-                "mp4" | "mov" => "video",
-                "mp3" | "wav" => "audio",
-                _ => "file",
-            };
-            entries.push(MemoryEntry {
-                path: relative,
-                summary: format!("[{kind}: {ext}]"),
-                size: usize::try_from(metadata.len()).unwrap_or(usize::MAX),
-            });
-        } else {
-            let content = std::fs::read_to_string(&path)
-                .map_err(|error| format!("read memory text {}: {error}", path.display()))?;
-            let (frontmatter, body) = parse_frontmatter(&content);
-            let date_prefix = frontmatter
-                .updated
-                .or(frontmatter.created)
-                .map(|date| format!("({}) ", format_date_short(&date)))
-                .unwrap_or_default();
-            let summary_text = body
-                .lines()
-                .find(|line| !line.trim().is_empty())
-                .unwrap_or("")
-                .trim()
-                .chars()
-                .take(120)
-                .collect::<String>();
-            entries.push(MemoryEntry {
-                path: relative,
-                summary: format!("{date_prefix}{summary_text}"),
-                size: content.len(),
-            });
-        }
-    }
-    Ok(())
-}
-
-fn scan_dir_recursive(base: &Path, current: &Path, entries: &mut Vec<MemoryEntry>) {
-    let read_dir = match std::fs::read_dir(current) {
-        Ok(rd) => rd,
-        Err(_) => return,
-    };
-
-    for entry in read_dir.filter_map(Result::ok) {
-        let path = entry.path();
-        let file_name = entry.file_name().to_string_lossy().to_string();
-        // Skip hidden files, legacy archives, and non-directories starting with _
-        if file_name.starts_with('.') || file_name.starts_with('_') {
-            continue;
-        }
-        if path.is_dir() {
-            scan_dir_recursive(base, &path, entries);
-        } else {
-            let ext = path
-                .extension()
-                .and_then(|e| e.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            let is_text = ext == "md";
-            let is_media = matches!(
-                ext.as_str(),
-                "jpg"
-                    | "jpeg"
-                    | "png"
-                    | "webp"
-                    | "gif"
-                    | "svg"
-                    | "pdf"
-                    | "mp4"
-                    | "mov"
-                    | "mp3"
-                    | "wav"
-            );
-
-            if !is_text && !is_media {
-                continue;
-            }
-
-            let rel = path
-                .strip_prefix(base)
-                .unwrap_or(&path)
-                .to_string_lossy()
-                .to_string();
-
-            if is_media {
-                let size = std::fs::metadata(&path)
-                    .map(|m| m.len() as usize)
-                    .unwrap_or(0);
-                let kind = match ext.as_str() {
-                    "jpg" | "jpeg" | "png" | "webp" | "gif" | "svg" => "image",
-                    "pdf" => "document",
-                    "mp4" | "mov" => "video",
-                    "mp3" | "wav" => "audio",
-                    _ => "file",
-                };
-                entries.push(MemoryEntry {
-                    path: rel,
-                    summary: format!("[{kind}: {ext}]"),
-                    size,
-                });
-            } else {
-                let content = std::fs::read_to_string(&path).unwrap_or_default();
-                let (fm, body) = parse_frontmatter(&content);
-                let date_prefix = fm
-                    .updated
-                    .or(fm.created)
-                    .map(|d| format!("({}) ", format_date_short(&d)))
-                    .unwrap_or_default();
-                let summary_text = body
-                    .lines()
-                    .find(|l| !l.trim().is_empty())
-                    .unwrap_or("")
-                    .trim()
-                    .chars()
-                    .take(120)
-                    .collect::<String>();
-                let summary = format!("{date_prefix}{summary_text}");
-                let size = content.len();
-                entries.push(MemoryEntry {
-                    path: rel,
-                    summary,
-                    size,
-                });
-            }
-        }
-    }
-}
-
-/// Path to the static memory catalog snapshot file for an instance.
-fn catalog_snapshot_path(workspace_dir: &Path, instance_slug: &str) -> std::path::PathBuf {
-    workspace_dir
-        .join("instances")
-        .join(instance_slug)
-        .join("memory_catalog.txt")
+pub fn scan_library(
+    media: &super::media_text::MediaStore,
+    instance_slug: &str,
+) -> Vec<MemoryEntry> {
+    scan_library_checked(media, instance_slug).unwrap_or_default()
 }
 
 /// Rebuild and persist the memory catalog snapshot to disk.
 /// Call this after context clear or compaction — not on every request.
-pub fn rebuild_catalog_snapshot(workspace_dir: &Path, instance_slug: &str) {
-    let entries = scan_library(workspace_dir, instance_slug);
+#[allow(dead_code)]
+pub fn rebuild_catalog_snapshot(instance_slug: &str, media: &super::media_text::MediaStore) {
+    let entries = scan_library(media, instance_slug);
     if entries.is_empty() {
         return;
     }
-
-    let dir = memory_dir(workspace_dir, instance_slug);
 
     // Separate pinned memories (full content in prompt) from regular (catalog only)
     let (pinned, regular): (Vec<_>, Vec<_>) =
@@ -351,8 +193,9 @@ pub fn rebuild_catalog_snapshot(workspace_dir: &Path, instance_slug: &str) {
     if !pinned.is_empty() {
         prompt.push_str("\n### pinned (always loaded)\n");
         for entry in &pinned {
-            let full_path = dir.join(&entry.path);
-            let content = std::fs::read_to_string(&full_path).unwrap_or_default();
+            let content = media
+                .read_memory_text(instance_slug, &entry.path)
+                .unwrap_or_default();
             prompt.push_str(&format!("\n**{}**\n{}\n", entry.path, content.trim()));
         }
     }
@@ -370,8 +213,7 @@ pub fn rebuild_catalog_snapshot(workspace_dir: &Path, instance_slug: &str) {
          don't announce that you remember — just know.",
     );
 
-    let path = catalog_snapshot_path(workspace_dir, instance_slug);
-    if let Err(e) = std::fs::write(&path, &prompt) {
+    if let Err(e) = media.write_instance_text(instance_slug, "memory_catalog.txt", &prompt) {
         log::warn!("[memory] failed to write catalog snapshot: {e}");
     } else {
         log::info!(
@@ -385,15 +227,16 @@ pub fn rebuild_catalog_snapshot(workspace_dir: &Path, instance_slug: &str) {
 /// Load the static memory catalog snapshot from disk.
 /// Returns empty string if no snapshot exists yet (first boot / pre-compaction).
 #[allow(dead_code)]
-pub fn load_catalog_snapshot(workspace_dir: &Path, instance_slug: &str) -> String {
-    let path = catalog_snapshot_path(workspace_dir, instance_slug);
-    std::fs::read_to_string(&path).unwrap_or_default()
+pub fn load_catalog_snapshot(media: &super::media_text::MediaStore, instance_slug: &str) -> String {
+    media
+        .read_instance_text(instance_slug, "memory_catalog.txt", 4 * 1024 * 1024)
+        .unwrap_or_default()
 }
 
 /// Build a full library catalog for memory maintenance (heartbeat).
 /// Shows every file path, size, and first-line summary.
-pub fn build_library_catalog(workspace_dir: &Path, instance_slug: &str) -> String {
-    let entries = scan_library(workspace_dir, instance_slug);
+pub fn build_library_catalog(media: &super::media_text::MediaStore, instance_slug: &str) -> String {
+    let entries = scan_library(media, instance_slug);
     if entries.is_empty() {
         return String::from("(empty library)");
     }
@@ -411,27 +254,18 @@ pub fn build_library_catalog(workspace_dir: &Path, instance_slug: &str) -> Strin
 // Memory graph — undirected connections between memory files
 // ═══════════════════════════════════════════════════════════════════════════
 
-fn graph_path(workspace_dir: &Path, instance_slug: &str) -> std::path::PathBuf {
-    workspace_dir
-        .join("instances")
-        .join(instance_slug)
-        .join("memory_graph.json")
-}
-
 /// Load the memory graph from disk. Returns empty graph if file doesn't exist.
-pub fn load_graph(workspace_dir: &Path, instance_slug: &str) -> MemoryGraph {
-    let path = graph_path(workspace_dir, instance_slug);
-    match std::fs::read_to_string(&path) {
+pub fn load_graph(media: &super::media_text::MediaStore, instance_slug: &str) -> MemoryGraph {
+    match media.read_instance_text(instance_slug, "memory_graph.json", 4 * 1024 * 1024) {
         Ok(s) => serde_json::from_str(&s).unwrap_or_default(),
         Err(_) => MemoryGraph::default(),
     }
 }
 
 /// Save the memory graph to disk.
-pub fn save_graph(workspace_dir: &Path, instance_slug: &str, graph: &MemoryGraph) {
-    let path = graph_path(workspace_dir, instance_slug);
+pub fn save_graph(media: &super::media_text::MediaStore, instance_slug: &str, graph: &MemoryGraph) {
     if let Ok(json) = serde_json::to_string_pretty(graph) {
-        if let Err(e) = std::fs::write(&path, json) {
+        if let Err(e) = media.write_instance_text(instance_slug, "memory_graph.json", &json) {
             log::warn!("[graph] failed to write memory_graph.json: {e}");
         }
     }
@@ -447,28 +281,37 @@ fn sorted_edge(a: &str, b: &str) -> [String; 2] {
 }
 
 /// Add an edge between two memory paths. Returns true if the edge was new.
-pub fn add_edge(workspace_dir: &Path, instance_slug: &str, a: &str, b: &str) -> bool {
+pub fn add_edge(
+    media: &super::media_text::MediaStore,
+    instance_slug: &str,
+    a: &str,
+    b: &str,
+) -> bool {
     if a == b {
         return false;
     }
-    let mut graph = load_graph(workspace_dir, instance_slug);
+    let mut graph = load_graph(media, instance_slug);
     let edge = sorted_edge(a, b);
     if graph.edges.iter().any(|e| *e == edge) {
         return false;
     }
     graph.edges.push(edge);
-    save_graph(workspace_dir, instance_slug, &graph);
+    save_graph(media, instance_slug, &graph);
     log::info!("[graph] added edge: {} <-> {} for {instance_slug}", a, b);
     true
 }
 
 /// Remove all edges involving a given path (used when deleting a memory file).
-pub fn remove_edges_for_path(workspace_dir: &Path, instance_slug: &str, path: &str) {
-    let mut graph = load_graph(workspace_dir, instance_slug);
+pub fn remove_edges_for_path(
+    media: &super::media_text::MediaStore,
+    instance_slug: &str,
+    path: &str,
+) {
+    let mut graph = load_graph(media, instance_slug);
     let before = graph.edges.len();
     graph.edges.retain(|e| e[0] != path && e[1] != path);
     if graph.edges.len() != before {
-        save_graph(workspace_dir, instance_slug, &graph);
+        save_graph(media, instance_slug, &graph);
         log::info!(
             "[graph] removed {} edges for deleted path: {path}",
             before - graph.edges.len()
@@ -489,205 +332,151 @@ pub fn get_neighbors(graph: &MemoryGraph, path: &str) -> Vec<String> {
     neighbors
 }
 
-/// Run legacy migration for all instances in the workspace.
-pub fn migrate_all_instances(workspace_dir: &Path) {
-    let instances_dir = workspace_dir.join("instances");
-    let entries = match std::fs::read_dir(&instances_dir) {
-        Ok(e) => e,
-        Err(_) => return,
+/// Run legacy migration through the persistent workspace capability.
+pub fn migrate_all_instances(media: &super::media_text::MediaStore) {
+    let Ok(slugs) = media.instance_slugs() else {
+        return;
     };
-    for entry in entries.filter_map(Result::ok) {
-        if entry.path().is_dir() {
-            let slug = entry.file_name().to_string_lossy().to_string();
-            migrate_legacy_memory(workspace_dir, &slug);
-        }
+    for slug in slugs {
+        migrate_legacy_memory(media, &slug);
     }
 }
 
 /// Migrate legacy memory format (facts.md + episodes.md) into the new library structure.
-/// Called once per instance — creates a `.migrated` marker to avoid re-running.
-pub fn migrate_legacy_memory(workspace_dir: &Path, instance_slug: &str) {
-    let dir = memory_dir(workspace_dir, instance_slug);
-    let marker = dir.join(".migrated");
-    if marker.exists() {
+pub fn migrate_legacy_memory(media: &super::media_text::MediaStore, instance_slug: &str) {
+    if media
+        .memory_exists(instance_slug, ".migrated")
+        .unwrap_or(false)
+    {
         return;
     }
+    let _ = media.ensure_memory_dir(instance_slug);
 
-    let facts_path = dir.join("facts.md");
-    let episodes_path = dir.join("episodes.md");
-    let db_path = dir.join("memory.db");
-
-    let has_legacy = facts_path.exists() || episodes_path.exists();
-    if !has_legacy {
-        // No legacy data — just mark as migrated
-        let _ = std::fs::create_dir_all(&dir);
-        let _ = std::fs::write(&marker, "");
-        return;
-    }
-
-    log::info!("migrating legacy memory for {instance_slug}");
-
-    // Migrate facts.md → one file per category under facts/
-    if facts_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&facts_path) {
-            let mut current_category = String::from("general");
-            let mut category_facts: std::collections::HashMap<String, Vec<String>> =
-                std::collections::HashMap::new();
-
-            for line in content.lines() {
-                let line = line.trim();
-                if let Some(cat) = line.strip_prefix("## ") {
-                    current_category = cat.trim().to_lowercase();
-                } else if let Some(fact) = line.strip_prefix("- ") {
-                    category_facts
-                        .entry(current_category.clone())
-                        .or_default()
-                        .push(fact.to_string());
-                }
+    if let Ok(content) = media.read_memory_text(instance_slug, "facts.md") {
+        let mut current_category = String::from("general");
+        let mut categories: std::collections::HashMap<String, Vec<String>> =
+            std::collections::HashMap::new();
+        for line in content.lines() {
+            let line = line.trim();
+            if let Some(category) = line.strip_prefix("## ") {
+                current_category = category.trim().to_lowercase();
+            } else if let Some(fact) = line.strip_prefix("- ") {
+                categories
+                    .entry(current_category.clone())
+                    .or_default()
+                    .push(fact.to_owned());
             }
-
-            for (category, facts) in &category_facts {
-                if facts.is_empty() {
-                    continue;
-                }
-                let cat_dir = dir.join("facts");
-                let _ = std::fs::create_dir_all(&cat_dir);
-                let file_path = cat_dir.join(format!("{category}.md"));
-                let mut file_content = String::new();
-                for fact in facts {
-                    file_content.push_str(&format!("- {fact}\n"));
-                }
-                if let Err(e) = std::fs::write(&file_path, &file_content) {
-                    log::warn!("failed to migrate facts/{category}.md: {e}");
-                }
-            }
-
-            // Archive original
-            let archive = dir.join("_legacy_facts.md");
-            let _ = std::fs::rename(&facts_path, &archive);
-            log::info!(
-                "migrated {} fact categories for {instance_slug}",
-                category_facts.len()
-            );
         }
+        for (category, facts) in &categories {
+            if let Err(error) = media.write_memory_text(
+                instance_slug,
+                &format!("facts/{category}.md"),
+                &facts
+                    .iter()
+                    .map(|fact| format!("- {fact}\n"))
+                    .collect::<String>(),
+            ) {
+                log::warn!("failed to migrate facts/{category}.md: {error}");
+            }
+        }
+        let _ = media.rename_memory(instance_slug, "facts.md", "_legacy_facts.md");
     }
 
-    // Migrate episodes.md → moments/ folder, one file per episode
-    if episodes_path.exists() {
-        if let Ok(content) = std::fs::read_to_string(&episodes_path) {
-            let moments_dir = dir.join("moments");
-            let _ = std::fs::create_dir_all(&moments_dir);
-
-            let mut episode_idx = 0u32;
-            let mut lines = content.lines().peekable();
-            while let Some(line) = lines.next() {
-                let line = line.trim();
-                if !line.starts_with("- ") {
-                    continue;
-                }
-                let main = line.trim_start_matches("- ");
-
-                // Parse "(felt: emotion)" suffix
-                let (content_part, emotion) = if let Some(felt_pos) = main.rfind("(felt: ") {
-                    let before = main[..felt_pos].trim();
-                    let after = main[felt_pos + 7..].trim_end_matches(')').trim();
-                    (before.to_string(), after.to_string())
-                } else {
-                    (main.to_string(), String::new())
-                };
-
-                // Check for "  why: ..." on next line
-                let significance = if let Some(next) = lines.peek() {
-                    if next.trim_start().starts_with("why: ") {
-                        let sig = next.trim().trim_start_matches("why: ").to_string();
-                        lines.next();
-                        sig
+    if let Ok(content) = media.read_memory_text(instance_slug, "episodes.md") {
+        let mut episode_idx = 0_u32;
+        let mut lines = content.lines().peekable();
+        while let Some(line) = lines.next() {
+            let Some(main) = line.trim().strip_prefix("- ") else {
+                continue;
+            };
+            let (content_part, emotion) = if let Some(position) = main.rfind("(felt: ") {
+                (
+                    main[..position].trim().to_owned(),
+                    main[position + 7..].trim_end_matches(')').trim().to_owned(),
+                )
+            } else {
+                (main.to_owned(), String::new())
+            };
+            let significance = lines
+                .peek()
+                .filter(|next| next.trim_start().starts_with("why: "))
+                .map(|next| next.trim().trim_start_matches("why: ").to_owned())
+                .unwrap_or_default();
+            if !significance.is_empty() {
+                lines.next();
+            }
+            let name = content_part
+                .to_lowercase()
+                .chars()
+                .map(|character| {
+                    if character.is_alphanumeric() || character == ' ' {
+                        character
                     } else {
-                        String::new()
+                        ' '
                     }
-                } else {
-                    String::new()
-                };
-
-                // Generate a slug from content
-                let slug: String = content_part
-                    .to_lowercase()
-                    .chars()
-                    .map(|c| {
-                        if c.is_alphanumeric() || c == ' ' {
-                            c
-                        } else {
-                            ' '
-                        }
-                    })
-                    .collect::<String>()
-                    .split_whitespace()
-                    .take(5)
-                    .collect::<Vec<_>>()
-                    .join("-");
-                let slug = if slug.is_empty() {
-                    format!("moment-{episode_idx}")
-                } else {
-                    slug
-                };
-
-                let mut file_content = content_part.clone();
-                if !emotion.is_empty() {
-                    file_content.push_str(&format!("\n\nfelt: {emotion}"));
-                }
-                if !significance.is_empty() {
-                    file_content.push_str(&format!("\nwhy: {significance}"));
-                }
-
-                let file_path = moments_dir.join(format!("{slug}.md"));
-                if let Err(e) = std::fs::write(&file_path, &file_content) {
-                    log::warn!("failed to migrate moment {slug}: {e}");
-                }
-                episode_idx += 1;
+                })
+                .collect::<String>()
+                .split_whitespace()
+                .take(5)
+                .collect::<Vec<_>>()
+                .join("-");
+            let name = if name.is_empty() {
+                format!("moment-{episode_idx}")
+            } else {
+                name
+            };
+            let mut body = content_part;
+            if !emotion.is_empty() {
+                body.push_str(&format!("\n\nfelt: {emotion}"));
             }
-
-            // Archive original
-            let archive = dir.join("_legacy_episodes.md");
-            let _ = std::fs::rename(&episodes_path, &archive);
-            if episode_idx > 0 {
-                log::info!("migrated {episode_idx} episodes to moments/ for {instance_slug}");
+            if !significance.is_empty() {
+                body.push_str(&format!("\nwhy: {significance}"));
             }
+            if let Err(error) =
+                media.write_memory_text(instance_slug, &format!("moments/{name}.md"), &body)
+            {
+                log::warn!("failed to migrate moment {name}: {error}");
+            }
+            episode_idx += 1;
         }
+        let _ = media.rename_memory(instance_slug, "episodes.md", "_legacy_episodes.md");
     }
 
-    // Clean up memory.db (no longer needed)
-    if db_path.exists() {
-        let archive = dir.join("_legacy_memory.db");
-        let _ = std::fs::rename(&db_path, &archive);
-        log::info!("archived memory.db for {instance_slug}");
+    if media
+        .memory_exists(instance_slug, "memory.db")
+        .unwrap_or(false)
+    {
+        let _ = media.rename_memory(instance_slug, "memory.db", "_legacy_memory.db");
     }
-
-    // Mark as migrated
-    let _ = std::fs::write(&marker, "migrated");
+    let _ = media.write_memory_text(instance_slug, ".migrated", "migrated");
 }
 
 /// Extract new memories from recent messages and store them in the library.
 /// Called as a background task after each chat turn.
 pub async fn extract_and_store(
-    workspace_dir: &Path,
     instance_slug: &str,
     recent_messages: &[ChatMessage],
     llm: &LlmBackend,
     vector_store: &super::vector::VectorStore,
 ) -> anyhow::Result<()> {
-    let dir = memory_dir(workspace_dir, instance_slug);
-    std::fs::create_dir_all(&dir)?;
+    let media = vector_store.media_store();
+    media.ensure_memory_dir(instance_slug)?;
 
     // Build existing library context
-    let entries = scan_library(workspace_dir, instance_slug);
+    let entries = scan_library(&media, instance_slug);
     let file_count = entries.len();
     let existing_summary = if entries.is_empty() {
         String::from("(empty library — no memories yet)")
     } else {
         let mut s = String::new();
         for entry in &entries {
-            let full_path = dir.join(&entry.path);
-            let content = std::fs::read_to_string(&full_path).unwrap_or_default();
+            let content = if super::media_text::source_type(&entry.path).is_some() {
+                media.read(instance_slug, &entry.path).unwrap_or_default()
+            } else {
+                media
+                    .read_memory_text(instance_slug, &entry.path)
+                    .unwrap_or_default()
+            };
             s.push_str(&format!("[{}]\n{}\n\n", entry.path, content.trim()));
         }
         // Truncate if too long (find a char boundary to avoid panic)
@@ -704,10 +493,6 @@ pub async fn extract_and_store(
 
     // Detect image attachments in messages
     let attachment_re = regex::Regex::new(r"\[attached:\s*(.+?)\s*\(([^)]+)\)\]").unwrap();
-    let uploads_dir = workspace_dir
-        .join("instances")
-        .join(instance_slug)
-        .join("uploads");
 
     let mut image_uploads: Vec<(String, String)> = Vec::new(); // (upload_id, original_name)
     let conversation = recent_messages
@@ -721,14 +506,13 @@ pub async fn extract_and_store(
             for cap in attachment_re.captures_iter(&m.content) {
                 let name = cap[1].to_string();
                 let upload_id = cap[2].to_string();
-                let meta_path = uploads_dir.join(format!("{upload_id}.json"));
-                if let Ok(meta_str) = std::fs::read_to_string(&meta_path) {
-                    if let Ok(meta) = serde_json::from_str::<serde_json::Value>(&meta_str) {
-                        let mime = meta["mime_type"].as_str().unwrap_or("");
-                        if mime.starts_with("image/") {
-                            image_uploads.push((upload_id.clone(), name.clone()));
-                        }
-                    }
+                if media
+                    .upload_mime_type(instance_slug, &upload_id)
+                    .ok()
+                    .flatten()
+                    .is_some_and(|mime| mime.starts_with("image/"))
+                {
+                    image_uploads.push((upload_id.clone(), name.clone()));
                 }
             }
             format!("{role}: {}", m.content)
@@ -843,13 +627,19 @@ only connect memories that are meaningfully related. don't over-connect."#
             parse_memory_ops(&response)
         }
     };
-    if ops.is_empty() {
-        return Ok(());
-    }
+    apply_memory_ops(instance_slug, &ops, vector_store).await
+}
 
-    for op in &ops {
+async fn apply_memory_ops(
+    instance_slug: &str,
+    ops: &[MemoryOp],
+    vector_store: &super::vector::VectorStore,
+) -> anyhow::Result<()> {
+    for op in ops {
         // Sanitize path — allow image extensions for save_image
-        let clean_path = if op.action == "save_image" {
+        let clean_path = if op.action == "save_image"
+            || (op.action == "delete" && super::media_text::source_type(&op.path).is_some())
+        {
             sanitize_media_path(&op.path)
         } else {
             sanitize_memory_path(&op.path)
@@ -857,65 +647,49 @@ only connect memories that are meaningfully related. don't over-connect."#
         if clean_path.is_empty() {
             continue;
         }
-        let full_path = dir.join(&clean_path);
-
         match op.action.as_str() {
             "write" => {
                 if op.content.trim().is_empty() {
                     log::warn!("memory: skipping empty write to {clean_path}");
                     continue;
                 }
-                if let Some(parent) = full_path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                let existing = std::fs::read_to_string(&full_path).ok();
-                let stamped = stamp_content(&op.content, existing.as_deref());
-                std::fs::write(&full_path, &stamped)?;
+                vector_store
+                    .write_text_memory(instance_slug, &clean_path, &op.content, false)
+                    .await
+                    .map_err(anyhow::Error::msg)?;
                 log::info!("memory: wrote {clean_path} for {instance_slug}");
-                embed_memory_file(vector_store, instance_slug, &clean_path, &stamped).await;
             }
             "append" => {
                 if op.content.trim().is_empty() {
                     log::warn!("memory: skipping empty append to {clean_path}");
                     continue;
                 }
-                if let Some(parent) = full_path.parent() {
-                    std::fs::create_dir_all(parent)?;
-                }
-                let existing = std::fs::read_to_string(&full_path).unwrap_or_default();
-                let (_, body) = parse_frontmatter(&existing);
-                let mut new_body = body.to_string();
-                if !new_body.ends_with('\n') && !new_body.is_empty() {
-                    new_body.push('\n');
-                }
-                new_body.push_str(&op.content);
-                let stamped = stamp_content(&new_body, Some(&existing));
-                std::fs::write(&full_path, &stamped)?;
+                vector_store
+                    .write_text_memory(instance_slug, &clean_path, &op.content, true)
+                    .await
+                    .map_err(anyhow::Error::msg)?;
                 log::info!("memory: appended to {clean_path} for {instance_slug}");
-                embed_memory_file(vector_store, instance_slug, &clean_path, &stamped).await;
             }
             "delete" => {
-                if full_path.exists() {
-                    std::fs::remove_file(&full_path)?;
-                    if let Some(parent) = full_path.parent() {
-                        let _ = cleanup_empty_dirs(parent, &dir);
-                    }
-                    log::info!("memory: deleted {clean_path} for {instance_slug}");
-                    if let Err(e) = vector_store
-                        .delete_by_path(instance_slug, &clean_path)
-                        .await
-                    {
-                        log::warn!("memory: vector delete failed for {clean_path}: {e}");
-                    }
-                    // Clean up graph edges for deleted path
-                    remove_edges_for_path(workspace_dir, instance_slug, &clean_path);
+                let deletion_error = vector_store
+                    .delete_memory(instance_slug, &clean_path)
+                    .await
+                    .err();
+                remove_edges_for_path(&vector_store.media_store(), instance_slug, &clean_path);
+                if deletion_error.is_none() {
+                    log::info!("memory: reconciled deletion of {clean_path} for {instance_slug}");
+                } else {
+                    return Err(anyhow::anyhow!(
+                        "cleanup incomplete for {clean_path}: {}",
+                        deletion_error.unwrap()
+                    ));
                 }
             }
             "connect" => {
                 let from = &op.from;
                 let to = &op.to;
                 if !from.is_empty() && !to.is_empty() {
-                    add_edge(workspace_dir, instance_slug, from, to);
+                    add_edge(&vector_store.media_store(), instance_slug, from, to);
                 }
             }
             "save_image" => {
@@ -926,37 +700,26 @@ only connect memories that are meaningfully related. don't over-connect."#
                     continue;
                 };
 
-                // Find the source file
-                let meta_path = uploads_dir.join(format!("{upload_id}.json"));
-                let meta_str = match std::fs::read_to_string(&meta_path) {
-                    Ok(s) => s,
-                    Err(_) => {
-                        log::warn!("memory: save_image — upload {upload_id} not found");
+                let content = if op.content.trim().is_empty() {
+                    &op.description
+                } else {
+                    &op.content
+                };
+                match vector_store
+                    .replace_media_from_upload(instance_slug, &clean_path, upload_id, content)
+                    .await
+                {
+                    Ok(Some(error)) => {
+                        log::warn!("memory: image saved; semantic indexing pending: {error}")
+                    }
+                    Ok(None) => {
+                        log::info!("memory: saved image {clean_path} for {instance_slug}")
+                    }
+                    Err(error) => {
+                        log::warn!("memory: save_image publication failed: {error}");
                         continue;
                     }
-                };
-                let meta: serde_json::Value = match serde_json::from_str(&meta_str) {
-                    Ok(v) => v,
-                    Err(_) => continue,
-                };
-                let stored_name = match meta["stored_name"].as_str() {
-                    Some(s) => s,
-                    None => continue,
-                };
-
-                let src = uploads_dir.join(stored_name);
-                if let Some(parent) = full_path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
                 }
-                if let Err(e) = std::fs::copy(&src, &full_path) {
-                    log::warn!("memory: save_image copy failed: {e}");
-                    continue;
-                }
-                log::info!("memory: saved image {clean_path} for {instance_slug}");
-
-                log::info!(
-                    "memory: raw image saved; semantic indexing skipped until descriptions/transcripts are supported"
-                );
             }
             _ => {
                 log::warn!("memory: unknown action '{}' for {instance_slug}", op.action);
@@ -964,35 +727,6 @@ only connect memories that are meaningfully related. don't over-connect."#
         }
     }
 
-    Ok(())
-}
-
-/// Embed a memory file into the vector store (background-safe, logs errors).
-pub async fn embed_memory_file(
-    vector_store: &super::vector::VectorStore,
-    instance_slug: &str,
-    path: &str,
-    content: &str,
-) {
-    if let Err(error) = vector_store.index_text(instance_slug, path, content).await {
-        log::warn!("[memory] semantic indexing unavailable; memory saved: {error}");
-    }
-}
-
-/// Remove empty directories up to (but not including) the base memory dir.
-pub fn cleanup_empty_dirs(dir: &Path, base: &Path) -> std::io::Result<()> {
-    if dir == base || !dir.starts_with(base) {
-        return Ok(());
-    }
-    if dir.is_dir() {
-        let is_empty = std::fs::read_dir(dir)?.next().is_none();
-        if is_empty {
-            std::fs::remove_dir(dir)?;
-            if let Some(parent) = dir.parent() {
-                cleanup_empty_dirs(parent, base)?;
-            }
-        }
-    }
     Ok(())
 }
 
@@ -1018,7 +752,7 @@ fn sanitize_memory_path(path: &str) -> String {
 
 /// Sanitize path for image/media files — allows image extensions.
 fn sanitize_media_path(path: &str) -> String {
-    let path = path.trim().trim_start_matches('/');
+    let path = path.trim();
     let parts: Vec<&str> = path.split('/').collect();
     if parts
         .iter()
@@ -1043,34 +777,6 @@ fn sanitize_media_path(path: &str) -> String {
     }
 }
 
-/// Remove memory files matching a query. Returns their relative paths so
-/// derived search indexes can delete exactly the same records.
-pub fn forget_memories(workspace_dir: &Path, instance_slug: &str, query: &str) -> Vec<String> {
-    let dir = memory_dir(workspace_dir, instance_slug);
-    let entries = scan_library(workspace_dir, instance_slug);
-    let query_lower = query.to_lowercase();
-    let query_words: Vec<&str> = query_lower.split_whitespace().collect();
-
-    let mut removed = Vec::new();
-
-    for entry in entries {
-        let full_path = dir.join(&entry.path);
-        let content = std::fs::read_to_string(&full_path).unwrap_or_default();
-        let combined = format!("{} {}", entry.path, content).to_lowercase();
-
-        if query_words.iter().any(|w| combined.contains(*w)) {
-            if std::fs::remove_file(&full_path).is_ok() {
-                removed.push(entry.path.clone());
-                if let Some(parent) = full_path.parent() {
-                    let _ = cleanup_empty_dirs(parent, &dir);
-                }
-            }
-        }
-    }
-
-    removed
-}
-
 // ---------------------------------------------------------------------------
 // Parsing
 // ---------------------------------------------------------------------------
@@ -1085,8 +791,7 @@ struct MemoryOp {
     /// Upload ID for save_image action.
     #[serde(default)]
     upload_id: String,
-    /// Reserved for media descriptions; raw-media semantic indexing is disabled.
-    #[allow(dead_code)]
+    /// Agent-authored image description, persisted as the v1 representation.
     #[serde(default)]
     description: String,
     /// Source path for connect action.
@@ -1133,6 +838,26 @@ mod strict_scan_tests {
     use super::*;
 
     #[test]
+    fn derived_graph_and_catalog_roundtrip_through_media_store() {
+        let workspace = tempfile::tempdir().unwrap();
+        let memory = workspace.path().join("instances/one/memory");
+        std::fs::create_dir_all(&memory).unwrap();
+        std::fs::write(memory.join("note.md"), "Orion").unwrap();
+        let media = super::super::media_text::MediaStore::open(workspace.path()).unwrap();
+
+        rebuild_catalog_snapshot("one", &media);
+        assert!(load_catalog_snapshot(&media, "one").contains("note.md"));
+
+        assert!(add_edge(&media, "one", "note.md", "other.md"));
+        assert_eq!(
+            get_neighbors(&load_graph(&media, "one"), "note.md"),
+            ["other.md"]
+        );
+        remove_edges_for_path(&media, "one", "note.md");
+        assert!(load_graph(&media, "one").edges.is_empty());
+    }
+
+    #[test]
     fn checked_scan_preserves_filtering_and_sorting() {
         let workspace = std::env::temp_dir().join(format!("memory-scan-{}", uuid::Uuid::new_v4()));
         let memory = workspace.join("instances/slug/memory");
@@ -1142,7 +867,8 @@ mod strict_scan_tests {
         std::fs::write(memory.join(".hidden.md"), "hidden").unwrap();
         std::fs::write(memory.join("ignored.txt"), "ignored").unwrap();
 
-        let entries = scan_library_checked(&workspace, "slug").unwrap();
+        let media = super::super::media_text::MediaStore::open(&workspace).unwrap();
+        let entries = scan_library_checked(&media, "slug").unwrap();
         assert_eq!(
             entries
                 .iter()
@@ -1159,7 +885,8 @@ mod strict_scan_tests {
         let memory = workspace.join("instances/slug/memory");
         std::fs::create_dir_all(&memory).unwrap();
         std::fs::write(memory.join("broken.md"), [0xff]).unwrap();
-        assert!(scan_library_checked(&workspace, "slug").is_err());
+        let media = super::super::media_text::MediaStore::open(&workspace).unwrap();
+        assert!(scan_library_checked(&media, "slug").is_err());
         std::fs::remove_dir_all(workspace).unwrap();
     }
 
@@ -1171,12 +898,83 @@ mod strict_scan_tests {
         let memory = workspace.join("instances/slug/memory/blocked");
         std::fs::create_dir_all(&memory).unwrap();
         std::fs::set_permissions(&memory, std::fs::Permissions::from_mode(0o000)).unwrap();
-        let result = scan_library_checked(&workspace, "slug");
+        let media = super::super::media_text::MediaStore::open(&workspace).unwrap();
+        let result = scan_library_checked(&media, "slug");
         std::fs::set_permissions(&memory, std::fs::Permissions::from_mode(0o700)).unwrap();
         std::fs::remove_dir_all(workspace).unwrap();
         // Root can bypass mode bits in some CI containers.
         if let Err(error) = result {
             assert!(error.contains("scan memory directory"));
         }
+    }
+}
+
+#[cfg(test)]
+mod media_representation_tests {
+    use super::*;
+
+    #[test]
+    fn media_sidecars_are_reserved_and_filtered_from_catalog() {
+        let workspace = tempfile::tempdir().unwrap();
+        let dir = workspace.path().join("instances/one/memory");
+        std::fs::create_dir_all(&dir).unwrap();
+        for path in ["photo.PNG", "photo.PNG.md", "orphan.mp3.md", "note.md"] {
+            std::fs::write(dir.join(path), "description").unwrap();
+        }
+        let media = super::super::media_text::MediaStore::open(workspace.path()).unwrap();
+        for entries in [
+            scan_library(&media, "one"),
+            scan_library_checked(&media, "one").unwrap(),
+        ] {
+            assert_eq!(
+                entries.iter().map(|e| e.path.as_str()).collect::<Vec<_>>(),
+                ["note.md", "photo.PNG"]
+            );
+        }
+    }
+    #[tokio::test]
+    async fn media_extracted_save_image_uses_persisted_description_and_delete_cleans_it() {
+        use crate::services::embedding::tests::{MockServer, response};
+        let mock = MockServer::new(vec![(200, response(vec![1., 0., 0.]))]).await;
+        let ws = tempfile::tempdir().unwrap();
+        let uploads = ws.path().join("instances/one/uploads");
+        std::fs::create_dir_all(&uploads).unwrap();
+        std::fs::write(uploads.join("raw.jpg"), [0xff]).unwrap();
+        std::fs::write(
+            uploads.join("upload_one.json"),
+            r#"{"stored_name":"raw.jpg"}"#,
+        )
+        .unwrap();
+        let store =
+            super::super::vector::VectorStore::connect_with_config(ws.path(), &mock.config).await;
+        let ops = parse_memory_ops(
+            r#"{"ops":[{"action":"save_image","path":"photo.jpg","upload_id":"upload_one","description":"Orion sky"}]}"#,
+        );
+        apply_memory_ops("one", &ops, &store).await.unwrap();
+        let dir = ws.path().join("instances/one/memory");
+        assert_eq!(
+            super::super::media_text::read(&dir, "photo.jpg").unwrap(),
+            "Orion sky"
+        );
+        assert_eq!(
+            store.list_all("one", 10).await.unwrap()[0].path,
+            "photo.jpg"
+        );
+        let ops = parse_memory_ops(r#"{"ops":[{"action":"delete","path":"photo.jpg"}]}"#);
+        apply_memory_ops("one", &ops, &store).await.unwrap();
+        assert!(!dir.join("photo.jpg").exists());
+        assert!(!dir.join("photo.jpg.md").exists());
+        assert!(store.list_all("one", 10).await.unwrap().is_empty());
+        store
+            .backfill_text_memories(ws.path(), "one")
+            .await
+            .unwrap();
+        let ops = parse_memory_ops(
+            r#"{"ops":[{"action":"save_image","path":"photo.jpg","upload_id":"upload_one"}]}"#,
+        );
+        apply_memory_ops("one", &ops, &store).await.unwrap();
+        assert!(dir.join("photo.jpg").exists());
+        assert!(store.needs_backfill("one").await.unwrap());
+        assert_eq!(mock.requests.lock().unwrap().len(), 1);
     }
 }

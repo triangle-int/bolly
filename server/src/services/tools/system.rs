@@ -2385,27 +2385,26 @@ impl Tool for ExportProfileTool {
 }
 
 // ---------------------------------------------------------------------------
-// import_profile — import a tar.gz into this instance
+// import_profile — disabled while the storage format stabilizes
 // ---------------------------------------------------------------------------
 
-pub struct ImportProfileTool {
-    workspace_dir: PathBuf,
-    instance_slug: String,
-}
+pub struct ImportProfileTool;
 
 impl ImportProfileTool {
-    pub fn new(workspace_dir: &Path, instance_slug: &str) -> Self {
-        Self {
-            workspace_dir: workspace_dir.to_path_buf(),
-            instance_slug: instance_slug.to_string(),
-        }
+    pub fn new(
+        _workspace_dir: &Path,
+        _instance_slug: &str,
+        _vector_store: Arc<crate::services::vector::VectorStore>,
+    ) -> Self {
+        Self
     }
 }
 
 #[derive(Deserialize, JsonSchema)]
 pub struct ImportProfileArgs {
-    /// Path to the .tar.gz file OR an upload ID (e.g. "upload_12345") from a user attachment.
-    pub source: String,
+    /// Reserved source path or upload ID. Restore is currently unavailable.
+    #[serde(rename = "source")]
+    pub _source: String,
 }
 
 impl Tool for ImportProfileTool {
@@ -2417,73 +2416,55 @@ impl Tool for ImportProfileTool {
     async fn definition(&self, _prompt: String) -> ToolDefinition {
         ToolDefinition {
             name: "restore_backup".into(),
-            description: "Restore from a .tar.gz backup archive. \
-                Merges data (soul, memory, drops, chat history) from the archive. \
-                Accepts a file path or an upload ID from a user attachment (e.g. 'upload_12345')."
+            description: "Restore is temporarily unavailable during storage format stabilization."
                 .into(),
             parameters: openai_schema::<ImportProfileArgs>(),
         }
     }
 
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        let instance_dir = self
-            .workspace_dir
-            .join("instances")
-            .join(&self.instance_slug);
-        let source = args.source.trim();
-
-        // Resolve source: upload ID or file path
-        let archive_path = if source.starts_with("upload_") {
-            // Look up the upload by ID
-            let uploads_dir = instance_dir.join("uploads");
-            let meta_path = uploads_dir.join(format!("{source}.json"));
-            let meta_raw = fs::read_to_string(&meta_path)
-                .map_err(|_| ToolExecError(format!("upload '{source}' not found")))?;
-            let meta: serde_json::Value = serde_json::from_str(&meta_raw)
-                .map_err(|_| ToolExecError("invalid upload metadata".into()))?;
-            let stored_name = meta["stored_name"]
-                .as_str()
-                .ok_or_else(|| ToolExecError("upload has no stored_name".into()))?;
-            uploads_dir.join(stored_name)
-        } else if source.starts_with('/') {
-            std::path::PathBuf::from(source)
-        } else {
-            instance_dir.join(source)
-        };
-
-        if !archive_path.is_file() {
-            return Err(ToolExecError(format!(
-                "file not found: {}",
-                archive_path.display()
-            )));
-        }
-
-        // Auto-detect: gzip magic bytes 1f 8b
-        let is_gzip = fs::read(&archive_path)
-            .map(|d| d.len() >= 2 && d[0] == 0x1f && d[1] == 0x8b)
-            .unwrap_or(false);
-        let output = tokio::process::Command::new("tar")
-            .arg(if is_gzip { "xzf" } else { "xf" })
-            .arg(&archive_path)
-            .arg("--strip-components=1")
-            .arg("-C")
-            .arg(&instance_dir)
-            .output()
-            .await
-            .map_err(|e| ToolExecError(format!("failed to extract archive: {e}")))?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            return Err(ToolExecError(format!("tar extract failed: {stderr}")));
-        }
-
-        // Rebuild memory catalog after import
-        crate::services::memory::rebuild_catalog_snapshot(&self.workspace_dir, &self.instance_slug);
-        crate::services::memory::invalidate_frozen_catalog(&self.instance_slug);
-
-        Ok(format!(
-            "imported profile from {}. memory catalog rebuilt.",
-            args.source
+    async fn call(&self, _args: Self::Args) -> Result<Self::Output, Self::Error> {
+        Err(ToolExecError(
+            "restore is temporarily unavailable during storage format stabilization".into(),
         ))
+    }
+}
+
+#[cfg(test)]
+mod restore_backup_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn restore_is_disabled_before_path_resolution_or_mutation() {
+        let workspace = tempfile::tempdir().unwrap();
+        let instance = workspace.path().join("instances/one");
+        std::fs::create_dir_all(&instance).unwrap();
+        std::fs::write(instance.join("sentinel"), b"unchanged").unwrap();
+        let store = Arc::new(crate::services::vector::VectorStore::connect(workspace.path()).await);
+        let mut vector = vec![0.; 768];
+        vector[0] = 1.;
+        store
+            .upsert_text_memory("one", "note.md", vec![("sentinel".into(), vector)])
+            .await
+            .unwrap();
+        let tool = ImportProfileTool::new(workspace.path(), "one", store.clone());
+
+        let error = tool
+            .call(ImportProfileArgs {
+                _source: "../../outside.tar.gz".into(),
+            })
+            .await
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("temporarily unavailable during storage format stabilization"),
+            "{error}"
+        );
+        assert_eq!(
+            std::fs::read(instance.join("sentinel")).unwrap(),
+            b"unchanged"
+        );
+        assert_eq!(store.list_all("one", 10).await.unwrap().len(), 1);
     }
 }

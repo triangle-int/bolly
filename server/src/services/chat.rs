@@ -533,21 +533,25 @@ pub async fn run_single_turn(
 
         // 4. Graph expansion — follow edges 1 hop to pull connected memories
         if !all_results.is_empty() {
-            let graph = memory::load_graph(workspace_dir, &instance_slug);
+            let graph = memory::load_graph(&vector_store.media_store(), &instance_slug);
             if !graph.edges.is_empty() {
                 let found_paths: Vec<String> = all_results.iter().map(|r| r.path.clone()).collect();
-                let memory_dir = workspace_dir
-                    .join("instances")
-                    .join(&instance_slug)
-                    .join("memory");
+                let media = vector_store.media_store();
                 for path in &found_paths {
                     for neighbor in memory::get_neighbors(&graph, path) {
                         if all_results.iter().any(|r| r.path == neighbor) {
                             continue; // already in results
                         }
                         // Read neighbor content and add as a graph-connected result
-                        let full_path = memory_dir.join(&neighbor);
-                        if let Ok(content) = std::fs::read_to_string(&full_path) {
+                        let content: Result<String, String> =
+                            if crate::services::media_text::source_type(&neighbor).is_some() {
+                                media.read(&instance_slug, &neighbor)
+                            } else {
+                                media
+                                    .read_memory_text(&instance_slug, &neighbor)
+                                    .map_err(|error| error.to_string())
+                            };
+                        if let Ok(content) = content {
                             let (_, body) = memory::parse_frontmatter(&content);
                             let preview: String = body.trim().chars().take(500).collect();
                             all_results.push(crate::services::vector::VectorSearchResult {
@@ -788,7 +792,7 @@ pub async fn run_single_turn(
         let events_bg = events.clone();
         let vs = vector_store.clone();
         tokio::spawn(async move {
-            if let Err(e) = memory::extract_and_store(&ws, &slug, &recent_pair, &fast, &vs).await {
+            if let Err(e) = memory::extract_and_store(&slug, &recent_pair, &fast, &vs).await {
                 log::warn!("memory extraction failed: {e}");
             }
             log::debug!(
@@ -1228,7 +1232,6 @@ fn ensure_instance_layout(workspace_dir: &Path, instance_slug: &str) -> io::Resu
     let instance_dir = workspace_dir.join("instances").join(instance_slug);
     fs::create_dir_all(instance_dir.join("chat"))?;
     fs::create_dir_all(instance_dir.join("drops"))?;
-    fs::create_dir_all(instance_dir.join("memory"))?;
     fs::create_dir_all(instance_dir.join("scheduled"))?;
     Ok(())
 }

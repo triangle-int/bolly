@@ -2,7 +2,7 @@ use axum::response::IntoResponse;
 use axum::{
     Json, Router,
     body::Body,
-    extract::{Multipart, Path, State},
+    extract::{Path, State},
     http::StatusCode,
     routing::{delete, get, post, put},
 };
@@ -612,7 +612,10 @@ async fn list_memory(
     State(state): State<AppState>,
     Path(instance_slug): Path<String>,
 ) -> Json<Vec<MemoryEntry>> {
-    Json(memory::scan_library(&state.workspace_dir, &instance_slug))
+    Json(memory::scan_library(
+        &state.vector_store.media_store(),
+        &instance_slug,
+    ))
 }
 
 #[derive(Deserialize)]
@@ -636,11 +639,7 @@ async fn search_memory(
         .search_text(&instance_slug, &params.q, params.limit)
         .await;
 
-    let memory_dir = state
-        .workspace_dir
-        .join("instances")
-        .join(&instance_slug)
-        .join("memory");
+    let media = state.vector_store.media_store();
 
     let cfg = state.config.read().await;
     let auth_token = cfg.auth_token.clone();
@@ -653,7 +652,9 @@ async fn search_memory(
             let is_media = r.source_type.starts_with("media_");
 
             let text = if r.content_preview.is_empty() && !is_media {
-                std::fs::read_to_string(memory_dir.join(&r.path)).unwrap_or_default()
+                media
+                    .read_memory_text(&instance_slug, &r.path)
+                    .unwrap_or_default()
             } else {
                 r.content_preview
             };
@@ -668,9 +669,12 @@ async fn search_memory(
             // For media results, include a URL to the file
             if is_media {
                 if let Some(upload_id) = &r.upload_id {
-                    let url = if upload_id.contains('/') {
+                    let url = if upload_id == &r.path || upload_id.contains('/') {
                         if public_url.is_empty() {
-                            format!("/api/instances/{instance_slug}/memory/{upload_id}")
+                            format!(
+                                "/api/instances/{instance_slug}/memory/{}",
+                                crate::services::tools::encode_url_path(upload_id)
+                            )
                         } else {
                             crate::services::tools::public_memory_url(
                                 &public_url,
@@ -731,23 +735,18 @@ async fn get_memory_graph(
     State(state): State<AppState>,
     Path(instance_slug): Path<String>,
 ) -> Json<crate::domain::memory::MemoryGraph> {
-    Json(memory::load_graph(&state.workspace_dir, &instance_slug))
+    Json(memory::load_graph(
+        &state.vector_store.media_store(),
+        &instance_slug,
+    ))
 }
 
 async fn reindex_memory(
     State(state): State<AppState>,
     Path(instance_slug): Path<String>,
 ) -> Result<Json<serde_json::Value>, StatusCode> {
-    // Reset collection
-    state
-        .vector_store
-        .reset_collection(&instance_slug)
-        .await
-        .map_err(|e| {
-            log::warn!("[reindex] reset failed for {instance_slug}: {e}");
-            StatusCode::INTERNAL_SERVER_ERROR
-        })?;
-
+    // Backfill builds and atomically commits a candidate; keep the last good
+    // index searchable if any embedding request fails.
     // Backfill in background
     let vs = state.vector_store.clone();
     let ws = state.workspace_dir.clone();
@@ -791,21 +790,22 @@ async fn serve_memory_file_inner(
     instance_slug: &str,
     file_path: &str,
 ) -> Result<axum::response::Response<axum::body::Body>, StatusCode> {
-    if file_path.contains("..") || file_path.starts_with('/') {
-        return Err(StatusCode::BAD_REQUEST);
-    }
-    let full_path = state
-        .workspace_dir
-        .join("instances")
-        .join(instance_slug)
-        .join("memory")
-        .join(file_path);
+    const MAX_MEMORY_FILE_BYTES: usize = 64 * 1024 * 1024;
+    let media = state.vector_store.media_store();
+    let slug = instance_slug.to_owned();
+    let path = file_path.to_owned();
+    let bytes = tokio::task::spawn_blocking(move || {
+        media.read_memory_file(&slug, &path, MAX_MEMORY_FILE_BYTES)
+    })
+    .await
+    .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?
+    .map_err(|_| StatusCode::NOT_FOUND)?;
 
-    let bytes = tokio::fs::read(&full_path)
-        .await
-        .map_err(|_| StatusCode::NOT_FOUND)?;
-
-    let content_type = match full_path.extension().and_then(|e| e.to_str()) {
+    let extension = std::path::Path::new(file_path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .map(str::to_ascii_lowercase);
+    let content_type = match extension.as_deref() {
         Some("jpg" | "jpeg") => "image/jpeg",
         Some("png") => "image/png",
         Some("gif") => "image/gif",
@@ -822,7 +822,7 @@ async fn serve_memory_file_inner(
     let is_media = content_type.starts_with("image/")
         || content_type.starts_with("video/")
         || content_type.starts_with("audio/");
-    let filename = full_path
+    let filename = std::path::Path::new(file_path)
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("file");
@@ -843,39 +843,14 @@ async fn delete_memory_file(
     State(state): State<AppState>,
     Path((instance_slug, file_path)): Path<(String, String)>,
 ) -> StatusCode {
-    if file_path.contains("..") || file_path.starts_with('/') {
-        return StatusCode::BAD_REQUEST;
-    }
-    let full_path = state
-        .workspace_dir
-        .join("instances")
-        .join(&instance_slug)
-        .join("memory")
-        .join(&file_path);
-    if !full_path.exists() {
-        return StatusCode::NOT_FOUND;
-    }
-    if std::fs::remove_file(&full_path).is_err() {
+    if let Err(error) = state
+        .vector_store
+        .delete_memory(&instance_slug, &file_path)
+        .await
+    {
+        log::warn!("[delete_memory] cleanup failed for {file_path}: {error}");
         return StatusCode::INTERNAL_SERVER_ERROR;
     }
-    // Clean up empty parent dirs
-    if let Some(parent) = full_path.parent() {
-        let memory_dir = state
-            .workspace_dir
-            .join("instances")
-            .join(&instance_slug)
-            .join("memory");
-        let _ = memory::cleanup_empty_dirs(parent, &memory_dir);
-    }
-    // Remove from vector store
-    let vs = state.vector_store.clone();
-    let slug = instance_slug.clone();
-    let path = file_path.clone();
-    tokio::spawn(async move {
-        if let Err(e) = vs.delete_by_path(&slug, &path).await {
-            log::warn!("[delete_memory] vector delete failed: {e}");
-        }
-    });
     StatusCode::OK
 }
 
@@ -1077,82 +1052,284 @@ async fn export_instance(
     }
 }
 
-/// POST /api/instances/{slug}/import — upload a tar.gz to replace instance data.
-/// Existing files are overwritten; files not in the archive are kept.
-async fn import_instance(
-    Path(instance_slug): Path<String>,
-    State(state): State<AppState>,
-    mut multipart: Multipart,
-) -> impl IntoResponse {
-    let instance_dir = state.workspace_dir.join("instances").join(&instance_slug);
-    if !instance_dir.is_dir() {
-        fs::create_dir_all(&instance_dir).ok();
+/// POST /api/instances/{slug}/import is disabled until a capability-safe
+/// importer exists for the stabilized storage format.
+async fn import_instance(Path(_instance_slug): Path<String>) -> impl IntoResponse {
+    (
+        StatusCode::NOT_IMPLEMENTED,
+        "profile import is temporarily unavailable during storage format stabilization",
+    )
+        .into_response()
+}
+
+#[cfg(test)]
+mod media_tests {
+    use super::*;
+    use crate::services::embedding::tests::{MockServer, response};
+
+    #[tokio::test]
+    async fn import_endpoint_is_disabled_without_filesystem_or_index_mutation() {
+        use axum::{
+            body::{Body, to_bytes},
+            http::Request,
+        };
+        use tower::ServiceExt;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let store = std::sync::Arc::new(
+            crate::services::vector::VectorStore::connect(workspace.path()).await,
+        );
+        let mut vector = vec![0.; 768];
+        vector[0] = 1.;
+        store
+            .upsert_text_memory("existing", "note.md", vec![("sentinel".into(), vector)])
+            .await
+            .unwrap();
+        let mut state = AppState::new(crate::config::Config::default()).await;
+        state.workspace_dir = workspace.path().to_owned();
+        state.vector_store = store.clone();
+        let app = router().with_state(state);
+
+        let response = app
+            .oneshot(
+                Request::builder()
+                    .method("POST")
+                    .uri("/api/instances/new/import")
+                    .body(Body::from(b"not an archive".as_slice()))
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+
+        assert_eq!(response.status(), StatusCode::NOT_IMPLEMENTED);
+        let body = to_bytes(response.into_body(), 4096).await.unwrap();
+        assert!(
+            String::from_utf8_lossy(&body).contains("storage format stabilization"),
+            "{}",
+            String::from_utf8_lossy(&body)
+        );
+        assert!(!workspace.path().join("instances/new").exists());
+        assert_eq!(store.list_all("existing", 10).await.unwrap().len(), 1);
     }
 
-    // Read the uploaded file
-    let field = match multipart.next_field().await {
-        Ok(Some(f)) => f,
-        _ => return (StatusCode::BAD_REQUEST, "no file uploaded").into_response(),
-    };
+    #[tokio::test]
+    async fn media_reindex_endpoint_preserves_committed_index_during_provider_failure() {
+        let mock = MockServer::new(vec![
+            (200, response(vec![1., 0., 0.])),
+            (503, serde_json::json!({"error":"offline"})),
+        ])
+        .await;
+        let ws = tempfile::tempdir().unwrap();
+        let dir = ws.path().join("instances/one/memory");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("photo.png"), [0xff]).unwrap();
+        crate::services::media_text::write(&dir, "photo.png", "sky").unwrap();
+        let mut state = AppState::new(crate::config::Config::default()).await;
+        state.workspace_dir = ws.path().to_owned();
+        state.vector_store = std::sync::Arc::new(
+            crate::services::vector::VectorStore::connect_with_config(ws.path(), &mock.config)
+                .await,
+        );
+        state
+            .vector_store
+            .backfill_text_memories(ws.path(), "one")
+            .await
+            .unwrap();
+        let _ = reindex_memory(State(state.clone()), Path("one".into()))
+            .await
+            .unwrap();
+        assert_eq!(
+            state.vector_store.list_all("one", 10).await.unwrap().len(),
+            1
+        );
+    }
+    #[tokio::test]
+    async fn delete_endpoint_reconciles_missing_source_and_stale_derived_state() {
+        let ws = tempfile::tempdir().unwrap();
+        let store =
+            std::sync::Arc::new(crate::services::vector::VectorStore::connect(ws.path()).await);
+        let mut vector = vec![0.; 768];
+        vector[0] = 1.;
+        store
+            .upsert_text_memory("one", "photo.png", vec![("stale".into(), vector)])
+            .await
+            .unwrap();
+        let mut state = AppState::new(crate::config::Config::default()).await;
+        state.workspace_dir = ws.path().to_owned();
+        state.vector_store = store.clone();
 
-    let data = match field.bytes().await {
-        Ok(b) => b,
-        Err(e) => {
-            log::error!("[import] failed to read upload: {e}");
-            return (StatusCode::BAD_REQUEST, "failed to read upload").into_response();
-        }
-    };
-
-    // Extract archive into the instance directory
-    // Use --strip-components=1 to handle archives that contain the slug as root dir
-    // Auto-detect format: try gzip first, fall back to plain tar
-    let is_gzip = data.len() >= 2 && data[0] == 0x1f && data[1] == 0x8b;
-    let mut child = match tokio::process::Command::new("tar")
-        .arg(if is_gzip { "xzf" } else { "xf" })
-        .arg("-") // stdin
-        .arg("--strip-components=1")
-        .arg("-C")
-        .arg(&instance_dir)
-        .stdin(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped())
-        .spawn()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            log::error!("[import] failed to spawn tar: {e}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, "import failed").into_response();
-        }
-    };
-
-    // Write data to stdin
-    if let Some(mut stdin) = child.stdin.take() {
-        use tokio::io::AsyncWriteExt;
-        if let Err(e) = stdin.write_all(&data).await {
-            log::error!("[import] failed to write to tar stdin: {e}");
-            return (StatusCode::INTERNAL_SERVER_ERROR, "import failed").into_response();
-        }
-        drop(stdin);
+        assert_eq!(
+            delete_memory_file(State(state), Path(("one".into(), "photo.png".into())),).await,
+            StatusCode::OK
+        );
+        assert!(store.list_all("one", 10).await.unwrap().is_empty());
     }
 
-    match child.wait().await {
-        Ok(status) if status.success() => {
-            log::info!(
-                "[import] imported {} bytes into {instance_slug}",
-                data.len()
+    #[tokio::test]
+    async fn serving_uses_case_insensitive_media_mime_detection() {
+        let ws = tempfile::tempdir().unwrap();
+        let memory = ws.path().join("instances/one/memory");
+        std::fs::create_dir_all(&memory).unwrap();
+        std::fs::write(memory.join("PHOTO.PNG"), b"png").unwrap();
+        let mut state = AppState::new(crate::config::Config::default()).await;
+        state.workspace_dir = ws.path().to_owned();
+        state.vector_store =
+            std::sync::Arc::new(crate::services::vector::VectorStore::connect(ws.path()).await);
+
+        let response = serve_memory_file_inner(&state, "one", "PHOTO.PNG")
+            .await
+            .unwrap();
+        assert_eq!(
+            response.headers()[axum::http::header::CONTENT_TYPE],
+            "image/png"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn http_memory_symlink_never_serves_outside_bytes() {
+        use std::os::unix::fs::symlink;
+
+        let ws = tempfile::tempdir().unwrap();
+        let memory = ws.path().join("instances/one/memory");
+        std::fs::create_dir_all(&memory).unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(outside.path(), b"outside sentinel").unwrap();
+        symlink(outside.path(), memory.join("leak.txt")).unwrap();
+        let mut state = AppState::new(crate::config::Config::default()).await;
+        state.workspace_dir = ws.path().to_owned();
+        state.vector_store =
+            std::sync::Arc::new(crate::services::vector::VectorStore::connect(ws.path()).await);
+
+        assert_eq!(
+            serve_memory_file_inner(&state, "one", "leak.txt")
+                .await
+                .unwrap_err(),
+            StatusCode::NOT_FOUND
+        );
+    }
+
+    #[tokio::test]
+    async fn media_search_metadata_resolves_root_and_nested_files_through_public_endpoint() {
+        use axum::{
+            body::{Body, to_bytes},
+            http::Request,
+        };
+        use tower::ServiceExt;
+        let mock = MockServer::new(vec![(200, response(vec![1., 0., 0.])); 6]).await;
+        let ws = tempfile::tempdir().unwrap();
+        let dir = ws.path().join("instances/one/memory");
+        std::fs::create_dir_all(dir.join("documents")).unwrap();
+        for path in [
+            "photo.png",
+            "documents/report #1.pdf",
+            "clip.mp4",
+            "voice.mp3",
+        ] {
+            std::fs::write(dir.join(path), [0xff, 0x81]).unwrap();
+            crate::services::media_text::write(&dir, path, "Orion description").unwrap();
+        }
+        let mut cfg = crate::config::Config::default();
+        cfg.auth_token = "test-token".into();
+        cfg.public_url = "https://memory.example".into();
+        let mut state = AppState::new(cfg).await;
+        state.workspace_dir = ws.path().to_owned();
+        state.vector_store = std::sync::Arc::new(
+            crate::services::vector::VectorStore::connect_with_config(ws.path(), &mock.config)
+                .await,
+        );
+        state
+            .vector_store
+            .backfill_text_memories(ws.path(), "one")
+            .await
+            .unwrap();
+        let app = router()
+            .merge(public_memory_router())
+            .with_state(state.clone());
+        let response = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/api/instances/one/memory/search?q=Orion")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let results: serde_json::Value =
+            serde_json::from_slice(&to_bytes(response.into_body(), 100_000).await.unwrap())
+                .unwrap();
+        assert_eq!(results.as_array().unwrap().len(), 4);
+        for result in results.as_array().unwrap() {
+            assert!(
+                result["source_type"]
+                    .as_str()
+                    .unwrap()
+                    .starts_with("media_")
             );
-            // Rebuild memory catalog after import
-            memory::rebuild_catalog_snapshot(&state.workspace_dir, &instance_slug);
-            memory::invalidate_frozen_catalog(&instance_slug);
-            Json(serde_json::json!({ "ok": true })).into_response()
+            let url = result["media_url"].as_str().unwrap();
+            assert!(
+                url.starts_with("https://memory.example/public/memory/one/"),
+                "{url}"
+            );
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .uri(url.strip_prefix("https://memory.example").unwrap())
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{url}");
+            assert_eq!(
+                to_bytes(response.into_body(), 100).await.unwrap().as_ref(),
+                [0xff, 0x81]
+            );
         }
-        Ok(_) => (
-            StatusCode::BAD_REQUEST,
-            "invalid archive — make sure it's a .tar or .tar.gz file",
+        let unauthorized = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .uri("/public/memory/one/photo.png")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+        state.config.write().await.public_url.clear();
+        let Json(local) = search_memory(
+            State(state.clone()),
+            Path("one".into()),
+            axum::extract::Query(SearchQuery {
+                q: "Orion".into(),
+                limit: 10,
+            }),
         )
-            .into_response(),
-        Err(e) => {
-            log::error!("[import] tar failed: {e}");
-            (StatusCode::INTERNAL_SERVER_ERROR, "import failed").into_response()
-        }
+        .await
+        .unwrap();
+        assert!(local.as_array().unwrap().iter().all(|r| {
+            r["media_url"]
+                .as_str()
+                .unwrap()
+                .starts_with("/api/instances/one/memory/")
+        }));
+        assert_eq!(
+            delete_memory_file(
+                State(state.clone()),
+                Path(("one".into(), "photo.png".into()))
+            )
+            .await,
+            StatusCode::OK
+        );
+        assert!(!dir.join("photo.png").exists());
+        assert!(!dir.join("photo.png.md").exists());
+        assert_eq!(
+            state.vector_store.list_all("one", 10).await.unwrap().len(),
+            3
+        );
     }
 }
