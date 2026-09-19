@@ -233,14 +233,17 @@ async fn wait_for_registration(
     }
 }
 
-/// When any desktop machine connects, notify the companion agent.
-/// If `bound_slug` is set, only notify that instance.
+/// When a desktop machine connects, the companion check-in runs once with a
+/// connection task, as one run in the proactive loop (#92, #93).
 pub(crate) async fn on_machine_connected(
     state: &AppState,
     machine_id: &str,
     bound_slug: Option<&str>,
 ) {
     use crate::domain::companion::{CANONICAL_SLUG, is_canonical};
+    use crate::domain::proactive::{Target, Trigger};
+    use crate::services::companion_routine::{self, Routine};
+    use crate::services::proactive::{Admission, outcome_from_trace};
 
     if let Some(slug) = bound_slug
         && !is_canonical(slug)
@@ -250,26 +253,26 @@ pub(crate) async fn on_machine_connected(
         );
         return;
     }
-    let companion_dir = crate::services::companion::companion_dir(&state.workspace_dir);
-    if !companion_dir.join("soul.md").exists() {
+    let instance_dir = crate::services::companion::companion_dir(&state.workspace_dir);
+    if !instance_dir.join("soul.md").exists() {
         log::warn!(
             "[machine-connect] '{machine_id}' connected before the companion was onboarded; nothing to notify"
         );
         return;
     }
-    // One run per connection event in the proactive loop (#92): reconnect
-    // bursts are deduplicated and rate-limited here.
+
+    // Reconnect bursts are deduplicated and rate-limited by the loop.
     let handle = match state.proactive.begin(
-        crate::domain::proactive::Trigger::MachineConnected {
+        Trigger::MachineConnected {
             machine_id: machine_id.to_owned(),
         },
         "desktop connected",
-        crate::domain::proactive::Target::Machine {
+        Target::Machine {
             machine_id: machine_id.to_owned(),
         },
     ) {
-        crate::services::proactive::Admission::Admitted(handle) => handle,
-        crate::services::proactive::Admission::Skipped(run) => {
+        Admission::Admitted(handle) => handle,
+        Admission::Skipped(run) => {
             log::info!(
                 "[machine-connect] '{machine_id}' skipped ({:?})",
                 run.status
@@ -277,136 +280,70 @@ pub(crate) async fn on_machine_connected(
             return;
         }
     };
-    let mut handle = Some(handle);
-    let all_slugs = vec![CANONICAL_SLUG.to_owned()];
 
-    log::info!(
-        "[machine-connect] '{}' connected, notifying {} instance(s): {:?}",
-        machine_id,
-        all_slugs.len(),
-        all_slugs.iter().map(String::as_str).collect::<Vec<_>>()
-    );
-
-    // Notify ALL matching instances about the connection
-    for slug in &all_slugs {
-        let msg = format!("[system] desktop '{}' connected.", machine_id);
-        if let Err(e) =
-            crate::services::chat::save_system_message(&state.workspace_dir, slug, "default", &msg)
-        {
-            log::error!("[machine-connect] failed to save system message for {slug}: {e}");
-        }
-
-        // Trigger the companion agent
-        let llm_guard = state.llm.read().await;
-        let Some(llm) = llm_guard.as_ref() else {
-            if let Some(handle) = handle.take() {
-                handle.fail("LLM not configured", true);
-            }
-            continue;
-        };
-        {
-            let instance_dir = state.workspace_dir.join("instances").join(slug);
-
-            let agents = crate::services::child_agents::load_agents(&state.workspace_dir, slug);
-            let Some(companion) = agents.iter().find(|a| a.name == "companion") else {
-                if let Some(handle) = handle.take() {
-                    handle.fail("companion routine is not configured", false);
-                }
-                continue;
-            };
-            {
-                let task = format!(
-                    "the user's desktop computer '{}' just connected.\n\
-                     USE reach_out NOW to let the user know their computer is connected. \
-                     keep it brief and friendly.",
-                    machine_id
-                );
-                log::info!(
-                    "[machine-connect] triggering companion for {slug} (task: machine_connected)"
-                );
-                let ws = state.workspace_dir.clone();
-                let s = slug.clone();
-                let events = state.events.clone();
-                let vs = state.vector_store.clone();
-                let llm_c = llm.clone();
-                let agent = companion.clone();
-                let ws2 = ws.clone();
-                let s2 = s.clone();
-                let events2 = events.clone();
-                let resources = state.resources.clone();
-                let proactive = state.proactive.clone();
-                let Some(run) = handle.take() else {
-                    continue;
-                };
-                tokio::spawn(async move {
-                    let run_id = run.id().to_owned();
-                    match crate::services::child_agents::run_single_agent(
-                        &ws,
-                        &s,
-                        &instance_dir,
-                        &llm_c,
-                        &events,
-                        &vs,
-                        &agent,
-                        Some(&task),
-                        "machine_connected",
-                        None,
-                        &resources,
-                        Some((&proactive, run_id.as_str())),
-                    )
-                    .await
-                    {
-                        Ok(r) => {
-                            log::info!(
-                                "[machine-connect] {s}: companion reach_out done ({} tokens)",
-                                r.tokens
-                            );
-                            run.complete(crate::services::proactive::outcome_from_trace(
-                                &r.trace, r.tokens,
-                            ));
-                        }
-                        Err(e) => {
-                            run.fail(&e.to_string(), true);
-                            log::error!("[machine-connect] {s}: companion failed: {e}");
-                            let err_msg = format!(
-                                "[system] failed to notify companion about desktop connection: {e}"
-                            );
-                            let _ = crate::services::chat::save_system_message(
-                                &ws2, &s2, "default", &err_msg,
-                            );
-                            let _ = events2.send(
-                                crate::domain::events::ServerEvent::ChatMessageCreated {
-                                    instance_slug: s2.clone(),
-                                    chat_id: "default".to_string(),
-                                    message: crate::domain::chat::ChatMessage {
-                                        id: format!(
-                                            "err_{}",
-                                            std::time::SystemTime::now()
-                                                .duration_since(std::time::UNIX_EPOCH)
-                                                .unwrap()
-                                                .as_millis()
-                                        ),
-                                        role: crate::domain::chat::ChatRole::Assistant,
-                                        content: format!(
-                                            "could not process desktop connection notification: {e}"
-                                        ),
-                                        created_at: std::time::SystemTime::now()
-                                            .duration_since(std::time::UNIX_EPOCH)
-                                            .unwrap()
-                                            .as_millis()
-                                            .to_string(),
-                                        kind: Default::default(),
-                                        tool_name: None,
-                                        mcp_app_html: None,
-                                        mcp_app_input: None,
-                                        model: None,
-                                    },
-                                },
-                            );
-                        }
-                    }
-                });
-            }
-        }
+    let slug = CANONICAL_SLUG;
+    let msg = format!("[system] desktop '{machine_id}' connected.");
+    if let Err(e) =
+        crate::services::chat::save_system_message(&state.workspace_dir, slug, "default", &msg)
+    {
+        log::error!("[machine-connect] failed to save system message: {e}");
     }
+
+    let llm_guard = state.llm.read().await;
+    let Some(llm) = llm_guard.as_ref() else {
+        handle.fail("LLM not configured", true);
+        return;
+    };
+    let task = format!(
+        "the user's desktop computer '{machine_id}' just connected.\n\
+         USE reach_out NOW to let the user know their computer is connected. \
+         keep it brief and friendly."
+    );
+    let ws = state.workspace_dir.clone();
+    let events = state.events.clone();
+    let vs = state.vector_store.clone();
+    let llm_c = llm.clone();
+    let resources = state.resources.clone();
+    let proactive = state.proactive.clone();
+    tokio::spawn(async move {
+        let run_id = handle.id().to_owned();
+        match companion_routine::run(
+            &ws,
+            slug,
+            &instance_dir,
+            &llm_c,
+            &events,
+            &vs,
+            &resources,
+            Routine::CheckIn,
+            Some(&task),
+            "machine_connected",
+            (&proactive, run_id.as_str()),
+        )
+        .await
+        {
+            Ok(r) => {
+                log::info!(
+                    "[machine-connect] companion reach_out done ({} tokens)",
+                    r.tokens
+                );
+                handle.complete(outcome_from_trace(&r.trace, r.tokens));
+            }
+            Err(e) => {
+                log::error!("[machine-connect] companion failed: {e}");
+                let err_msg =
+                    format!("[system] failed to notify companion about desktop connection: {e}");
+                if let Ok(message) =
+                    crate::services::chat::save_system_message(&ws, slug, "default", &err_msg)
+                {
+                    let _ = events.send(crate::domain::events::ServerEvent::ChatMessageCreated {
+                        instance_slug: slug.to_string(),
+                        chat_id: "default".to_string(),
+                        message,
+                    });
+                }
+                handle.fail(&e.to_string(), true);
+            }
+        }
+    });
 }

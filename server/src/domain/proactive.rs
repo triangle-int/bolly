@@ -162,7 +162,7 @@ impl QuietHours {
 }
 
 /// User-controlled limits applied at the one proactive boundary.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct ProactivePolicy {
     /// Master switch for spontaneous behavior.
@@ -176,6 +176,12 @@ pub struct ProactivePolicy {
     pub retention_max: usize,
     /// Finished records older than this are removed.
     pub retention_days: u32,
+    /// Hours between companion check-ins (#93).
+    pub check_in_interval_hours: f64,
+    /// Opt-in reflection routine (#93).
+    pub reflection_enabled: bool,
+    /// Hours between reflections when enabled.
+    pub reflection_interval_hours: f64,
 }
 
 impl Default for ProactivePolicy {
@@ -187,6 +193,9 @@ impl Default for ProactivePolicy {
             daily_reach_out_budget: 6,
             retention_max: 200,
             retention_days: 30,
+            check_in_interval_hours: 1.0,
+            reflection_enabled: false,
+            reflection_interval_hours: 72.0,
         }
     }
 }

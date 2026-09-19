@@ -1,12 +1,10 @@
 pub mod activity;
-pub mod agents;
 pub mod chat;
 pub mod companion;
 pub mod config;
 pub mod drops;
 
 pub mod health;
-pub mod heartbeat;
 pub mod instances;
 pub mod machine_agents;
 pub mod memory_import;

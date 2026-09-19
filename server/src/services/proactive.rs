@@ -225,6 +225,11 @@ impl ProactiveLoop {
             .map(|active| active.id.clone())
     }
 
+    /// When a trigger last finished (completed, failed, or cancelled), if ever.
+    pub fn last_finished_for(&self, trigger: &Trigger) -> Option<i64> {
+        self.last_finished(&trigger.dedupe_key())
+    }
+
     fn last_finished(&self, dedupe_key: &str) -> Option<i64> {
         self.list(usize::MAX)
             .into_iter()

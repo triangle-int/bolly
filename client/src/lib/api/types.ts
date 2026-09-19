@@ -107,46 +107,6 @@ export interface Thought {
 }
 
 
-export interface ChildAgent {
-	name: string;
-	description: string;
-	prompt: string;
-	interval_hours: number;
-	model: string;
-	triage: boolean;
-	tools: boolean;
-	enabled: boolean;
-	tool_groups: string[];
-	last_run: number;
-	is_due: boolean;
-	is_builtin: boolean;
-	modified_fields: string[];
-}
-
-export interface AgentHistoryEntry {
-	content: string;
-	timestamp: string;
-	id: string;
-}
-
-export interface AgentRunSummary {
-	id: string;
-	agent_name: string;
-	agent_kind: 'scheduled' | 'on_demand';
-	trigger: string;
-	started_at: number;
-	finished_at: number;
-	duration_ms: number;
-	tokens_used: number;
-	model: string;
-	summary: string;
-	status: 'completed' | { failed: { error: string } };
-}
-
-export interface AgentRun extends AgentRunSummary {
-	trace: unknown[];
-}
-
 export interface SkillSource {
 	repo: string;
 	version: string;
@@ -202,12 +162,6 @@ export interface ContextStats {
 	history_messages: number;
 	history_tokens_estimate: number;
 	total_input_tokens_estimate: number;
-}
-
-export interface HeartbeatUpdate {
-	id: string;
-	description: string;
-	preview: string;
 }
 
 export interface MemoryEntry {

@@ -18,13 +18,11 @@ use crate::domain::events::ServerEvent;
 // schedule_agent
 // ---------------------------------------------------------------------------
 
-#[allow(dead_code)]
 pub struct ScheduleAgentTool {
     instance_dir: PathBuf,
 }
 
 impl ScheduleAgentTool {
-    #[allow(dead_code)]
     pub fn new(workspace_dir: &Path, instance_slug: &str) -> Self {
         Self {
             instance_dir: workspace_dir.join("instances").join(instance_slug),

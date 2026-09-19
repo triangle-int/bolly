@@ -14,8 +14,6 @@ import type {
 	UpdateLlmRequest,
 	MemoryEntry,
 	UploadMeta,
-	ChildAgent,
-	AgentHistoryEntry,
 } from "./types.js";
 import { clearLegacyBrowserAuth } from "./legacy-auth-cleanup.js";
 
@@ -495,44 +493,6 @@ export function machineBye(slug: string): Promise<void> {
 	return authedFetch(`/api/instances/${encodeURIComponent(slug)}/machine-bye`, { method: "POST" }).then(() => {});
 }
 
-export function fetchAgents(slug: string): Promise<ChildAgent[]> {
-	return json(`/api/instances/${encodeURIComponent(slug)}/agents`);
-}
-
-export function triggerAgent(slug: string, agentName: string): Promise<{ status: string }> {
-	return json(`/api/instances/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentName)}/run`, {
-		method: "POST",
-	});
-}
-
-export function updateAgent(slug: string, agentName: string, updates: Record<string, unknown>): Promise<ChildAgent> {
-	return json(`/api/instances/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentName)}`, {
-		method: "PUT",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(updates),
-	});
-}
-
-export function resetAgent(slug: string, agentName: string): Promise<ChildAgent> {
-	return json(`/api/instances/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentName)}/reset`, {
-		method: "POST",
-	});
-}
-
-export function fetchAgentHistory(slug: string, agentName: string): Promise<AgentHistoryEntry[]> {
-	return json(`/api/instances/${encodeURIComponent(slug)}/agents/${encodeURIComponent(agentName)}/history`);
-}
-
-export function fetchAgentRuns(slug: string, limit = 50, agentName?: string): Promise<import("./types.js").AgentRunSummary[]> {
-	const params = new URLSearchParams({ limit: String(limit) });
-	if (agentName) params.set("agent_name", agentName);
-	return json(`/api/instances/${encodeURIComponent(slug)}/agent-runs?${params}`);
-}
-
-export function fetchAgentRun(slug: string, runId: string): Promise<import("./types.js").AgentRun> {
-	return json(`/api/instances/${encodeURIComponent(slug)}/agent-runs/${encodeURIComponent(runId)}`);
-}
-
 /** Interaction-rhythm tracking (#95): the one retained behavioral aggregate. */
 export function fetchRhythmTracking(slug: string): Promise<{ enabled: boolean }> {
 	return json(`/api/instances/${encodeURIComponent(slug)}/rhythm`);
@@ -723,27 +683,6 @@ export async function cancelSecret(slug: string, id: string): Promise<void> {
 // Heartbeat updates
 // ---------------------------------------------------------------------------
 
-export function fetchHeartbeatUpdates(slug: string): Promise<import("./types.js").HeartbeatUpdate[]> {
-	return json(`/api/instances/${encodeURIComponent(slug)}/heartbeat/updates`);
-}
-
-export async function applyHeartbeatUpdate(slug: string, updateId: string): Promise<void> {
-	const res = await authedFetch(
-		`/api/instances/${encodeURIComponent(slug)}/heartbeat/updates/${encodeURIComponent(updateId)}/apply`,
-		{ method: "POST" },
-	);
-	if (res.status === 401) throw new AuthError();
-	if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
-}
-
-export async function dismissHeartbeatUpdate(slug: string, updateId: string): Promise<void> {
-	const res = await authedFetch(
-		`/api/instances/${encodeURIComponent(slug)}/heartbeat/updates/${encodeURIComponent(updateId)}/dismiss`,
-		{ method: "POST" },
-	);
-	if (res.status === 401) throw new AuthError();
-	if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
-}
 
 
 // ---------------------------------------------------------------------------

@@ -46,13 +46,19 @@ Unknown fields are rejected. A marker with any other `format_version` or
         ├── memory/              long-term memory library (source of truth)
         ├── chats/{chat_id}/     conversation history and agent markers
         ├── scheduled/*.json     scheduled tasks
+        ├── activity/*.json      proactive run records (docs/proactive-loop.md)
+        ├── proactive_policy.json quiet hours, budget, routine intervals
+        ├── heartbeat.md         optional guidance for check-ins
         ├── uploads/             user-uploaded files
         ├── drops/               proactive creative artifacts
         └── skills/              companion-scoped skills
 ```
 
 Every persisted subsystem (settings, soul, history, memory, scheduler, machine
-bindings, export) lives under this single directory. The derived vector index
+bindings, export) lives under this single directory. Retired layouts
+(`stats/` per-day aggregates, `agents/` child-agent configs and histories,
+`agent_runs/` traces, `thoughts/` once #94 lands) are removed from the
+companion directory at startup and never read. The derived vector index
 under `vectors/` is keyed by the same slug and can always be rebuilt from
 `memory/`.
 

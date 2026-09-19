@@ -1,9 +1,7 @@
-//! Heartbeat — independent loops for each child agent.
-//!
-//! Each scheduled agent gets its own tokio task running on its own interval.
-//! No triage — agents wake up on their own schedule and run directly.
+//! Heartbeat — runs the companion's routines on their intervals through the
+//! one proactive loop (#92, #93). There is no configurable agent set: the
+//! check-in always runs and reflection runs when the user opts in.
 
-use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -11,27 +9,45 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use chrono::Utc;
 use tokio::sync::{RwLock, broadcast};
 
-use crate::domain::child_agent::ChildAgentConfig;
-use crate::domain::companion::CANONICAL_SLUG;
 use crate::domain::events::ServerEvent;
-use crate::domain::proactive::{Target, Trigger};
+use crate::domain::proactive::{ProactivePolicy, Target, Trigger};
 use crate::domain::thought::Thought;
-use crate::services::machine_registry::MachineRegistry;
+use crate::services::companion_routine::{self, Routine};
 use crate::services::proactive::{Admission, ProactiveLoop, outcome_from_trace};
 use crate::services::tools::load_mood_state;
 use crate::services::{chat, companion, llm::LlmBackend, rhythm, thoughts};
+
+/// Routines the heartbeat keeps alive. Reflection stays in the list so an
+/// opt-in later takes effect without a restart; its loop idles while disabled.
+pub fn routines() -> [Routine; 2] {
+    [Routine::CheckIn, Routine::Reflection]
+}
+
+/// Seconds to wait before a routine is due again.
+pub fn wait_secs(last_finished: Option<i64>, interval_hours: f64, now: i64) -> u64 {
+    let interval = interval_secs(interval_hours);
+    match last_finished {
+        Some(finished) => {
+            let elapsed = (now - finished).max(0) as u64;
+            interval.saturating_sub(elapsed)
+        }
+        None => 0,
+    }
+}
+
+fn interval_secs(interval_hours: f64) -> u64 {
+    (interval_hours.max(0.25) * 3600.0) as u64
+}
 
 pub fn start(
     workspace_dir: &Path,
     llm: Arc<RwLock<Option<LlmBackend>>>,
     events: broadcast::Sender<ServerEvent>,
     vector_store: Arc<crate::services::vector::VectorStore>,
-    machine_registry: MachineRegistry,
     resources: crate::services::resource_access::ResourceAccess,
     proactive: ProactiveLoop,
 ) {
     // One companion per server: only the canonical identity has an inner life.
-    let slug = CANONICAL_SLUG.to_owned();
     if !companion::companion_dir(workspace_dir)
         .join("soul.md")
         .exists()
@@ -39,235 +55,172 @@ pub fn start(
         log::info!("heartbeat: companion not onboarded yet; no loops spawned");
         return;
     }
-    crate::services::child_agents::ensure_builtins(workspace_dir, &slug);
 
-    // Spawn one independent loop per scheduled agent of the companion
-    let agents = crate::services::child_agents::load_agents(workspace_dir, &slug);
-
-    for agent in agents {
-        if agent.interval_hours <= 0.0 {
-            continue; // skip on-demand agents
-        }
-
+    for routine in routines() {
         let ws = workspace_dir.to_path_buf();
-        let s = slug.clone();
-        let l = llm.clone();
-        let ev = events.clone();
-        let vs = vector_store.clone();
-        let mr = machine_registry.clone();
+        let llm = llm.clone();
+        let events = events.clone();
+        let vector_store = vector_store.clone();
         let resources = resources.clone();
-        let pl = proactive.clone();
-        let agent_name = agent.name.clone();
-        let agent_hours = agent.interval_hours;
-        let agent_clone = agent.clone();
-
+        let proactive = proactive.clone();
         tokio::spawn(async move {
-            run_agent_loop(&ws, &s, &agent_clone, l, ev, vs, mr, resources, pl).await;
+            routine_loop(
+                &ws,
+                routine,
+                llm,
+                events,
+                vector_store,
+                resources,
+                proactive,
+            )
+            .await;
         });
-
-        log::info!(
-            "heartbeat: spawned '{agent_name}' for instance '{slug}' (every {agent_hours}h)"
-        );
+        log::info!("heartbeat: spawned '{}' routine", routine.name());
     }
 }
 
-/// Independent loop for a single child agent.
-async fn run_agent_loop(
+async fn routine_loop(
     workspace_dir: &Path,
-    slug: &str,
-    agent: &ChildAgentConfig,
+    routine: Routine,
     llm: Arc<RwLock<Option<LlmBackend>>>,
     events: broadcast::Sender<ServerEvent>,
     vector_store: Arc<crate::services::vector::VectorStore>,
-    machine_registry: MachineRegistry,
     resources: crate::services::resource_access::ResourceAccess,
     proactive: ProactiveLoop,
 ) {
-    let interval_secs = (agent.interval_hours * 3600.0) as u64;
-    let instance_dir = workspace_dir.join("instances").join(slug);
-
-    // Initial delay: wait until the agent is due
-    let marker_path = workspace_dir
-        .join("instances")
-        .join(slug)
-        .join("agents")
-        .join(format!(".last_run_{}", agent.name));
-    let last_run: i64 = fs::read_to_string(&marker_path)
-        .ok()
-        .and_then(|s| s.trim().parse().ok())
-        .unwrap_or(0);
-    let now = Utc::now().timestamp();
-    let elapsed = (now - last_run).max(0) as u64;
-    if elapsed < interval_secs {
-        let wait = interval_secs - elapsed;
-        log::info!(
-            "[heartbeat] {slug}/{}: next run in {}m",
-            agent.name,
-            wait / 60
-        );
-        tokio::time::sleep(Duration::from_secs(wait)).await;
-    }
-
-    let mut interval = tokio::time::interval(Duration::from_secs(interval_secs));
-    interval.tick().await; // first tick is immediate
+    let slug = crate::domain::companion::CANONICAL_SLUG;
+    let instance_dir = companion::companion_dir(workspace_dir);
+    let trigger = Trigger::Heartbeat {
+        agent: routine.name().to_owned(),
+    };
 
     loop {
-        // Check that soul.md still exists (instance might have been deleted)
         if !instance_dir.join("soul.md").exists() {
-            log::info!("[heartbeat] {slug}/{}: soul.md gone, stopping", agent.name);
+            log::info!("[heartbeat] {}: soul.md gone, stopping", routine.name());
             break;
         }
-
-        // Re-read agent config each tick to pick up enabled/disabled changes
-        let current_config = {
-            let path = workspace_dir
-                .join("instances")
-                .join(slug)
-                .join("agents")
-                .join(format!("{}.toml", agent.name));
-            std::fs::read_to_string(&path)
-                .ok()
-                .and_then(|raw| toml::from_str::<ChildAgentConfig>(&raw).ok())
-        };
-
-        let is_enabled = current_config
-            .as_ref()
-            .map(|c| c.enabled)
-            .unwrap_or(agent.enabled);
-
-        if !is_enabled {
-            // Agent disabled — skip this tick but keep the loop alive
-            interval.tick().await;
+        let policy: ProactivePolicy = proactive.policy();
+        if !routine.enabled(&policy) {
+            tokio::time::sleep(Duration::from_secs(300)).await;
+            continue;
+        }
+        let wait = wait_secs(
+            proactive.last_finished_for(&trigger),
+            routine.interval_hours(&policy),
+            Utc::now().timestamp(),
+        );
+        if wait > 0 {
+            log::info!("[heartbeat] {}: next run in {}m", routine.name(), wait / 60);
+            tokio::time::sleep(Duration::from_secs(wait)).await;
             continue;
         }
 
         let llm_guard = llm.read().await;
         if let Some(backend) = llm_guard.as_ref() {
-            run_agent_tick(
+            run_tick(
                 workspace_dir,
                 slug,
                 &instance_dir,
                 backend,
                 &events,
                 &vector_store,
-                agent,
-                &machine_registry,
+                routine,
                 &resources,
                 &proactive,
             )
             .await;
         }
         drop(llm_guard);
-
-        interval.tick().await;
+        // Whatever happened, do not spin: wait a full interval unless a skip
+        // said otherwise. Skips do not count as finished runs.
+        tokio::time::sleep(Duration::from_secs(interval_secs(
+            routine.interval_hours(&proactive.policy()),
+        )))
+        .await;
     }
 }
 
-/// Single tick of an agent's heartbeat.
-async fn run_agent_tick(
+/// One admitted wake-up of a routine.
+#[allow(clippy::too_many_arguments)]
+async fn run_tick(
     workspace_dir: &Path,
     slug: &str,
     instance_dir: &Path,
     llm: &LlmBackend,
     events: &broadcast::Sender<ServerEvent>,
     vector_store: &Arc<crate::services::vector::VectorStore>,
-    agent: &ChildAgentConfig,
-    machine_registry: &MachineRegistry,
+    routine: Routine,
     resources: &crate::services::resource_access::ResourceAccess,
     proactive: &ProactiveLoop,
 ) {
-    // Every wake-up is one run in the proactive loop (#92).
     let handle = match proactive.begin(
         Trigger::Heartbeat {
-            agent: agent.name.clone(),
+            agent: routine.name().to_owned(),
         },
-        &agent.description,
+        routine.description(),
         Target::Companion,
     ) {
         Admission::Admitted(handle) => handle,
         Admission::Skipped(run) => {
-            log::info!(
-                "[heartbeat] {slug}/{}: skipped ({:?})",
-                agent.name,
-                run.status
-            );
+            log::info!("[heartbeat] {}: skipped ({:?})", routine.name(), run.status);
             return;
         }
     };
     let run_id = handle.id().to_owned();
     let cancelled = handle.token();
-    log::info!("[heartbeat] {slug}: running '{}' ({run_id})", agent.name);
+    log::info!("[heartbeat] running '{}' ({run_id})", routine.name());
 
-    // ── Rhythm update (companion only) ──
-    if agent.name == "companion" {
-        // Incremental aggregate only; nothing rescans history here (#95).
-        let rhythm_insights = if rhythm::tracking_enabled(workspace_dir, slug) {
-            let rhythm_data = rhythm::load_rhythm(instance_dir);
-            rhythm::build_rhythm_insights(workspace_dir, slug, &rhythm_data)
-        } else {
-            String::new()
-        };
-        if !rhythm_insights.trim().is_empty() {
-            let label = format!("[system] rhythm update\n{rhythm_insights}");
+    // Rhythm hints (check-in only): the incremental aggregate, never a rescan (#95).
+    if routine == Routine::CheckIn && rhythm::tracking_enabled(workspace_dir, slug) {
+        let rhythm_data = rhythm::load_rhythm(instance_dir);
+        let insights = rhythm::build_rhythm_insights(workspace_dir, slug, &rhythm_data);
+        if !insights.trim().is_empty() {
+            let label = format!("[system] rhythm update\n{insights}");
             let _ = chat::save_system_message(workspace_dir, slug, "default", &label);
         }
     }
 
-    // Run the agent
-    let work = crate::services::child_agents::run_single_agent(
+    let work = companion_routine::run(
         workspace_dir,
         slug,
         instance_dir,
         llm,
         events,
         vector_store,
-        agent,
+        resources,
+        routine,
         None,
         "heartbeat",
-        Some(machine_registry),
-        resources,
-        Some((proactive, run_id.as_str())),
+        (proactive, run_id.as_str()),
     );
     let result = tokio::select! {
         result = work => result,
         _ = cancelled.cancelled() => {
             handle.cancel();
-            log::info!("[heartbeat] {slug}/{}: cancelled", agent.name);
+            log::info!("[heartbeat] {}: cancelled", routine.name());
             return;
         }
     };
     match result {
         Ok(r) => {
-            // Mark as run
-            let marker = workspace_dir
-                .join("instances")
-                .join(slug)
-                .join("agents")
-                .join(format!(".last_run_{}", agent.name));
-            let _ = fs::write(&marker, Utc::now().timestamp().to_string());
-
             let _ = chat::save_system_message(
                 workspace_dir,
                 slug,
                 "default",
                 &format!(
-                    "[system] child agent '{}' ran ({} tokens)",
-                    agent.name, r.tokens
+                    "[system] routine '{}' ran ({} tokens)",
+                    routine.name(),
+                    r.tokens
                 ),
             );
+            log::info!("[heartbeat] {}: done ({} tokens)", routine.name(), r.tokens);
 
-            log::info!(
-                "[heartbeat] {slug}/{}: done ({} tokens)",
-                agent.name,
-                r.tokens
-            );
-
-            // Save thought with the agent's actual inner monologue
+            // Thought capture stays until #94 replaces it with activity receipts.
             let final_mood = load_mood_state(instance_dir).companion_mood;
             let thought = Thought {
                 id: format!("thought_{}", unix_millis()),
                 raw: r.response,
-                actions: vec![format!("wake:{}", agent.name)],
+                actions: vec![format!("wake:{}", routine.name())],
                 mood: final_mood,
                 created_at: unix_millis().to_string(),
             };
@@ -279,7 +232,7 @@ async fn run_agent_tick(
             handle.complete(outcome_from_trace(&r.trace, r.tokens));
         }
         Err(e) => {
-            log::warn!("[heartbeat] {slug}/{}: failed: {e}", agent.name);
+            log::warn!("[heartbeat] {}: failed: {e}", routine.name());
             handle.fail(&e.to_string(), true);
         }
     }
@@ -290,4 +243,28 @@ fn unix_millis() -> u128 {
         .duration_since(UNIX_EPOCH)
         .expect("system time should be after unix epoch")
         .as_millis()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn routine_schedule_derives_from_the_last_finished_run() {
+        assert_eq!(wait_secs(None, 1.0, 1_000), 0, "never run: due now");
+        assert_eq!(wait_secs(Some(1_000), 1.0, 1_000 + 600), 3_000);
+        assert_eq!(wait_secs(Some(1_000), 1.0, 1_000 + 3_600), 0);
+        assert_eq!(
+            wait_secs(Some(5_000), 1.0, 1_000),
+            3_600,
+            "clock skew never underflows"
+        );
+        assert_eq!(wait_secs(None, 0.01, 0), 0);
+        assert_eq!(interval_secs(0.01), 900, "intervals floor at 15 minutes");
+    }
+
+    #[test]
+    fn only_the_check_in_and_reflection_routines_exist() {
+        assert_eq!(routines(), [Routine::CheckIn, Routine::Reflection]);
+    }
 }
