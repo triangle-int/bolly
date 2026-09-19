@@ -1,0 +1,27 @@
+{
+  "target": {"pid": 3198, "window_id": 3577},
+  "elements": [],
+  "tree_markdown": "",
+  "truncated": false,
+  "degraded": true,
+  "degraded_reason": "ax_window_unresolved: exact window accessibility surface unavailable",
+  "app_name": "CursorUIViewService",
+  "window_title": "",
+  "elements_complete": false,
+  "element_count": 0,
+  "returned_element_count": 0,
+  "total_element_count": 0,
+  "background_input": {
+    "exact_window": {"pid": 3198, "window_id": 3577, "status": "ax_unresolved"},
+    "observation": {"frame_freshness": "unknown", "one_shot_capture": "unavailable"},
+    "routes": [
+      {"reason": "off_space_or_ax_unresolved", "route": "accessibility", "status": "refused"},
+      {"reason": "off_space_or_ax_unresolved", "route": "window_pointer", "status": "refused"},
+      {"reason": "off_space_or_ax_unresolved", "route": "pid_keyboard", "status": "refused"}
+    ]
+  },
+  "escalation": {
+    "reason": "observation-only: exact background input is unavailable",
+    "recommended": "foreground"
+  }
+}
