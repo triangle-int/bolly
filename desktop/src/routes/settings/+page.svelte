@@ -9,6 +9,7 @@
 
   let permissions = $state<Permissions | null>(null);
   let checking = $state(false);
+  let error = $state<string | null>(null);
 
   onMount(async () => {
     refresh();
@@ -16,10 +17,12 @@
 
   async function refresh() {
     checking = true;
+    error = null;
     try {
       permissions = await invoke<Permissions>("check_permissions");
     } catch (e) {
       console.error("check_permissions failed", e);
+      error = "Could not read permission status. Retry, or check System Settings directly.";
     } finally {
       checking = false;
     }
@@ -29,6 +32,21 @@
     await invoke("open_permission_settings", { permission });
     setTimeout(refresh, 3000);
   }
+
+  const items = $derived([
+    {
+      key: "screen_recording",
+      name: "Screen recording",
+      desc: "Take screenshots of your screen",
+      granted: permissions?.screen_recording ?? false,
+    },
+    {
+      key: "accessibility",
+      name: "Accessibility",
+      desc: "Control the mouse and keyboard",
+      granted: permissions?.accessibility ?? false,
+    },
+  ]);
 </script>
 
 <div class="settings">
@@ -37,64 +55,54 @@
   </header>
 
   <main class="content">
-    <section class="section">
-      <h2 class="section-title">Permissions</h2>
+    <section class="section" aria-labelledby="permissions-title">
+      <p class="nl-eyebrow">macOS</p>
+      <h2 id="permissions-title" class="section-title">Permissions</h2>
       <p class="section-desc">
-        Nolune needs these macOS permissions to control your computer when you ask it to.
+        Nolune needs these permissions to control your computer when you ask it to.
       </p>
 
+      {#if error}
+        <p class="section-error" role="alert">{error}</p>
+      {/if}
+
       {#if permissions}
-        <div class="perm-list">
-          <div class="perm-row">
-            <div class="perm-info">
-              <div class="perm-icon">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
-                </svg>
+        <ul class="perm-list">
+          {#each items as item (item.key)}
+            <li class="perm-row">
+              <div class="perm-icon" aria-hidden="true">
+                {#if item.key === "screen_recording"}
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                    <rect x="2" y="3" width="20" height="14" rx="2" /><path d="M8 21h8M12 17v4" />
+                  </svg>
+                {:else}
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+                  </svg>
+                {/if}
               </div>
-              <div>
-                <span class="perm-name">Screen Recording</span>
-                <span class="perm-desc">Take screenshots of your screen</span>
+              <div class="perm-info">
+                <span class="perm-name">{item.name}</span>
+                <span class="perm-desc">{item.desc}</span>
               </div>
-            </div>
-            <div class="perm-status">
-              {#if permissions.screen_recording}
-                <span class="badge badge-granted">Granted</span>
-              {:else}
-                <button class="grant-btn" onclick={() => openSettings("screen_recording")}>Grant</button>
-              {/if}
-            </div>
-          </div>
+              <div class="perm-status">
+                {#if item.granted}
+                  <span class="badge">Granted</span>
+                {:else}
+                  <button class="nl-button perm-grant" onclick={() => openSettings(item.key)}>Grant</button>
+                {/if}
+              </div>
+            </li>
+          {/each}
+        </ul>
 
-          <div class="perm-row">
-            <div class="perm-info">
-              <div class="perm-icon">
-                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                  <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-                </svg>
-              </div>
-              <div>
-                <span class="perm-name">Accessibility</span>
-                <span class="perm-desc">Control mouse and keyboard</span>
-              </div>
-            </div>
-            <div class="perm-status">
-              {#if permissions.accessibility}
-                <span class="badge badge-granted">Granted</span>
-              {:else}
-                <button class="grant-btn" onclick={() => openSettings("accessibility")}>Grant</button>
-              {/if}
-            </div>
-          </div>
-        </div>
-
-        <button class="refresh-btn" onclick={refresh} disabled={checking}>
-          {checking ? "Checking..." : "Refresh status"}
+        <button class="nl-button-secondary refresh" onclick={refresh} disabled={checking}>
+          {checking ? "Checking…" : "Refresh status"}
         </button>
+      {:else if error}
+        <button class="nl-button-secondary refresh" onclick={refresh} disabled={checking}>Retry</button>
       {:else}
-        <div class="loading">
-          <div class="spinner"></div>
-        </div>
+        <p class="loading" role="status"><span class="spinner" aria-hidden="true"></span>Checking permissions…</p>
       {/if}
     </section>
   </main>
@@ -117,17 +125,14 @@
   }
 
   .title {
-    font-family: var(--font-display);
-    font-style: italic;
-    font-size: 1rem;
-    font-weight: 400;
+    font: 400 18px/1.2 var(--font-display);
     color: var(--foreground);
     margin: 0;
   }
 
   .content {
     flex: 1;
-    padding: 0 32px 32px;
+    padding: 8px 24px 32px;
     overflow-y: auto;
   }
 
@@ -137,135 +142,128 @@
   }
 
   .section-title {
-    font-family: var(--font-display);
-    font-style: italic;
-    font-size: 0.95rem;
-    font-weight: 400;
+    font: 400 28px/1.15 var(--font-display);
+    letter-spacing: -0.02em;
     color: var(--foreground);
-    margin: 0 0 6px;
+    margin: 8px 0 8px;
   }
 
   .section-desc {
-    font-size: 0.75rem;
-    color: var(--muted);
-    margin: 0 0 20px;
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    margin: 0 0 24px;
+  }
+
+  .section-error {
+    font-size: 14px;
     line-height: 1.5;
+    color: var(--destructive);
+    margin: 0 0 16px;
   }
 
   .perm-list {
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-    background: var(--border);
-    border-radius: 12px;
+    list-style: none;
+    margin: 0 0 16px;
+    padding: 0;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-panel);
+    background: var(--card);
     overflow: hidden;
-    margin-bottom: 16px;
   }
 
   .perm-row {
     display: flex;
     align-items: center;
-    justify-content: space-between;
+    gap: 12px;
     padding: 14px 16px;
-    background: oklch(1 0 0 / 3%);
   }
 
-  .perm-info {
-    display: flex;
-    align-items: center;
-    gap: 12px;
+  .perm-row + .perm-row {
+    border-top: 1px solid var(--border);
   }
 
   .perm-icon {
-    width: 32px;
-    height: 32px;
+    width: 36px;
+    height: 36px;
     display: flex;
     align-items: center;
     justify-content: center;
-    border-radius: 8px;
-    background: oklch(1 0 0 / 5%);
-    color: var(--muted);
+    border-radius: var(--radius-control);
+    background: var(--accent);
+    color: var(--accent-foreground);
+    flex-shrink: 0;
+  }
+
+  .perm-info {
+    flex: 1;
+    min-width: 0;
   }
 
   .perm-name {
     display: block;
-    font-size: 0.82rem;
+    font-size: 14px;
     font-weight: 500;
     color: var(--foreground);
   }
 
   .perm-desc {
     display: block;
-    font-size: 0.68rem;
-    color: var(--muted);
-    margin-top: 1px;
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-top: 2px;
+  }
+
+  .perm-status {
+    flex-shrink: 0;
   }
 
   .badge {
-    font-size: 0.68rem;
-    padding: 3px 10px;
-    border-radius: 20px;
-    font-family: var(--font-body);
-  }
-
-  .badge-granted {
-    background: oklch(0.72 0.17 142 / 12%);
-    color: oklch(0.72 0.17 142);
-    border: 1px solid oklch(0.72 0.17 142 / 20%);
-  }
-
-  .grant-btn {
-    padding: 5px 14px;
-    border-radius: 8px;
-    border: 1px solid oklch(0.78 0.12 75 / 20%);
-    background: oklch(0.78 0.12 75 / 10%);
-    color: var(--warm);
-    font-family: var(--font-body);
-    font-size: 0.72rem;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .grant-btn:hover {
-    background: oklch(0.78 0.12 75 / 18%);
-    border-color: oklch(0.78 0.12 75 / 35%);
-  }
-
-  .refresh-btn {
-    display: block;
-    margin: 0 auto;
-    padding: 6px 16px;
-    border-radius: 8px;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 12px;
     border: 1px solid var(--border);
-    background: transparent;
-    color: var(--muted);
-    font-family: var(--font-body);
-    font-size: 0.72rem;
-    cursor: pointer;
-    transition: all 0.2s;
+    border-radius: 999px;
+    background: var(--accent);
+    color: var(--accent-foreground);
+    font: 500 13px/1.5 var(--font-body);
   }
 
-  .refresh-btn:hover:not(:disabled) {
-    background: oklch(1 0 0 / 4%);
-    color: var(--foreground);
+  .badge::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--primary);
   }
 
-  .refresh-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
+  .perm-grant {
+    min-height: 36px;
+    padding: 6px 14px;
+  }
+
+  .refresh {
+    display: flex;
+    margin: 0 auto;
   }
 
   .loading {
     display: flex;
+    align-items: center;
     justify-content: center;
+    gap: 8px;
     padding: 24px;
+    margin: 0;
+    font-size: 14px;
+    color: var(--text-muted);
   }
 
   .spinner {
-    width: 20px;
-    height: 20px;
-    border: 2px solid oklch(1 0 0 / 10%);
-    border-top-color: var(--warm);
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
     border-radius: 50%;
     animation: spin 0.8s linear infinite;
   }

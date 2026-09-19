@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from "svelte";
+  import Moon from "$lib/components/Moon.svelte";
   import { auth, init, saveConnection, testConnection, openConnection, disconnect } from "$lib/auth.svelte";
   import { updater, checkForUpdates, installUpdate, dismissUpdate } from "$lib/updater.svelte";
 
@@ -8,17 +9,29 @@
   let editing = $state(false);
   let shUrl = $state("");
   let shToken = $state("");
+  let splashAudio = $state<HTMLAudioElement | null>(null);
 
   onMount(() => {
     init();
     checkForUpdates();
-    const fallback = setTimeout(endSplash, 5000);
-    return () => clearTimeout(fallback);
+    const reducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    // The chime strikes as the moon lands and opens its eyes (see the moon-born and eyes-awake keyframes).
+    const chime = setTimeout(() => {
+      if (!splashAudio) return;
+      splashAudio.volume = 0.4;
+      splashAudio.play().catch(() => {});
+    }, reducedMotion ? 0 : 1300);
+    const timer = setTimeout(endSplash, reducedMotion ? 900 : 3000);
+    return () => {
+      clearTimeout(chime);
+      clearTimeout(timer);
+    };
   });
 
   function endSplash() {
+    if (splashFading) return;
     splashFading = true;
-    setTimeout(() => { splash = false; }, 600);
+    setTimeout(() => { splash = false; }, 500);
   }
 
   function edit() {
@@ -27,6 +40,13 @@
     auth.error = null;
     auth.message = null;
     editing = true;
+  }
+
+  function cancelEdit() {
+    editing = false;
+    shToken = "";
+    auth.error = null;
+    auth.message = null;
   }
 
   async function save() {
@@ -43,100 +63,106 @@
       shUrl = "";
     }
   }
+
+  const canSubmit = $derived(!auth.loading && !!shUrl.trim() && (!!shToken.trim() || !!auth.connection));
 </script>
 
-<!-- Audio lives outside splash so it's not destroyed on transition -->
-<audio src="/splash.mp3" autoplay></audio>
+<!-- Audio lives outside the splash so it is not destroyed on transition; played from onMount, not autoplay -->
+<audio bind:this={splashAudio} src="/splash.mp3" preload="auto"></audio>
 
 {#if splash}
-  <div class="splash" class:splash-fade={splashFading}>
-    <video
-      class="splash-video"
-      src="/splash.mp4"
-      autoplay
-      muted
-      playsinline
-      onended={endSplash}
-    ></video>
+  <div class="splash" class:splash-fade={splashFading} aria-label="Nolune is starting">
+    <div class="splash-moon"><Moon size="100%" /></div>
     <div class="splash-brand">
-      <img src="/icon.png" alt="" class="splash-logo" />
       <span class="splash-name">nolune</span>
+      <p class="nl-eyebrow">A little presence. Entirely yours.</p>
     </div>
+    <button class="splash-skip nl-button-secondary" onclick={endSplash}>Continue</button>
   </div>
 {/if}
 
-<div class="dashboard" class:dashboard-enter={!splash}>
-    <div class="dashboard-glow"></div>
-
-    <header class="header">
-      <div class="brand">
-        <img src="/icon.png" alt="" class="logo" />
-        <span class="brand-name">nolune</span>
-      </div>
-      {#if auth.connection || auth.error}
-        <button class="sign-out-btn" onclick={forget} disabled={auth.loading}>Disconnect</button>
-      {/if}
-    </header>
-
-    {#if updater.available}
-      <div class="update-banner">
-        {#if updater.downloading}
-          <div class="update-text">
-            Updating to v{updater.version}...
-          </div>
-          <div class="update-progress-track">
-            <div class="update-progress-bar" style:width="{Math.round(updater.progress * 100)}%"></div>
-          </div>
-        {:else if updater.error}
-          <div class="update-text update-error-text">Update failed: {updater.error}</div>
-          <div class="update-actions">
-            <button class="update-btn" onclick={installUpdate}>Retry</button>
-            <button class="update-dismiss" onclick={dismissUpdate}>Dismiss</button>
-          </div>
-        {:else}
-          <div class="update-text">
-            v{updater.version} is available
-          </div>
-          <div class="update-actions">
-            <button class="update-btn" onclick={installUpdate}>Update & restart</button>
-            <button class="update-dismiss" onclick={dismissUpdate}>Later</button>
-          </div>
-        {/if}
-      </div>
+<div class="app" class:app-enter={!splash}>
+  <header class="header">
+    <div class="brand">
+      <Moon size={28} />
+      <span class="brand-name">nolune</span>
+    </div>
+    {#if auth.connection || auth.error}
+      <button class="header-action nl-button-secondary" onclick={forget} disabled={auth.loading}>Disconnect</button>
     {/if}
+  </header>
 
-    <main class="content">
-      {#if !splash}
-        <div class="sign-in-card">
-          <h2 class="sign-in-title">connect to your companion</h2>
-          {#if auth.error}<p class="sh-error" role="alert">{auth.error}</p>{/if}
-          {#if auth.message}<p role="status">{auth.message}</p>{/if}
-          {#if auth.connection && !editing}
-            <p class="sign-in-desc">{auth.connection.url}</p>
-            <div class="sh-form">
-              <button class="sign-in-btn" onclick={openConnection} disabled={auth.loading}>Open / Reconnect</button>
-              <button class="sign-in-btn" onclick={() => testConnection(auth.connection!.url)} disabled={auth.loading}>Test connection</button>
-              <button class="sign-in-btn" onclick={edit} disabled={auth.loading}>Edit connection</button>
-            </div>
-          {:else}
-            <p class="sign-in-desc">Connect to your own Nolune server. Your connection is saved on this computer.</p>
-            <form class="sh-form" onsubmit={(event) => { event.preventDefault(); save(); }}>
-              <label for="server-url">Server URL</label>
-              <input id="server-url" class="paste-input" bind:value={shUrl} placeholder="http://localhost:3000" disabled={auth.loading} required />
-              <label for="auth-token">Auth token</label>
-              <input id="auth-token" class="paste-input" bind:value={shToken} type="password" autocomplete="off" placeholder={auth.connection ? "Leave blank to keep saved token" : "Auth token from config.toml"} disabled={auth.loading} required={!auth.connection} />
-              <button class="sign-in-btn" type="submit" disabled={auth.loading || !shUrl.trim() || (!shToken.trim() && !auth.connection)}>Save connection</button>
-              <button class="sign-in-btn" type="button" onclick={() => testConnection(shUrl, shToken)} disabled={auth.loading || !shUrl.trim() || (!shToken.trim() && !auth.connection)}>Test connection</button>
-              {#if editing}
-                <button class="sign-in-btn" type="button" onclick={() => { editing = false; shToken = ""; auth.error = null; auth.message = null; }} disabled={auth.loading}>Cancel</button>
-              {/if}
-            </form>
-          {/if}
-          {#if auth.loading}<p role="status">Please wait…</p>{/if}
+  {#if updater.available}
+    <div class="update-banner" role="status">
+      {#if updater.downloading}
+        <span class="update-text">Updating to v{updater.version}…</span>
+        <div class="update-progress-track" aria-hidden="true">
+          <div class="update-progress-bar" style:width="{Math.round(updater.progress * 100)}%"></div>
+        </div>
+      {:else if updater.error}
+        <span class="update-text update-error-text">Update failed: {updater.error}</span>
+        <div class="update-actions">
+          <button class="nl-button" onclick={installUpdate}>Retry</button>
+          <button class="nl-button-secondary" onclick={dismissUpdate}>Dismiss</button>
+        </div>
+      {:else}
+        <span class="update-text">v{updater.version} is available</span>
+        <div class="update-actions">
+          <button class="nl-button" onclick={installUpdate}>Update and restart</button>
+          <button class="nl-button-secondary" onclick={dismissUpdate}>Later</button>
         </div>
       {/if}
-    </main>
-  </div>
+    </div>
+  {/if}
+
+  <main class="content">
+    {#if !splash}
+      <section class="connect nl-panel" aria-labelledby="connect-title">
+        <p class="nl-eyebrow">Desktop companion</p>
+        <h2 id="connect-title" class="connect-title">Connect to your companion</h2>
+
+        {#if auth.error}<p class="form-error" role="alert">{auth.error}</p>{/if}
+        {#if auth.message}<p class="form-message" role="status">{auth.message}</p>{/if}
+
+        {#if auth.connection && !editing}
+          <p class="connect-desc">Your companion is saved on this computer. Open it to keep talking.</p>
+          <div class="server">
+            <span class="nl-label">Server</span>
+            <code class="server-url">{auth.connection.url}</code>
+          </div>
+          <div class="actions">
+            <button class="nl-button" onclick={openConnection} disabled={auth.loading}>Open companion</button>
+            <button class="nl-button-secondary" onclick={() => testConnection(auth.connection!.url)} disabled={auth.loading}>Test connection</button>
+            <button class="nl-button-secondary" onclick={edit} disabled={auth.loading}>Edit connection</button>
+          </div>
+        {:else}
+          <p class="connect-desc">Connect to your own Nolune server. Your connection is saved on this computer.</p>
+          <form class="form" onsubmit={(event) => { event.preventDefault(); save(); }}>
+            <div class="field">
+              <label class="nl-label" for="server-url">Server URL</label>
+              <input id="server-url" class="nl-input" bind:value={shUrl} placeholder="http://localhost:3000" disabled={auth.loading} required autocomplete="url" spellcheck="false" />
+            </div>
+            <div class="field">
+              <label class="nl-label" for="auth-token">Auth token</label>
+              <input id="auth-token" class="nl-input" bind:value={shToken} type="password" autocomplete="off" placeholder={auth.connection ? "Leave blank to keep the saved token" : "Token from config.toml"} disabled={auth.loading} required={!auth.connection} />
+            </div>
+            <div class="actions">
+              <button class="nl-button" type="submit" disabled={!canSubmit}>Save connection</button>
+              <button class="nl-button-secondary" type="button" onclick={() => testConnection(shUrl, shToken)} disabled={!canSubmit}>Test connection</button>
+              {#if editing}
+                <button class="nl-button-secondary" type="button" onclick={cancelEdit} disabled={auth.loading}>Cancel</button>
+              {/if}
+            </div>
+          </form>
+        {/if}
+
+        {#if auth.loading}
+          <p class="pending" role="status"><span class="spinner" aria-hidden="true"></span>Please wait…</p>
+        {/if}
+      </section>
+    {/if}
+  </main>
+</div>
 
 <style>
   /* ─── Splash ───────────────────────────────────────────────── */
@@ -144,93 +170,101 @@
     position: fixed;
     inset: 0;
     z-index: 100;
-    background: var(--background);
     display: flex;
+    flex-direction: column;
     align-items: center;
     justify-content: center;
-    transition: opacity 0.6s ease;
+    gap: 32px;
+    padding: 24px;
+    background: var(--background);
+    text-align: center;
+    transition: opacity 0.5s ease;
   }
 
   .splash-fade {
     opacity: 0;
+    pointer-events: none;
   }
 
-  .splash-video {
-    position: absolute;
-    width: 420px;
-    height: 420px;
-    object-fit: contain;
-    pointer-events: none;
-    opacity: 0.7;
+  .splash-moon {
+    width: clamp(140px, 30vmin, 240px);
+    transform-origin: center;
+    animation: moon-born 2.2s cubic-bezier(0.22, 1, 0.36, 1) both;
+  }
+
+  .splash-moon :global(.moon-eyes) {
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: eyes-awake 2.6s ease both;
   }
 
   .splash-brand {
-    position: relative;
-    z-index: 1;
     display: flex;
-    align-items: center;
-    gap: 14px;
-    animation: splash-brand-in 1.2s cubic-bezier(0.16, 1, 0.3, 1) both;
-    animation-delay: 0.3s;
-  }
-
-  .splash-logo {
-    width: 40px;
-    height: 40px;
-    object-fit: contain;
+    flex-direction: column;
+    gap: 8px;
+    animation: fade-up 0.7s ease 1.5s both;
   }
 
   .splash-name {
-    font-family: var(--font-display);
-    font-style: italic;
-    font-size: 1.8rem;
-    color: var(--foreground);
+    font: 400 40px/1.1 var(--font-display);
     letter-spacing: -0.02em;
+    color: var(--foreground);
   }
 
-  @keyframes splash-brand-in {
-    0% { opacity: 0; transform: translateY(10px) scale(0.95); }
-    100% { opacity: 1; transform: translateY(0) scale(1); }
+  .splash-skip {
+    position: absolute;
+    bottom: 24px;
+    left: 50%;
+    transform: translateX(-50%);
+    -webkit-app-region: no-drag;
   }
 
-  /* ─── Dashboard ────────────────────────────────────────────── */
-  .dashboard {
-    display: flex;
-    flex-direction: column;
-    height: 100vh;
-    position: relative;
-    overflow: hidden;
-    opacity: 0;
+  @keyframes moon-born {
+    0% { opacity: 0; transform: translateY(24px) scale(0.1) rotate(-30deg); }
+    20% { opacity: 1; }
+    65% { transform: translateY(-6px) scale(1.04) rotate(4deg); }
+    100% { opacity: 1; transform: translateY(0) scale(1) rotate(0); }
   }
 
-  .dashboard-enter {
-    animation: dash-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  @keyframes eyes-awake {
+    0%, 48% { transform: scaleY(0.08); }
+    62%, 78% { transform: scaleY(1); }
+    83% { transform: scaleY(0.08); }
+    89%, 100% { transform: scaleY(1); }
   }
 
-  @keyframes dash-in {
+  @keyframes fade-up {
     from { opacity: 0; transform: translateY(8px); }
     to { opacity: 1; transform: translateY(0); }
   }
 
-  .dashboard-glow {
-    position: absolute;
-    top: 35%;
-    left: 50%;
-    width: 600px;
-    height: 600px;
-    transform: translate(-50%, -50%);
-    border-radius: 50%;
-    background: radial-gradient(circle, oklch(0.55 0.08 240 / 3%) 0%, transparent 60%);
-    pointer-events: none;
+  @media (prefers-reduced-motion: reduce) {
+    .splash-moon,
+    .splash-moon :global(.moon-eyes),
+    .splash-brand {
+      animation: none;
+    }
+  }
+
+  /* ─── App shell ────────────────────────────────────────────── */
+  .app {
+    display: flex;
+    flex-direction: column;
+    height: 100vh;
+    overflow: hidden;
+    opacity: 0;
+  }
+
+  .app-enter {
+    animation: fade-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
   .header {
     display: flex;
     align-items: center;
     justify-content: space-between;
+    gap: 16px;
     padding: 16px 24px;
-    position: relative;
-    z-index: 1;
     -webkit-app-region: drag;
   }
 
@@ -240,47 +274,21 @@
     gap: 10px;
   }
 
-  .logo {
-    width: 28px;
-    height: 28px;
-    object-fit: contain;
-  }
-
   .brand-name {
-    font-family: var(--font-display);
-    font-style: italic;
-    font-size: 1.1rem;
+    font: 400 20px/1.1 var(--font-display);
+    letter-spacing: -0.02em;
     color: var(--foreground);
   }
 
-  .sign-out-btn {
+  .header-action {
     -webkit-app-region: no-drag;
-    padding: 5px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: transparent;
-    color: var(--muted);
-    font-family: var(--font-body);
-    font-size: 0.72rem;
-    cursor: pointer;
-    transition: all 0.2s;
-  }
-
-  .sign-out-btn:hover {
-    background: oklch(1 0 0 / 5%);
-    color: var(--foreground);
-    border-color: oklch(1 0 0 / 14%);
   }
 
   .content {
     flex: 1;
     display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    padding: 24px;
-    position: relative;
-    z-index: 1;
+    padding: 24px 40px 40px;
+    overflow-y: auto;
   }
 
   /* ─── Update banner ─────────────────────────────────────────── */
@@ -288,25 +296,23 @@
     display: flex;
     align-items: center;
     justify-content: space-between;
+    flex-wrap: wrap;
     gap: 12px;
     margin: 0 24px;
-    padding: 10px 16px;
-    border-radius: 10px;
-    background: oklch(0.78 0.12 75 / 8%);
-    border: 1px solid oklch(0.78 0.12 75 / 14%);
-    position: relative;
-    z-index: 1;
-    animation: dash-in 0.3s ease both;
+    padding: 12px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    background: var(--card);
+    animation: fade-up 0.3s ease both;
   }
 
   .update-text {
-    font-size: 0.78rem;
-    color: var(--warm);
-    white-space: nowrap;
+    font-size: 14px;
+    color: var(--text-secondary);
   }
 
   .update-error-text {
-    color: oklch(0.65 0.15 25 / 80%);
+    color: var(--destructive);
   }
 
   .update-actions {
@@ -315,139 +321,124 @@
     flex-shrink: 0;
   }
 
-  .update-btn {
-    padding: 5px 14px;
-    border-radius: 7px;
-    border: 1px solid oklch(0.78 0.12 75 / 22%);
-    background: oklch(0.78 0.12 75 / 12%);
-    color: var(--warm);
-    font-family: var(--font-body);
-    font-size: 0.72rem;
-    font-weight: 500;
-    cursor: pointer;
-    transition: all 0.2s;
-    white-space: nowrap;
-  }
-
-  .update-btn:hover {
-    background: oklch(0.78 0.12 75 / 20%);
-    border-color: oklch(0.78 0.12 75 / 32%);
-  }
-
-  .update-dismiss {
-    padding: 5px 10px;
-    border-radius: 7px;
-    border: none;
-    background: transparent;
-    color: var(--muted);
-    font-family: var(--font-body);
-    font-size: 0.72rem;
-    cursor: pointer;
-    transition: color 0.2s;
-  }
-
-  .update-dismiss:hover {
-    color: var(--foreground);
-  }
-
   .update-progress-track {
     flex: 1;
+    min-width: 120px;
     height: 4px;
     border-radius: 2px;
-    background: oklch(1 0 0 / 6%);
+    background: var(--accent);
     overflow: hidden;
   }
 
   .update-progress-bar {
     height: 100%;
     border-radius: 2px;
-    background: var(--warm);
+    background: var(--primary);
     transition: width 0.3s ease;
   }
 
-  /* ─── Sign in ──────────────────────────────────────────────── */
-  .sign-in-card {
-    text-align: center;
-    max-width: 360px;
-    animation: dash-in 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+  /* ─── Connect panel ─────────────────────────────────────────── */
+  .connect {
+    width: 100%;
+    max-width: 440px;
+    margin: auto; /* centers when there is room, scrolls from the top when there is not */
+    animation: fade-up 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
-  .sign-in-title {
-    font-family: var(--font-display);
-    font-style: italic;
-    font-size: 1.5rem;
-    font-weight: 400;
+  .connect-title {
+    font: 400 28px/1.15 var(--font-display);
+    letter-spacing: -0.02em;
     color: var(--foreground);
-    margin: 0 0 12px;
+    margin: 8px 0 12px;
   }
 
-  .sign-in-desc {
-    font-size: 0.82rem;
-    color: var(--muted);
-    margin: 0 0 28px;
+  .connect-desc {
+    font-size: 14px;
+    line-height: 1.6;
+    color: var(--text-secondary);
+    margin: 0 0 24px;
+  }
+
+  .form-error,
+  .form-message {
+    font-size: 14px;
     line-height: 1.5;
+    margin: 0 0 16px;
   }
 
-  .sign-in-btn {
-    padding: 10px 28px;
-    border-radius: 10px;
-    font-size: 0.85rem;
-    font-weight: 500;
-    font-family: var(--font-body);
-    color: var(--warm);
-    background: oklch(0.78 0.12 75 / 10%);
-    border: 1px solid oklch(0.78 0.12 75 / 18%);
-    border-top-color: oklch(0.78 0.12 75 / 28%);
-    cursor: pointer;
-    transition: all 0.3s ease;
+  .form-error {
+    color: var(--destructive);
   }
 
-  .sign-in-btn:hover:not(:disabled) {
-    background: oklch(0.78 0.12 75 / 16%);
-    border-color: oklch(0.78 0.12 75 / 30%);
-    box-shadow: 0 0 40px oklch(0.78 0.12 75 / 8%);
+  .form-message {
+    color: var(--text-secondary);
   }
 
-  .sign-in-btn:disabled {
-    opacity: 0.4;
-    cursor: not-allowed;
+  .server {
+    margin-bottom: 24px;
   }
 
-  .sh-error {
-    font-size: 0.78rem;
-    color: oklch(0.65 0.15 25 / 80%);
-    margin: 0 0 8px;
-    padding: 8px 12px;
-    border-radius: 8px;
-    background: oklch(0.65 0.15 25 / 8%);
-    border: 1px solid oklch(0.65 0.15 25 / 14%);
+  .server-url {
+    display: block;
+    padding: 12px 14px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius-control);
+    background: var(--popover);
+    font: 400 14px/1.5 var(--font-mono);
+    color: var(--foreground);
+    overflow-x: auto;
+    white-space: nowrap;
+    user-select: text;
   }
 
-  .sh-form {
+  .form {
     display: flex;
     flex-direction: column;
-    gap: 10px;
+    gap: 16px;
   }
 
-  .paste-input {
-    flex: 1;
-    padding: 8px 12px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: oklch(1 0 0 / 3%);
-    color: var(--foreground);
-    font-family: monospace;
-    font-size: 0.75rem;
-    outline: none;
-    transition: border-color 0.2s;
+  .actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
   }
 
-  .paste-input:focus {
-    border-color: oklch(1 0 0 / 16%);
+  .actions > * {
+    flex: 1 1 auto;
   }
 
-  .paste-input::placeholder {
-    color: oklch(0.50 0.03 240);
+  .pending {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 16px 0 0;
+    font-size: 14px;
+    color: var(--text-muted);
   }
 
+  .spinner {
+    width: 16px;
+    height: 16px;
+    border: 2px solid var(--border);
+    border-top-color: var(--primary);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  @media (max-width: 560px) {
+    .content {
+      padding: 16px 20px 24px;
+    }
+    .connect {
+      padding: 20px;
+    }
+    .splash-name {
+      font-size: 32px;
+    }
+  }
 </style>
