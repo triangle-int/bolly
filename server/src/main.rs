@@ -60,7 +60,8 @@ async fn main() {
     let state = app::state::AppState::new(config).await;
 
     // Migrate legacy memory (facts.md + episodes.md → library) for all instances
-    services::memory::migrate_all_instances(&state.workspace_dir);
+    let media_store = state.vector_store.media_store();
+    services::memory::migrate_all_instances(&media_store);
 
     let addr: SocketAddr = format!("{host}:{port}").parse().unwrap_or_else(|_| {
         log::warn!("invalid host:port {host}:{port}, falling back to 0.0.0.0:{port}");
@@ -100,20 +101,18 @@ async fn main() {
         // Backfill missing or invalid local indexes from memory files (background, non-blocking)
         let vs = state.vector_store.clone();
         let ws = state.workspace_dir.clone();
+        let media = state.vector_store.media_store();
         tokio::spawn(async move {
-            // Scan all instances and backfill
-            let instances_dir = ws.join("instances");
-            let entries = match std::fs::read_dir(&instances_dir) {
-                Ok(e) => e,
-                Err(_) => return,
+            let slugs = match media.instance_slugs() {
+                Ok(slugs) => slugs,
+                Err(error) => {
+                    log::warn!("[backfill] cannot list instances: {error}");
+                    return;
+                }
             };
 
             let mut had_errors = false;
-            for entry in entries.flatten() {
-                if !entry.path().is_dir() {
-                    continue;
-                }
-                let slug = entry.file_name().to_string_lossy().to_string();
+            for slug in slugs {
                 match vs.needs_backfill(&slug).await {
                     Ok(false) => continue,
                     Ok(true) => {}

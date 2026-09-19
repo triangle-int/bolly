@@ -4,13 +4,15 @@ use super::{
     embedding,
     vector_index::{Record, Store},
 };
+use std::collections::HashMap;
 use std::path::Path;
 
 pub struct VectorStore {
     store: std::sync::Arc<Store>,
     keywords: std::sync::Arc<super::keyword_search::KeywordStore>,
+    media: std::sync::Arc<super::media_text::MediaStore>,
     embedding: embedding::EmbeddingService,
-    workspace: std::path::PathBuf,
+    lifecycle: std::sync::Mutex<HashMap<String, std::sync::Arc<tokio::sync::Mutex<()>>>>,
 }
 
 #[derive(Debug, Clone)]
@@ -39,7 +41,11 @@ impl VectorStore {
 
     pub async fn connect_with_config(data_dir: &Path, config: &crate::config::Config) -> Self {
         let settings = config.embedding.clone();
-        let workspace = data_dir.to_owned();
+        std::fs::create_dir_all(data_dir).expect("failed to create workspace root");
+        let media = std::sync::Arc::new(
+            super::media_text::MediaStore::open(data_dir)
+                .expect("failed to open persistent workspace capability"),
+        );
         let data_dir = data_dir.to_owned();
         let store = tokio::task::spawn_blocking(move || {
             Store::with_endpoint(
@@ -54,10 +60,187 @@ impl VectorStore {
         .expect("vector store initialization task panicked");
         Self {
             store: std::sync::Arc::new(store),
-            keywords: std::sync::Arc::new(super::keyword_search::KeywordStore::new()),
+            keywords: std::sync::Arc::new(super::keyword_search::KeywordStore::new(media.clone())),
+            media,
             embedding: embedding::EmbeddingService::from_config(config),
-            workspace,
+            lifecycle: std::sync::Mutex::new(HashMap::new()),
         }
+    }
+
+    pub fn media_store(&self) -> std::sync::Arc<super::media_text::MediaStore> {
+        self.media.clone()
+    }
+
+    fn lifecycle_lock(&self, slug: &str) -> std::sync::Arc<tokio::sync::Mutex<()>> {
+        let mut locks = self
+            .lifecycle
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        locks
+            .entry(slug.to_owned())
+            .or_insert_with(|| std::sync::Arc::new(tokio::sync::Mutex::new(())))
+            .clone()
+    }
+
+    /// Replace raw media, its owner-bound representation, and derived search
+    /// state while holding one companion lifecycle gate through indexing.
+    pub async fn replace_media_from_upload(
+        &self,
+        slug: &str,
+        path: &str,
+        upload_id: &str,
+        content: &str,
+    ) -> Result<Option<String>, String> {
+        let _guard = self.lifecycle_lock(slug).lock_owned().await;
+        self.keywords.invalidate(slug);
+        self.delete_by_path_no_lifecycle(slug, path).await?;
+
+        let media = self.media.clone();
+        let publish_slug = slug.to_owned();
+        let publish_path = path.to_owned();
+        let publish_upload = upload_id.to_owned();
+        tokio::task::spawn_blocking(move || {
+            media.publish_upload_owner(&publish_slug, &publish_path, &publish_upload)
+        })
+        .await
+        .map_err(|error| format!("media publication task failed: {error}"))?
+        .map_err(|error| error.to_string())?;
+
+        let media = self.media.clone();
+        let write_slug = slug.to_owned();
+        let write_path = path.to_owned();
+        let write_content = content.to_owned();
+        let persisted = tokio::task::spawn_blocking(move || {
+            media.write(&write_slug, &write_path, &write_content)
+        })
+        .await
+        .map_err(|error| format!("representation write task failed: {error}"))?;
+        if let Err(error) = persisted {
+            self.delete_by_path_no_lifecycle(slug, path).await?;
+            return Ok(Some(format!("could not persist representation: {error}")));
+        }
+        if content.trim().is_empty() {
+            return Ok(Some("media text representation is empty".into()));
+        }
+        match self.index_media_text_no_lifecycle(slug, path).await {
+            Ok(()) => Ok(None),
+            Err(error) => Ok(Some(error)),
+        }
+    }
+
+    pub async fn edit_media_text(
+        &self,
+        slug: &str,
+        path: &str,
+        content: &str,
+        append: bool,
+    ) -> Result<(), String> {
+        let _guard = self.lifecycle_lock(slug).lock_owned().await;
+        let content = if append {
+            let media = self.media.clone();
+            let read_slug = slug.to_owned();
+            let read_path = path.to_owned();
+            let mut existing =
+                tokio::task::spawn_blocking(move || media.read(&read_slug, &read_path))
+                    .await
+                    .map_err(|error| format!("representation read task failed: {error}"))??;
+            if !existing.is_empty() && !existing.ends_with('\n') {
+                existing.push('\n');
+            }
+            existing.push_str(content);
+            existing
+        } else {
+            content.to_owned()
+        };
+        let media = self.media.clone();
+        let write_slug = slug.to_owned();
+        let write_path = path.to_owned();
+        tokio::task::spawn_blocking(move || media.write(&write_slug, &write_path, &content))
+            .await
+            .map_err(|error| format!("representation write task failed: {error}"))?
+            .map_err(|error| error.to_string())?;
+        self.index_media_text_no_lifecycle(slug, path).await
+    }
+
+    pub async fn delete_memory(&self, slug: &str, path: &str) -> Result<(), String> {
+        let _guard = self.lifecycle_lock(slug).lock_owned().await;
+        self.keywords.invalidate(slug);
+        let media = self.media.clone();
+        let delete_slug = slug.to_owned();
+        let delete_path = path.to_owned();
+        let filesystem =
+            tokio::task::spawn_blocking(move || media.remove(&delete_slug, &delete_path))
+                .await
+                .map_err(|error| format!("memory delete task failed: {error}"))?;
+        let derived = self.delete_by_path_no_lifecycle(slug, path).await;
+        match (filesystem, derived) {
+            (Ok(()), Ok(())) => Ok(()),
+            (filesystem, derived) => {
+                let mut errors = Vec::new();
+                if let Err(error) = filesystem {
+                    errors.push(format!("filesystem cleanup failed: {error}"));
+                }
+                if let Err(error) = derived {
+                    errors.push(format!("derived cleanup failed: {error}"));
+                }
+                Err(errors.join("; "))
+            }
+        }
+    }
+
+    pub async fn write_text_memory(
+        &self,
+        slug: &str,
+        path: &str,
+        content: &str,
+        append: bool,
+    ) -> Result<String, String> {
+        let _guard = self.lifecycle_lock(slug).lock_owned().await;
+        let media = self.media.clone();
+        let read_slug = slug.to_owned();
+        let read_path = path.to_owned();
+        let existing =
+            tokio::task::spawn_blocking(move || media.read_memory_text(&read_slug, &read_path))
+                .await
+                .map_err(|error| format!("memory read task failed: {error}"))?;
+        let existing = match existing {
+            Ok(content) => Some(content),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(format!("memory read failed: {error}")),
+        };
+        let body = if append {
+            let mut body = existing
+                .as_deref()
+                .map(crate::services::memory::parse_frontmatter)
+                .map(|(_, body)| body.to_owned())
+                .unwrap_or_default();
+            if !body.is_empty() && !body.ends_with('\n') {
+                body.push('\n');
+            }
+            body.push_str(content);
+            body
+        } else {
+            content.to_owned()
+        };
+        let stamped = crate::services::memory::stamp_content(&body, existing.as_deref());
+        let media = self.media.clone();
+        let write_slug = slug.to_owned();
+        let write_path = path.to_owned();
+        let write_content = stamped.clone();
+        tokio::task::spawn_blocking(move || {
+            media.write_memory_text(&write_slug, &write_path, &write_content)
+        })
+        .await
+        .map_err(|error| format!("memory write task failed: {error}"))?
+        .map_err(|error| error.to_string())?;
+        self.keywords.invalidate(slug);
+        if let Err(error) = self
+            .index_document(slug, path, &stamped, "text_memory", None)
+            .await
+        {
+            log::warn!("[memory] semantic indexing unavailable; memory saved: {error}");
+        }
+        Ok(stamped)
     }
 
     pub fn embedding_status(&self) -> serde_json::Value {
@@ -70,20 +253,63 @@ impl VectorStore {
 
     /// Embed and replace a complete document under the same lock as strict backfill.
     pub async fn index_text(&self, slug: &str, path: &str, content: &str) -> Result<(), String> {
+        if let Some(owner) = super::media_text::media_path(path) {
+            return self.index_media_text(slug, owner).await;
+        }
+        if super::media_text::source_type(path).is_some() {
+            return self.index_media_text(slug, path).await;
+        }
+        self.index_document(slug, path, content, "text_memory", None)
+            .await
+    }
+
+    /// Embed persisted media text in the same provider/model space as text memories.
+    /// No bytes or caller-supplied vectors are accepted at this boundary.
+    pub async fn index_media_text(&self, slug: &str, path: &str) -> Result<(), String> {
+        let _guard = self.lifecycle_lock(slug).lock_owned().await;
+        self.index_media_text_no_lifecycle(slug, path).await
+    }
+
+    async fn index_media_text_no_lifecycle(&self, slug: &str, path: &str) -> Result<(), String> {
+        let source_type = super::media_text::source_type(path).ok_or("unsupported media path")?;
+        self.index_document(slug, path, "", source_type, Some(path))
+            .await
+    }
+
+    async fn index_document(
+        &self,
+        slug: &str,
+        path: &str,
+        content: &str,
+        source_type: &str,
+        upload_id: Option<&str>,
+    ) -> Result<(), String> {
         self.keywords.invalidate(slug);
         let mutation = self.store.mutation_lock(slug);
         let _guard = mutation.lock_owned().await;
         let result = async {
+            let representation;
+            let content = if source_type.starts_with("media_") {
+                let media = self.media.clone();
+                let slug = slug.to_owned();
+                let path = path.to_owned();
+                representation = tokio::task::spawn_blocking(move || media.read(&slug, &path))
+                    .await
+                    .map_err(|error| format!("representation read task failed: {error}"))??;
+                representation.as_str()
+            } else {
+                content
+            };
             self.embedding.ensure_configured()?;
             let mut records = Vec::new();
             for (i, text) in chunk_text(content).into_iter().enumerate() {
                 let vector = self.embedding.document(&text).await?;
                 records.push(Record {
                     path: path.into(),
-                    source_type: "text_memory".into(),
+                    source_type: source_type.into(),
                     chunk_index: i as u32,
                     content_preview: text.chars().take(500).collect(),
-                    upload_id: None,
+                    upload_id: upload_id.map(str::to_owned),
                     vector,
                 });
             }
@@ -145,13 +371,12 @@ impl VectorStore {
                 Vec::new()
             }
         };
-        let workspace = self.workspace.clone();
         let keywords = self.keywords.clone();
         let companion = slug.to_owned();
         let query = query.to_owned();
         let keywords = tokio::task::spawn_blocking(move || {
             if !keywords.has_index(&companion) {
-                keywords.reindex(&workspace, &companion);
+                keywords.reindex(&companion);
             }
             keywords.search(&companion, &query, limit)
         })
@@ -213,7 +438,8 @@ impl VectorStore {
             .await
     }
 
-    pub async fn upsert_text_memory(
+    #[cfg(test)]
+    pub(crate) async fn upsert_text_memory(
         &self,
         instance_slug: &str,
         path: &str,
@@ -239,29 +465,33 @@ impl VectorStore {
         .await
     }
 
-    /// Guard the public boundary against accidental cross-space raw-media vectors.
-    #[allow(dead_code)]
-    pub async fn upsert_media(
-        &self,
-        _instance_slug: &str,
-        _upload_id: &str,
-        _source_type: &str,
-        _mime_type: &str,
-        _original_name: &str,
-        _content_preview: &str,
-        _vector: Vec<f32>,
-    ) -> Result<(), String> {
-        Err(
-            "raw media semantic indexing is unavailable for text embeddings; file is preserved"
-                .into(),
-        )
+    pub async fn delete_by_path(&self, instance_slug: &str, path: &str) -> Result<(), String> {
+        let _guard = self.lifecycle_lock(instance_slug).lock_owned().await;
+        self.delete_by_path_no_lifecycle(instance_slug, path).await
     }
 
-    pub async fn delete_by_path(&self, instance_slug: &str, path: &str) -> Result<(), String> {
+    async fn delete_by_path_no_lifecycle(
+        &self,
+        instance_slug: &str,
+        path: &str,
+    ) -> Result<(), String> {
         self.keywords.invalidate(instance_slug);
         let path = path.to_owned();
-        self.mutate(instance_slug, move |store, slug| store.delete(&slug, &path))
-            .await
+        self.mutate(instance_slug, move |store, slug| {
+            if let Some(owner) = super::media_text::media_path(&path) {
+                store.invalidate_path(&slug, owner)
+            } else if super::media_text::source_type(&path).is_some() {
+                store.invalidate_path(&slug, &path)
+            } else {
+                store.delete(&slug, &path)
+            }
+        })
+        .await
+    }
+
+    #[cfg(test)]
+    pub(crate) fn inject_next_persist_failure(&self) {
+        self.store.inject_next_persist_failure();
     }
 
     pub async fn search(
@@ -295,84 +525,78 @@ impl VectorStore {
         .await
     }
 
-    /// Strictly backfill text memories; raw media awaits descriptions/transcripts (#60).
+    /// Build one candidate from text memories and persisted media representations.
+    /// Provider failures leave the committed index intact; missing media text stays retryable.
     pub async fn backfill_text_memories(
         &self,
-        workspace_dir: &Path,
+        _workspace_dir: &Path,
         instance_slug: &str,
     ) -> Result<usize, String> {
-        use super::memory;
-
+        let _lifecycle_guard = self.lifecycle_lock(instance_slug).lock_owned().await;
         let mutation = self.store.mutation_lock(instance_slug);
         let _guard = mutation.lock_owned().await;
-        let workspace = workspace_dir.to_owned();
         let slug = instance_slug.to_owned();
-        let scan_workspace = workspace.clone();
         let scan_slug = slug.clone();
-        let entries = tokio::task::spawn_blocking(move || {
-            memory::scan_library_checked(&scan_workspace, &scan_slug)
-        })
-        .await
-        .map_err(|error| format!("backfill scan task failed: {error}"))??;
+        let scan_media = self.media.clone();
+        let entries = tokio::task::spawn_blocking(move || scan_media.memory_files(&scan_slug))
+            .await
+            .map_err(|error| format!("backfill scan task failed: {error}"))??;
         let mut records = Vec::new();
         let mut count = 0;
         let mut skipped_media = false;
         let mut provider_checked = false;
 
-        for entry in entries {
-            let file_path = workspace
-                .join("instances")
-                .join(&slug)
-                .join("memory")
-                .join(&entry.path);
-            let ext = file_path
-                .extension()
-                .and_then(|extension| extension.to_str())
-                .unwrap_or("")
-                .to_lowercase();
-            let is_image = matches!(
-                ext.as_str(),
-                "jpg" | "jpeg" | "png" | "webp" | "gif" | "svg"
-            );
-            let is_media =
-                is_image || matches!(ext.as_str(), "pdf" | "mp4" | "mov" | "mp3" | "wav");
-
-            if is_media {
-                skipped_media = true;
-                log::info!(
-                    "[backfill] raw media skipped for {}: text embeddings require a description/transcript",
-                    entry.path
-                );
-                continue;
+        for path in entries {
+            let source_type = super::media_text::source_type(&path);
+            let content = if source_type.is_some() {
+                let media_path = path.clone();
+                let media = self.media.clone();
+                let media_slug = slug.clone();
+                match tokio::task::spawn_blocking(move || media.read(&media_slug, &media_path))
+                    .await
+                    .map_err(|error| format!("backfill representation task failed: {error}"))?
+                {
+                    Ok(content) => content,
+                    Err(_) => {
+                        skipped_media = true;
+                        log::info!(
+                            "[backfill] semantic indexing pending for {}: missing or unreadable representation",
+                            path
+                        );
+                        continue;
+                    }
+                }
             } else {
-                if !provider_checked {
-                    self.embedding.ensure_configured()?;
-                    provider_checked = true;
-                }
-                let display_path = entry.path.clone();
-                let content =
-                    tokio::task::spawn_blocking(move || std::fs::read_to_string(&file_path))
-                        .await
-                        .map_err(|error| format!("backfill read task failed: {error}"))?
-                        .map_err(|error| format!("backfill read {display_path}: {error}"))?;
-                let chunks = chunk_text(&content);
-                for (chunk_index, chunk) in chunks.into_iter().enumerate() {
-                    let vector = self
-                        .embedding
-                        .document(&chunk)
-                        .await
-                        .map_err(|error| format!("backfill embed {}: {error}", entry.path))?;
-                    records.push(Record {
-                        path: entry.path.clone(),
-                        source_type: "text_memory".into(),
-                        chunk_index: chunk_index as u32,
-                        content_preview: chunk.chars().take(500).collect(),
-                        upload_id: None,
-                        vector,
-                    });
-                    count += 1;
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                }
+                let display_path = path.clone();
+                let media = self.media.clone();
+                let text_slug = slug.clone();
+                tokio::task::spawn_blocking(move || {
+                    media.read_memory_text(&text_slug, &display_path)
+                })
+                .await
+                .map_err(|error| format!("backfill read task failed: {error}"))?
+                .map_err(|error| format!("backfill read {path}: {error}"))?
+            };
+            if !provider_checked {
+                self.embedding.ensure_configured()?;
+                provider_checked = true;
+            }
+            for (chunk_index, chunk) in chunk_text(&content).into_iter().enumerate() {
+                let vector = self
+                    .embedding
+                    .document(&chunk)
+                    .await
+                    .map_err(|error| format!("backfill embed {path}: {error}"))?;
+                records.push(Record {
+                    path: path.clone(),
+                    source_type: source_type.unwrap_or("text_memory").into(),
+                    chunk_index: chunk_index as u32,
+                    content_preview: chunk.chars().take(500).collect(),
+                    upload_id: source_type.map(|_| path.clone()),
+                    vector,
+                });
+                count += 1;
+                tokio::time::sleep(std::time::Duration::from_millis(50)).await;
             }
         }
 
@@ -441,6 +665,383 @@ pub fn chunk_text(text: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn upload(workspace: &Path, name: &str, bytes: &[u8]) {
+        let uploads = workspace.join("instances/one/uploads");
+        std::fs::create_dir_all(&uploads).unwrap();
+        std::fs::write(uploads.join(name), bytes).unwrap();
+        std::fs::write(
+            uploads.join(format!("{name}.json")),
+            serde_json::json!({"stored_name": name}).to_string(),
+        )
+        .unwrap();
+    }
+
+    #[tokio::test]
+    async fn append_refuses_invalid_utf8_without_changing_existing_bytes() {
+        let workspace = tempfile::tempdir().unwrap();
+        let memory = workspace.path().join("instances/one/memory");
+        std::fs::create_dir_all(&memory).unwrap();
+        let original = b"valid prefix\xffexisting suffix";
+        std::fs::write(memory.join("note.md"), original).unwrap();
+        let store = VectorStore::connect(workspace.path()).await;
+
+        let error = store
+            .write_text_memory("one", "note.md", "appended", true)
+            .await
+            .unwrap_err();
+
+        assert!(
+            error.contains("UTF-8") || error.contains("utf-8"),
+            "{error}"
+        );
+        assert_eq!(std::fs::read(memory.join("note.md")).unwrap(), original);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn append_refuses_symlink_read_failure_without_changing_outside_bytes() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let memory = workspace.path().join("instances/one/memory");
+        std::fs::create_dir_all(&memory).unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        let original = b"outside sentinel";
+        std::fs::write(outside.path(), original).unwrap();
+        symlink(outside.path(), memory.join("note.md")).unwrap();
+        let store = VectorStore::connect(workspace.path()).await;
+
+        assert!(
+            store
+                .write_text_memory("one", "note.md", "appended", true)
+                .await
+                .is_err()
+        );
+        assert!(memory.join("note.md").is_symlink());
+        assert_eq!(std::fs::read(outside.path()).unwrap(), original);
+    }
+
+    #[tokio::test]
+    async fn concurrent_media_replacements_publish_matching_owner_and_sidecar() {
+        use super::super::embedding::tests::{MockServer, response};
+        let mock = MockServer::new(vec![(200, response(vec![1., 0., 0.])); 2]).await;
+        let workspace = tempfile::tempdir().unwrap();
+        upload(workspace.path(), "upload-a", b"owner A");
+        upload(workspace.path(), "upload-b", b"owner B");
+        let store = std::sync::Arc::new(
+            VectorStore::connect_with_config(workspace.path(), &mock.config).await,
+        );
+        let gate = store.lifecycle_lock("one");
+        let guard = gate.lock_owned().await;
+
+        let first = {
+            let store = store.clone();
+            tokio::spawn(async move {
+                store
+                    .replace_media_from_upload("one", "photo.png", "upload-a", "text A")
+                    .await
+            })
+        };
+        tokio::task::yield_now().await;
+        let second = {
+            let store = store.clone();
+            tokio::spawn(async move {
+                store
+                    .replace_media_from_upload("one", "photo.png", "upload-b", "text B")
+                    .await
+            })
+        };
+        tokio::task::yield_now().await;
+        assert!(!first.is_finished() && !second.is_finished());
+        drop(guard);
+        first.await.unwrap().unwrap();
+        second.await.unwrap().unwrap();
+
+        assert_eq!(
+            store
+                .media_store()
+                .read_memory_file("one", "photo.png", 100)
+                .unwrap(),
+            b"owner B"
+        );
+        assert_eq!(
+            store.media_store().read("one", "photo.png").unwrap(),
+            "text B"
+        );
+        assert_eq!(
+            store.list_all("one", 10).await.unwrap()[0].content_preview,
+            "text B"
+        );
+    }
+
+    #[tokio::test]
+    async fn media_replace_then_delete_is_ordered_as_one_lifecycle() {
+        use super::super::embedding::tests::{MockServer, response};
+        let mock = MockServer::new(vec![(200, response(vec![1., 0., 0.]))]).await;
+        let workspace = tempfile::tempdir().unwrap();
+        upload(workspace.path(), "upload-a", b"owner A");
+        let store = std::sync::Arc::new(
+            VectorStore::connect_with_config(workspace.path(), &mock.config).await,
+        );
+        let guard = store.lifecycle_lock("one").lock_owned().await;
+        let replace = {
+            let store = store.clone();
+            tokio::spawn(async move {
+                store
+                    .replace_media_from_upload("one", "photo.png", "upload-a", "text A")
+                    .await
+            })
+        };
+        tokio::task::yield_now().await;
+        let delete = {
+            let store = store.clone();
+            tokio::spawn(async move { store.delete_memory("one", "photo.png").await })
+        };
+        drop(guard);
+        replace.await.unwrap().unwrap();
+        delete.await.unwrap().unwrap();
+
+        assert!(
+            store
+                .media_store()
+                .read_memory_file("one", "photo.png", 100)
+                .is_err()
+        );
+        assert!(store.media_store().read("one", "photo.png").is_err());
+        assert!(store.list_all("one", 10).await.unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn media_sidecar_edit_then_replace_has_one_consistent_winner() {
+        use super::super::embedding::tests::{MockServer, response};
+        let mock = MockServer::new(vec![(200, response(vec![1., 0., 0.])); 3]).await;
+        let workspace = tempfile::tempdir().unwrap();
+        upload(workspace.path(), "upload-a", b"owner A");
+        upload(workspace.path(), "upload-b", b"owner B");
+        let store = std::sync::Arc::new(
+            VectorStore::connect_with_config(workspace.path(), &mock.config).await,
+        );
+        store
+            .replace_media_from_upload("one", "photo.png", "upload-a", "text A")
+            .await
+            .unwrap();
+        let guard = store.lifecycle_lock("one").lock_owned().await;
+        let edit = {
+            let store = store.clone();
+            tokio::spawn(async move {
+                store
+                    .edit_media_text("one", "photo.png", "edited A", false)
+                    .await
+            })
+        };
+        tokio::task::yield_now().await;
+        let replace = {
+            let store = store.clone();
+            tokio::spawn(async move {
+                store
+                    .replace_media_from_upload("one", "photo.png", "upload-b", "text B")
+                    .await
+            })
+        };
+        drop(guard);
+        edit.await.unwrap().unwrap();
+        replace.await.unwrap().unwrap();
+
+        assert_eq!(
+            store
+                .media_store()
+                .read_memory_file("one", "photo.png", 100)
+                .unwrap(),
+            b"owner B"
+        );
+        assert_eq!(
+            store.media_store().read("one", "photo.png").unwrap(),
+            "text B"
+        );
+        assert_eq!(
+            store.list_all("one", 10).await.unwrap()[0].content_preview,
+            "text B"
+        );
+    }
+
+    #[tokio::test]
+    async fn media_backfill_pairs_all_types_and_commits_media_only_and_mixed_corpora() {
+        use super::super::embedding::tests::{MockServer, response};
+        for mixed in [false, true] {
+            let mock = MockServer::new(vec![(200, response(vec![1., 0., 0.])); 5]).await;
+            let ws = tempfile::tempdir().unwrap();
+            let dir = ws.path().join("instances/one/memory");
+            std::fs::create_dir_all(&dir).unwrap();
+            for path in ["photo.png", "paper.pdf", "clip.mov", "voice.wav"] {
+                std::fs::write(dir.join(path), [0xff, 0x81]).unwrap();
+                super::super::media_text::write(&dir, path, &format!("representation of {path}"))
+                    .unwrap();
+            }
+            if mixed {
+                std::fs::write(dir.join("note.md"), "independent note").unwrap();
+            }
+            let store = VectorStore::connect_with_config(ws.path(), &mock.config).await;
+            let count = 4 + usize::from(mixed);
+            assert_eq!(
+                store
+                    .backfill_text_memories(ws.path(), "one")
+                    .await
+                    .unwrap(),
+                count
+            );
+            let records = store.list_all("one", 20).await.unwrap();
+            assert_eq!(records.len(), count);
+            assert!(!store.needs_backfill("one").await.unwrap());
+            for record in records.iter().filter(|r| r.path != "note.md") {
+                assert_eq!(
+                    record.source_type,
+                    super::super::media_text::source_type(&record.path).unwrap()
+                );
+                assert_eq!(record.upload_id.as_deref(), Some(record.path.as_str()));
+                assert_eq!(
+                    record.content_preview,
+                    format!("representation of {}", record.path)
+                );
+            }
+            assert_eq!(mock.requests.lock().unwrap().len(), count);
+            assert!(
+                mock.requests
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .all(|r| r.2["input"][0].as_str().is_some())
+            );
+            drop(store);
+            let restored = VectorStore::connect_with_config(ws.path(), &mock.config).await;
+            assert!(!restored.needs_backfill("one").await.unwrap());
+            assert_eq!(restored.list_all("one", 20).await.unwrap().len(), count);
+        }
+    }
+
+    #[tokio::test]
+    async fn media_backfill_missing_unreadable_empty_representations_commit_valid_text_and_retry() {
+        use super::super::embedding::tests::{MockServer, response};
+        let mock = MockServer::new(vec![(200, response(vec![1., 0., 0.]))]).await;
+        let ws = tempfile::tempdir().unwrap();
+        let dir = ws.path().join("instances/one/memory");
+        std::fs::create_dir_all(&dir).unwrap();
+        for path in ["missing.png", "invalid.pdf", "empty.mp3", "directory.mov"] {
+            std::fs::write(dir.join(path), [0xff]).unwrap();
+        }
+        std::fs::write(dir.join("invalid.pdf.md"), [0xff]).unwrap();
+        std::fs::write(dir.join("empty.mp3.md"), " \n").unwrap();
+        std::fs::create_dir(dir.join("directory.mov.md")).unwrap();
+        std::fs::write(dir.join("note.md"), "valid text").unwrap();
+        let store = VectorStore::connect_with_config(ws.path(), &mock.config).await;
+        assert_eq!(
+            store
+                .backfill_text_memories(ws.path(), "one")
+                .await
+                .unwrap(),
+            1
+        );
+        assert_eq!(store.list_all("one", 20).await.unwrap()[0].path, "note.md");
+        assert!(store.needs_backfill("one").await.unwrap());
+        assert_eq!(mock.requests.lock().unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn media_reindex_failure_preserves_committed_index_then_replaces_changed_sources() {
+        use super::super::embedding::tests::{MockServer, response};
+        let mock = MockServer::new(vec![
+            (200, response(vec![1., 0., 0.])),
+            (200, response(vec![1., 0., 0.])),
+            (200, response(vec![0., 1., 0.])),
+            (503, serde_json::json!({"error":"offline"})),
+            (200, response(vec![0., 1., 0.])),
+            (200, response(vec![0., 1., 0.])),
+        ])
+        .await;
+        let ws = tempfile::tempdir().unwrap();
+        let dir = ws.path().join("instances/one/memory");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.md"), "note").unwrap();
+        std::fs::write(dir.join("photo.png"), [0xff]).unwrap();
+        super::super::media_text::write(&dir, "photo.png", "old sky").unwrap();
+        let store = VectorStore::connect_with_config(ws.path(), &mock.config).await;
+        store
+            .backfill_text_memories(ws.path(), "one")
+            .await
+            .unwrap();
+        let index_path = std::fs::read_dir(ws.path().join("vectors"))
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        let before = std::fs::read(&index_path).unwrap();
+        std::fs::write(dir.join("photo.png"), [0x81]).unwrap();
+        super::super::media_text::write(&dir, "photo.png", "new mountain").unwrap();
+        assert!(
+            store
+                .backfill_text_memories(ws.path(), "one")
+                .await
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&index_path).unwrap(), before);
+        assert_eq!(
+            store.list_all("one", 10).await.unwrap()[1].content_preview,
+            "old sky"
+        );
+        store
+            .backfill_text_memories(ws.path(), "one")
+            .await
+            .unwrap();
+        let records = store.list_all("one", 10).await.unwrap();
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[1].content_preview, "new mountain");
+        assert!(!store.needs_backfill("one").await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn media_text_entrypoint_never_embeds_raw_textual_media() {
+        use super::super::embedding::tests::{MockServer, response};
+        let mock = MockServer::new(vec![(200, response(vec![1., 0., 0.]))]).await;
+        let ws = tempfile::tempdir().unwrap();
+        let dir = ws.path().join("instances/one/memory");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("drawing.svg"), "<svg>raw media markup</svg>").unwrap();
+        super::super::media_text::write(&dir, "drawing.svg", "a blue star").unwrap();
+        let store = VectorStore::connect_with_config(ws.path(), &mock.config).await;
+        store
+            .index_text("one", "drawing.svg", "<svg>raw media markup</svg>")
+            .await
+            .unwrap();
+        assert_eq!(
+            mock.requests.lock().unwrap()[0].2["input"],
+            serde_json::json!(["a blue star"])
+        );
+        assert_eq!(
+            store.list_all("one", 10).await.unwrap()[0].source_type,
+            "media_image"
+        );
+    }
+    #[tokio::test]
+    async fn digest_mismatch_is_refused_by_vector_and_bm25_indexing() {
+        use super::super::embedding::tests::{MockServer, response};
+        let mock = MockServer::new(vec![(200, response(vec![1., 0., 0.]))]).await;
+        let ws = tempfile::tempdir().unwrap();
+        let dir = ws.path().join("instances/one/memory");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("photo.png"), b"old bytes").unwrap();
+        super::super::media_text::write(&dir, "photo.png", "Orion sky").unwrap();
+        let store = VectorStore::connect_with_config(ws.path(), &mock.config).await;
+        store.index_media_text("one", "photo.png").await.unwrap();
+        assert_eq!(store.search_text("one", "Orion", 10).await.len(), 1);
+
+        std::fs::write(dir.join("photo.png"), b"replacement bytes").unwrap();
+        assert!(store.index_media_text("one", "photo.png").await.is_err());
+        assert!(store.list_all("one", 10).await.unwrap().is_empty());
+        assert!(store.search_text("one", "Orion", 10).await.is_empty());
+        assert!(store.needs_backfill("one").await.unwrap());
+        assert_eq!(mock.requests.lock().unwrap().len(), 3);
+    }
 
     #[test]
     fn oversized_unicode_line_is_split_on_utf8_boundaries() {
@@ -560,29 +1161,6 @@ mod tests {
             0
         );
         assert!(!store.needs_backfill("empty").await.unwrap());
-    }
-
-    #[tokio::test]
-    async fn embedding_raw_media_vectors_cannot_enter_text_index() {
-        let workspace = tempfile::tempdir().unwrap();
-        let store = VectorStore::connect(workspace.path()).await;
-        let mut google_vector = vec![0.; 768];
-        google_vector[0] = 1.;
-        assert!(
-            store
-                .upsert_media(
-                    "one",
-                    "photo.png",
-                    "media_image",
-                    "image/png",
-                    "photo",
-                    "photo",
-                    google_vector
-                )
-                .await
-                .is_err()
-        );
-        assert!(store.list_all("one", 10).await.unwrap().is_empty());
     }
 
     #[test]
@@ -884,7 +1462,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn public_boundary_preserves_text_and_rejects_raw_media() {
+    async fn text_boundary_preserves_chunk_metadata_and_deletion() {
         let workspace =
             std::env::temp_dir().join(format!("vector-api-test-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&workspace).unwrap();
@@ -909,20 +1487,6 @@ mod tests {
         assert_eq!(records[0].source_type, "text_memory");
         assert!(records[0].upload_id.is_none());
         assert_eq!(records[0].score, 0.);
-        assert!(
-            store
-                .upsert_media(
-                    "slug",
-                    "notes.md",
-                    "media_image",
-                    "image/png",
-                    "name",
-                    "preview",
-                    vector.clone()
-                )
-                .await
-                .is_err()
-        );
         assert_eq!(store.list_all("slug", 10).await.unwrap().len(), 2);
         drop(store);
         let store = VectorStore::connect(&workspace).await;

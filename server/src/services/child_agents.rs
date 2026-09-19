@@ -319,7 +319,7 @@ pub async fn run_single_agent(
 
     // Build context
     let now = crate::routes::instances::format_instance_now(instance_dir);
-    let library_catalog = memory::build_library_catalog(workspace_dir, slug);
+    let library_catalog = memory::build_library_catalog(&vector_store.media_store(), slug);
 
     // Load recent conversations (from rig_history + archive)
     let cutoff_ts = Utc::now().timestamp() - (agent.interval_hours * 3600.0) as i64;
@@ -561,8 +561,13 @@ fn build_agent_tools_for(
             workspace_dir,
             slug,
             &public_url,
+            vector_store.clone(),
         )));
-        raw_tools.push(Box::new(MemoryListTool::new(workspace_dir, slug)));
+        raw_tools.push(Box::new(MemoryListTool::new(
+            workspace_dir,
+            slug,
+            vector_store.clone(),
+        )));
         raw_tools.push(Box::new(MemoryForgetTool::new(
             workspace_dir,
             slug,
@@ -574,7 +579,7 @@ fn build_agent_tools_for(
             vector_store.clone(),
             &public_url,
         )));
-        raw_tools.push(Box::new(MemoryConnectTool::new(workspace_dir, slug)));
+        raw_tools.push(Box::new(MemoryConnectTool::new(slug, vector_store.clone())));
     }
 
     // creative

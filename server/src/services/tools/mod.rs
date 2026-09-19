@@ -26,11 +26,45 @@ pub fn public_file_url(base: &str, instance_slug: &str, file_id: &str, token: &s
 
 /// Build a public memory URL, omitting `?token=` when the token is empty.
 pub fn public_memory_url(base: &str, instance_slug: &str, path: &str, token: &str) -> String {
+    let path = encode_url_path(path);
+    let instance_slug = encode_url_path(instance_slug);
+    let token = encode_url_path(token).replace('/', "%2F");
     if token.is_empty() {
         format!("{base}/public/memory/{instance_slug}/{path}")
     } else {
         format!("{base}/public/memory/{instance_slug}/{path}?token={token}")
     }
+}
+
+/// Escape UTF-8 path bytes while preserving directory separators.
+pub fn encode_url_path(path: &str) -> String {
+    use std::fmt::Write;
+    let mut encoded = String::new();
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
+            encoded.push(char::from(byte));
+        } else {
+            write!(encoded, "%{byte:02X}").expect("write to string");
+        }
+    }
+    encoded
+}
+
+pub fn media_result_url(
+    base: &str,
+    slug: &str,
+    result: &crate::services::vector::VectorSearchResult,
+    token: &str,
+) -> Option<String> {
+    if base.is_empty() || !result.source_type.starts_with("media_") {
+        return None;
+    }
+    let id = result.upload_id.as_deref()?;
+    Some(if id == result.path || id.contains('/') {
+        public_memory_url(base, slug, id, token)
+    } else {
+        public_file_url(base, slug, id, token)
+    })
 }
 
 // Sub-modules
@@ -505,8 +539,13 @@ pub fn build_tools(
             workspace_dir,
             instance_slug,
             public_url,
+            vector_store.clone(),
         ))),
-        wrap(Box::new(MemoryListTool::new(workspace_dir, instance_slug))),
+        wrap(Box::new(MemoryListTool::new(
+            workspace_dir,
+            instance_slug,
+            vector_store.clone(),
+        ))),
         wrap(Box::new(MemoryForgetTool::new(
             workspace_dir,
             instance_slug,
@@ -519,8 +558,8 @@ pub fn build_tools(
             public_url,
         ))),
         wrap(Box::new(MemoryConnectTool::new(
-            workspace_dir,
             instance_slug,
+            vector_store.clone(),
         ))),
         // Mood is managed by background sentiment extraction + heartbeat, not tools.
         wrap(Box::new(EditSoulTool::new(workspace_dir, instance_slug))),
@@ -627,6 +666,7 @@ pub fn build_tools(
     tools.push(wrap(Box::new(ImportProfileTool::new(
         workspace_dir,
         instance_slug,
+        vector_store.clone(),
     ))));
     {
         let api_key = llm.api_key.clone();

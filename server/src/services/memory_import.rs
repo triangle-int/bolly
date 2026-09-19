@@ -193,7 +193,8 @@ async fn run_import(
         ImportStage::Organizing,
         "organizing and deduplicating...",
     );
-    let existing_catalog = memory::build_library_catalog(workspace_dir, instance_slug);
+    let existing_catalog =
+        memory::build_library_catalog(&vector_store.media_store(), instance_slug);
     let ops = organize_facts(http, api_key, &facts, &existing_catalog).await?;
     emit(
         events,
@@ -223,19 +224,16 @@ async fn run_import(
 
 /// Persist source files even when derived semantic indexing is unavailable.
 async fn write_import_memories(
-    workspace: &Path,
+    _workspace: &Path,
     slug: &str,
     ops: &[MemoryOp],
     store: &VectorStore,
 ) -> anyhow::Result<()> {
-    let memory_dir = workspace.join("instances").join(slug).join("memory");
     for op in ops {
-        let path = memory_dir.join(&op.path);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        std::fs::write(path, &op.content)?;
-        memory::embed_memory_file(store, slug, &op.path, &op.content).await;
+        store
+            .write_text_memory(slug, &op.path, &op.content, false)
+            .await
+            .map_err(anyhow::Error::msg)?;
     }
     Ok(())
 }

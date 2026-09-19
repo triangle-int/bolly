@@ -8,7 +8,7 @@
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
-const FORMAT_VERSION: u32 = 2;
+const FORMAT_VERSION: u32 = 3;
 const MAGIC: &[u8; 9] = b"NOLUNEVIX";
 const HEADER_BYTES: usize = MAGIC.len() + 8 + 32;
 const MAX_INDEX_FILE_BYTES: usize = 128 * 1024 * 1024;
@@ -36,6 +36,7 @@ pub(super) struct Record {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct Index {
     version: u32,
+    media_text_version: u32,
     #[serde(deserialize_with = "deserialize_bounded_metadata")]
     provider: String,
     #[serde(deserialize_with = "deserialize_bounded_metadata")]
@@ -52,6 +53,7 @@ impl Index {
     fn empty(provider: &str, model: &str, dimensions: u32) -> Self {
         Self {
             version: FORMAT_VERSION,
+            media_text_version: super::media_text::VERSION,
             provider: provider.into(),
             model: model.into(),
             dimensions,
@@ -111,6 +113,7 @@ impl Index {
 
     fn validate(&self, provider: &str, model: &str, dimensions: u32) -> Result<(), String> {
         if self.version != FORMAT_VERSION
+            || self.media_text_version != super::media_text::VERSION
             || self.provider != provider
             || self.model != model
             || self.dimensions != dimensions
@@ -556,7 +559,7 @@ impl Store {
         #[cfg(test)]
         if self
             .fail_before_rename
-            .load(std::sync::atomic::Ordering::SeqCst)
+            .swap(false, std::sync::atomic::Ordering::SeqCst)
         {
             return Err("injected failure before rename".into());
         }
@@ -670,6 +673,12 @@ impl Store {
 
     pub fn needs_backfill(&self, slug: &str) -> Result<bool, String> {
         self.with_index(slug, |index| Ok(!index.backfilled))
+    }
+
+    #[cfg(test)]
+    pub fn inject_next_persist_failure(&self) {
+        self.fail_before_rename
+            .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
     #[cfg(test)]
@@ -1219,6 +1228,47 @@ mod store_tests {
             ["current"]
         );
         assert!(!store.needs_backfill("slug").unwrap());
+    }
+
+    #[test]
+    fn media_representation_version_reconsiders_v2_completion_exactly_once() {
+        #[derive(Serialize)]
+        struct LegacyV2 {
+            version: u32,
+            provider: String,
+            model: String,
+            dimensions: u32,
+            endpoint_fingerprint: String,
+            records: Vec<Record>,
+            backfilled: bool,
+        }
+        let ws = Workspace::new();
+        let store = ws.store();
+        let old = LegacyV2 {
+            version: 2,
+            provider: "test-provider".into(),
+            model: "test-model".into(),
+            dimensions: 2,
+            endpoint_fingerprint: store.empty_index().endpoint_fingerprint,
+            records: vec![record("photo.png.md", vec![1., 0.])],
+            backfilled: true,
+        };
+        let payload = postcard::to_allocvec(&old).unwrap();
+        let mut bytes = MAGIC.to_vec();
+        bytes.extend_from_slice(&(payload.len() as u64).to_le_bytes());
+        bytes.extend_from_slice(&Sha256::digest(&payload));
+        bytes.extend_from_slice(&payload);
+        std::fs::create_dir_all(&store.root).unwrap();
+        std::fs::write(store.index_path("one"), bytes).unwrap();
+        assert!(store.needs_backfill("one").unwrap());
+        assert!(store.list("one", 10).unwrap().is_empty());
+        store
+            .commit_backfill("one", vec![record("current", vec![0., 1.])], true)
+            .unwrap();
+        drop(store);
+        let restored = ws.store();
+        assert!(!restored.needs_backfill("one").unwrap());
+        assert_eq!(restored.list("one", 10).unwrap()[0].path, "current");
     }
 
     #[test]
