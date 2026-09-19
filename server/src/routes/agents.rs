@@ -155,12 +155,30 @@ async fn trigger_agent(
         )
     })?;
 
+    // One run per manual trigger in the proactive loop (#92).
+    let handle = match state.proactive.begin(
+        crate::domain::proactive::Trigger::Manual {
+            agent: agent.name.clone(),
+        },
+        &agent.description,
+        crate::domain::proactive::Target::Companion,
+    ) {
+        crate::services::proactive::Admission::Admitted(handle) => handle,
+        crate::services::proactive::Admission::Skipped(run) => {
+            return Ok(Json(
+                serde_json::json!({"status": "skipped", "agent": agent_name, "run": run}),
+            ));
+        }
+    };
+
     // Run the agent in background
     let ws = state.workspace_dir.clone();
     let slug = instance_slug.clone();
     let events = state.events.clone();
     let vs = state.vector_store.clone();
     let llm_clone = llm.clone();
+    let proactive = state.proactive.clone();
+    let run_id = handle.id().to_owned();
 
     tokio::spawn(async move {
         match child_agents::run_single_agent(
@@ -175,6 +193,7 @@ async fn trigger_agent(
             "manual",
             None,
             &state.resources,
+            Some((&proactive, run_id.as_str())),
         )
         .await
         {
@@ -185,12 +204,16 @@ async fn trigger_agent(
                     r.tokens,
                     r.run_id
                 );
+                handle.complete(crate::services::proactive::outcome_from_trace(
+                    &r.trace, r.tokens,
+                ));
             }
             Err(e) => {
                 log::warn!(
                     "[agents-api] {slug}: manual trigger '{}' failed: {e}",
                     agent.name
                 );
+                handle.fail(&e.to_string(), true);
             }
         }
     });

@@ -40,6 +40,8 @@ pub struct AppState {
     pub vector_store: Arc<VectorStore>,
     /// Registry of connected Tauri agent machines (for computer use).
     pub machine_registry: MachineRegistry,
+    /// The one proactive companion loop (#92): every self-started run is admitted here.
+    pub proactive: crate::services::proactive::ProactiveLoop,
 }
 
 // No hardcoded MCP servers — users add them via Settings UI or config.toml.
@@ -76,6 +78,10 @@ impl AppState {
             http_client,
             vector_store: Arc::new(vector_store),
             machine_registry: MachineRegistry::new(),
+            proactive: crate::services::proactive::ProactiveLoop::new(
+                &config::workspace_root(),
+                crate::domain::companion::CANONICAL_SLUG,
+            ),
         }
     }
 

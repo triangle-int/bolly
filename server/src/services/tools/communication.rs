@@ -134,6 +134,8 @@ pub struct ReachOutTool {
     workspace_dir: PathBuf,
     instance_slug: String,
     events: broadcast::Sender<ServerEvent>,
+    /// Proactive runs must ask the loop before messaging the user (#92).
+    gate: Option<(crate::services::proactive::ProactiveLoop, String)>,
 }
 
 impl ReachOutTool {
@@ -146,7 +148,16 @@ impl ReachOutTool {
             workspace_dir: workspace_dir.to_path_buf(),
             instance_slug: instance_slug.to_string(),
             events,
+            gate: None,
         }
+    }
+
+    pub fn gated_by(
+        mut self,
+        gate: Option<(crate::services::proactive::ProactiveLoop, String)>,
+    ) -> Self {
+        self.gate = gate;
+        self
     }
 }
 
@@ -177,6 +188,17 @@ impl Tool for ReachOutTool {
         let mut message = args.message.trim().to_string();
         if message.is_empty() {
             return Err(ToolExecError("message cannot be empty".into()));
+        }
+        if let Some((r#loop, run_id)) = &self.gate {
+            r#loop
+                .approve_side_effect(
+                    Some(run_id),
+                    crate::domain::proactive::SideEffect::ReachOut,
+                    Utc::now().timestamp(),
+                )
+                .map_err(|denied| {
+                    ToolExecError(format!("reach_out is not allowed right now: {denied}"))
+                })?;
         }
         // Append image as markdown if provided
         if let Some(url) = &args.image_url {

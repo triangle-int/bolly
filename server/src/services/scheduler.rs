@@ -6,6 +6,8 @@ use tokio_util::sync::CancellationToken;
 
 use crate::app::state::AppState;
 use crate::domain::companion::CANONICAL_SLUG;
+use crate::domain::proactive::{ActionReceipt, RunOutcome, Target, Trigger};
+use crate::services::proactive::Admission;
 use crate::services::tools::ScheduledTask;
 use crate::services::{chat, companion};
 
@@ -21,13 +23,34 @@ pub fn start(state: AppState) {
     log::info!("scheduler started — checking for scheduled tasks every 30s");
 }
 
-async fn check_and_trigger(state: &AppState) {
+pub(crate) async fn check_and_trigger(state: &AppState) {
     let now = Utc::now().timestamp();
     let instance_slug = CANONICAL_SLUG.to_owned();
 
     for (path, scheduled) in due_scheduled_tasks(&state.workspace_dir, now) {
         // Remove the scheduled file first (prevent re-trigger on next tick)
         let _ = fs::remove_file(&path);
+
+        // One run per explicit schedule in the proactive loop (#92).
+        let handle = match state.proactive.begin(
+            Trigger::Schedule {
+                task_id: scheduled.id.clone(),
+            },
+            &scheduled.task,
+            Target::Chat {
+                chat_id: "default".into(),
+            },
+        ) {
+            Admission::Admitted(handle) => handle,
+            Admission::Skipped(run) => {
+                log::info!(
+                    "[scheduler] task {} skipped ({:?})",
+                    scheduled.id,
+                    run.status
+                );
+                continue;
+            }
+        };
 
         // Inject the task as a user message so the agent sees it
         let label = format!("[scheduled task] {}", scheduled.task);
@@ -47,9 +70,20 @@ async fn check_and_trigger(state: &AppState) {
             }
             Err(e) => {
                 log::warn!("[scheduler] failed to save task message for {instance_slug}: {e}");
+                handle.fail(&e.to_string(), true);
                 continue;
             }
         }
+        // Delivery into the chat is the schedule's outcome; the chat turn runs
+        // under the ordinary conversation loop.
+        handle.complete(RunOutcome {
+            actions: vec![ActionReceipt {
+                tool: "chat".into(),
+                summary: "delivered scheduled task to chat".into(),
+            }],
+            messages_sent: 0,
+            tokens: 0,
+        });
 
         // Trigger the agent loop (same mechanism as POST /api/chat)
         let key = format!("{instance_slug}/default");

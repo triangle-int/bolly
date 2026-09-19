@@ -274,6 +274,8 @@ pub struct AgentRunResult {
     pub run_id: String,
     /// The agent's response text (inner monologue).
     pub response: String,
+    /// Tool trace, used only to derive bounded activity receipts (#92).
+    pub trace: Vec<crate::services::llm::Message>,
 }
 
 pub async fn run_single_agent(
@@ -288,6 +290,7 @@ pub async fn run_single_agent(
     trigger: &str,
     machine_registry: Option<&crate::services::machine_registry::MachineRegistry>,
     resources: &crate::services::resource_access::ResourceAccess,
+    proactive: Option<(&crate::services::proactive::ProactiveLoop, &str)>,
 ) -> anyhow::Result<AgentRunResult> {
     anyhow::ensure!(
         !is_reserved_agent_name(&agent.name),
@@ -443,6 +446,7 @@ pub async fn run_single_agent(
             machine_registry,
             &agent.tool_groups,
             resources,
+            proactive.map(|(r#loop, run_id)| (r#loop.clone(), run_id.to_owned())),
         );
         model_llm
             .chat_with_tools_traced(&system, &prompt, prev_messages, agent_tools)
@@ -471,7 +475,7 @@ pub async fn run_single_agent(
         tokens_used: tokens,
         model: agent.model.clone(),
         summary: response.clone(),
-        trace,
+        trace: trace.clone(),
         status: crate::domain::agent_run::RunStatus::Completed,
     };
     crate::services::agent_runs::save_run(workspace_dir, slug, &run).ok();
@@ -489,6 +493,7 @@ pub async fn run_single_agent(
         tokens,
         run_id,
         response,
+        trace,
     })
 }
 
@@ -504,6 +509,7 @@ fn build_agent_tools_for(
     machine_registry: Option<&crate::services::machine_registry::MachineRegistry>,
     tool_groups: &[String],
     resources: &crate::services::resource_access::ResourceAccess,
+    reach_out_gate: Option<(crate::services::proactive::ProactiveLoop, String)>,
 ) -> Vec<Box<dyn ToolDyn>> {
     let cfg = config::load_config().ok();
     let public_url = cfg
@@ -568,11 +574,9 @@ fn build_agent_tools_for(
 
     // communication
     if has("communication") {
-        raw_tools.push(Box::new(ReachOutTool::new(
-            workspace_dir,
-            slug,
-            events.clone(),
-        )));
+        raw_tools.push(Box::new(
+            ReachOutTool::new(workspace_dir, slug, events.clone()).gated_by(reach_out_gate.clone()),
+        ));
     }
 
     // files
