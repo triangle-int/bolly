@@ -2,7 +2,6 @@
   import { onMount } from "svelte";
   import { invoke } from "@tauri-apps/api/core";
 
-
   type Permissions = {
     screen_recording: boolean;
     accessibility: boolean;
@@ -10,20 +9,9 @@
 
   let permissions = $state<Permissions | null>(null);
   let checking = $state(false);
-  let screenRecording = $state(false);
-
 
   onMount(async () => {
     refresh();
-    // Load persisted preference and sync to Rust static
-    try {
-      const saved = await invoke<boolean>("get_screen_recording_allowed");
-      if (saved === true) {
-        screenRecording = true;
-      }
-    } catch (e) {
-      console.error("failed to load screen recording preference", e);
-    }
   });
 
   async function refresh() {
@@ -40,20 +28,6 @@
   async function openSettings(permission: string) {
     await invoke("open_permission_settings", { permission });
     setTimeout(refresh, 3000);
-  }
-
-  async function toggleScreenRecording() {
-    screenRecording = !screenRecording;
-    try {
-      await invoke("set_screen_recording_allowed", { allowed: screenRecording });
-      // Stop recording immediately when turning off
-      if (!screenRecording) {
-        await invoke("stop_screen_recording");
-      }
-    } catch (e) {
-      console.error("set_screen_recording_allowed failed", e);
-      screenRecording = !screenRecording;
-    }
   }
 </script>
 
@@ -122,38 +96,6 @@
           <div class="spinner"></div>
         </div>
       {/if}
-    </section>
-
-    <section class="section">
-      <h2 class="section-title">Features</h2>
-      <p class="section-desc">
-        Control what Nolune can do on this computer.
-      </p>
-
-      <div class="perm-list">
-        <div class="perm-row">
-          <div class="perm-info">
-            <div class="perm-icon">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                <circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/><path d="M12 2v2M12 20v2M2 12h2M20 12h2"/>
-              </svg>
-            </div>
-            <div>
-              <span class="perm-name">Screen Observation</span>
-              <span class="perm-desc">Record screen between heartbeats for contextual suggestions</span>
-            </div>
-          </div>
-          <div class="perm-status">
-            <button
-              class="toggle-btn"
-              class:toggle-on={screenRecording}
-              onclick={toggleScreenRecording}
-            >
-              {screenRecording ? "On" : "Off"}
-            </button>
-          </div>
-        </div>
-      </div>
     </section>
   </main>
 </div>
@@ -330,32 +272,5 @@
 
   @keyframes spin {
     to { transform: rotate(360deg); }
-  }
-
-  .toggle-btn {
-    padding: 5px 14px;
-    border-radius: 8px;
-    border: 1px solid var(--border);
-    background: oklch(1 0 0 / 5%);
-    color: var(--muted);
-    font-family: var(--font-body);
-    font-size: 0.72rem;
-    cursor: pointer;
-    transition: all 0.2s;
-    min-width: 48px;
-  }
-
-  .toggle-btn:hover {
-    background: oklch(1 0 0 / 8%);
-  }
-
-  .toggle-btn.toggle-on {
-    background: oklch(0.72 0.17 142 / 12%);
-    color: oklch(0.72 0.17 142);
-    border-color: oklch(0.72 0.17 142 / 20%);
-  }
-
-  .toggle-btn.toggle-on:hover {
-    background: oklch(0.72 0.17 142 / 18%);
   }
 </style>

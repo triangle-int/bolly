@@ -9,7 +9,6 @@
 
 	let skinId = $state("moon");
 	let thinking = $state(false);
-	let recording = $state(false);
 	const skin = $derived(SKINS.find(s => s.id === skinId) ?? SKINS[0]);
 
 	onMount(() => {
@@ -41,9 +40,6 @@
 <div class="overlay">
 	<div class="pip">
 		<img class="pip-video" src={thinking ? skin.avatar.thinking : skin.avatar.idle} alt={thinking ? "Nolune is thinking" : "Nolune"} />
-		{#if recording}
-			<div class="pip-rec"></div>
-		{/if}
 	</div>
 </div>
 
@@ -84,23 +80,5 @@
 		width: 100%;
 		height: 100%;
 		object-fit: contain;
-	}
-
-	.pip-rec {
-		position: absolute;
-		top: -1px;
-		right: -1px;
-		width: 12px;
-		height: 12px;
-		border-radius: 50%;
-		background: var(--destructive);
-		box-shadow:none;
-		animation: rec-pulse 1.5s ease-in-out infinite;
-		border: 2px solid var(--card);
-	}
-
-	@keyframes rec-pulse {
-		0%, 100% { opacity: 1; }
-		50% { opacity: 0.4; }
 	}
 </style>

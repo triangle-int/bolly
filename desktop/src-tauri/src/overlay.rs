@@ -19,8 +19,8 @@ tauri_panel! {
     })
 }
 
-/// Overlay URL — always local Tauri page. Video loads from server via src attribute.
-fn overlay_url_str(_slug: Option<&str>) -> String {
+/// Overlay URL — always a local Tauri page.
+fn overlay_url_str() -> String {
     if cfg!(debug_assertions) {
         "http://localhost:1420/overlay/".to_string()
     } else {
@@ -30,30 +30,21 @@ fn overlay_url_str(_slug: Option<&str>) -> String {
 
 /// Show the overlay — NSPanel on macOS, regular window on other platforms.
 pub fn show(app: &AppHandle) {
-    show_with_slug(app, None);
-}
-
-/// Show the overlay for a specific instance slug.
-pub fn show_for_instance(app: &AppHandle, slug: &str) {
-    show_with_slug(app, Some(slug.to_string()));
-}
-
-fn show_with_slug(app: &AppHandle, slug: Option<String>) {
     let inner = app.clone();
     let _ = app.run_on_main_thread(move || {
         #[cfg(target_os = "macos")]
         {
-            show_macos(&inner, slug.as_deref());
+            show_macos(&inner);
         }
         #[cfg(not(target_os = "macos"))]
         {
-            show_fallback(&inner, slug.as_deref());
+            show_fallback(&inner);
         }
     });
 }
 
 #[cfg(target_os = "macos")]
-fn show_macos(app: &AppHandle, slug: Option<&str>) {
+fn show_macos(app: &AppHandle) {
     if let Ok(panel) = app.get_webview_panel("overlay") {
         if !panel.is_visible() {
             panel.show();
@@ -61,7 +52,7 @@ fn show_macos(app: &AppHandle, slug: Option<&str>) {
         return;
     }
 
-    let url: WebviewUrl = WebviewUrl::External(overlay_url_str(slug).parse().unwrap());
+    let url: WebviewUrl = WebviewUrl::External(overlay_url_str().parse().unwrap());
 
     match PanelBuilder::<_, OverlayPanel>::new(app, "overlay")
         .url(url)
@@ -97,12 +88,12 @@ fn show_macos(app: &AppHandle, slug: Option<&str>) {
 }
 
 #[cfg(not(target_os = "macos"))]
-fn show_fallback(app: &AppHandle, slug: Option<&str>) {
+fn show_fallback(app: &AppHandle) {
     if app.get_webview_window("overlay").is_some() {
         return;
     }
 
-    let parsed: url::Url = match overlay_url_str(slug).parse() {
+    let parsed: url::Url = match overlay_url_str().parse() {
         Ok(u) => u,
         Err(e) => {
             eprintln!("[overlay] bad URL: {e}");

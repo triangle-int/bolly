@@ -91,8 +91,8 @@
 		}
 	}
 
-	const ALL_TOOL_GROUPS = ["memory", "creative", "communication", "files", "commands", "email", "computer", "screen", "media"];
-	const BUILTIN_NAMES = ["companion", "reflection", "night-maintenance", "observer", "explore-code", "deep-research"];
+	const ALL_TOOL_GROUPS = ["memory", "creative", "communication", "files", "commands", "email", "computer", "media"];
+	const BUILTIN_NAMES = ["companion", "reflection", "night-maintenance", "explore-code", "deep-research"];
 	const MODEL_OPTIONS = [
 		{ value: "default", label: "default" },
 		{ value: "heavy", label: "opus" },

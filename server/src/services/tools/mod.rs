@@ -79,7 +79,6 @@ pub mod import_data;
 pub mod media;
 pub mod memory_tools;
 pub mod project;
-pub mod screen;
 pub mod skills;
 pub mod system;
 
@@ -599,7 +598,6 @@ pub fn build_tools(
         config_path,
         workspace_dir,
         instance_slug,
-        machine_registry.clone(),
     ))));
     if let Some(ps) = pending_secrets {
         tools.push(wrap(Box::new(RequestSecretTool::new(
@@ -778,9 +776,6 @@ pub fn unix_millis() -> u128 {
         .expect("system time after epoch")
         .as_millis()
 }
-
-/// Append a single message to a chat's messages.json with file locking.
-// append_message_to_chat and update_mcp_app_result removed — rig_history.json is the single source of truth
 
 /// Shared collector for file attachments produced by send_file during a turn.
 pub type SentFiles = std::sync::Arc<std::sync::Mutex<Vec<String>>>;

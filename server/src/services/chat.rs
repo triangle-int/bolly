@@ -354,16 +354,8 @@ pub async fn run_single_turn(
             .iter()
             .map(|m| {
                 format!(
-                    "  - {} ({}, {}x{}, screen_recording: {})",
-                    m.hostname,
-                    m.os,
-                    m.screen_width,
-                    m.screen_height,
-                    if m.screen_recording_allowed {
-                        "on"
-                    } else {
-                        "off"
-                    }
+                    "  - {} ({}, {}x{})",
+                    m.hostname, m.os, m.screen_width, m.screen_height
                 )
             })
             .collect();

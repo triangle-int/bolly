@@ -984,16 +984,6 @@ impl Tool for GetSettingsTool {
                     lines.push("github: not connected".into());
                 }
 
-                // Screen recording
-                lines.push(format!(
-                    "screen recording: {}",
-                    if instance_cfg.screen_recording {
-                        "enabled — recording user's screen between heartbeats"
-                    } else {
-                        "disabled (off by default — enable via update_config to observe the user's screen and offer contextual help)"
-                    }
-                ));
-
                 // MCP servers
                 if config.mcp_servers.is_empty() {
                     lines.push("extensions (mcp): none".into());
@@ -1058,22 +1048,15 @@ pub struct UpdateConfigTool {
     workspace_dir: PathBuf,
     instance_slug: String,
     instance_dir: PathBuf,
-    machine_registry: crate::services::machine_registry::MachineRegistry,
 }
 
 impl UpdateConfigTool {
-    pub fn new(
-        config_path: &Path,
-        workspace_dir: &Path,
-        instance_slug: &str,
-        machine_registry: crate::services::machine_registry::MachineRegistry,
-    ) -> Self {
+    pub fn new(config_path: &Path, workspace_dir: &Path, instance_slug: &str) -> Self {
         Self {
             config_path: config_path.to_path_buf(),
             workspace_dir: workspace_dir.to_path_buf(),
             instance_slug: instance_slug.to_string(),
             instance_dir: workspace_dir.join("instances").join(instance_slug),
-            machine_registry,
         }
     }
 }
@@ -1103,13 +1086,10 @@ pub struct UpdateConfigArgs {
     pub remove_email_account: Option<String>,
     /// Model routing mode: "auto" (classifier picks fast/heavy per message), "fast" (always cheap model), "heavy" (always powerful model). Leave null to keep current.
     pub model_mode: Option<String>,
-    /// Enable/disable screen recording observation. When true, the companion records the user's
-    /// screen between heartbeats and analyzes it to offer contextual suggestions. Default: false (off).
-    pub screen_recording: Option<bool>,
     /// Update a child agent's interval. Provide as {"agent_name": "companion", "interval_hours": 0.5}.
     /// Set interval_hours to 0 to make it on-demand only. Changes take effect on next server restart.
     pub agent_interval: Option<AgentIntervalArg>,
-    /// Reset a built-in agent to its default config. Provide the agent name (e.g. "companion", "reflection", "observer").
+    /// Reset a built-in agent to its default config. Provide the agent name (e.g. "companion", "reflection").
     /// Only works for built-in agents, not custom ones.
     pub reset_agent: Option<String>,
 }
@@ -1315,71 +1295,14 @@ impl Tool for UpdateConfigTool {
             });
         }
 
-        if let Some(enabled) = args.screen_recording {
-            let mut instance_cfg =
-                crate::config::InstanceConfig::load(&self.workspace_dir, &self.instance_slug);
-            instance_cfg.screen_recording = enabled;
-            instance_cfg
-                .save(&self.workspace_dir, &self.instance_slug)
-                .map_err(|e| ToolExecError(format!("failed to save instance config: {e}")))?;
-            changes.push(format!(
-                "screen recording → {}",
-                if enabled { "enabled" } else { "disabled" }
-            ));
-
-            // Enable/disable the observer agent
-            let observer_path = self
-                .workspace_dir
-                .join("instances")
-                .join(&self.instance_slug)
-                .join("agents")
-                .join("observer.toml");
-            if let Ok(raw) = std::fs::read_to_string(&observer_path) {
-                if let Ok(mut agent) =
-                    toml::from_str::<crate::domain::child_agent::ChildAgentConfig>(&raw)
-                {
-                    agent.enabled = enabled;
-                    if let Ok(toml_str) = toml::to_string_pretty(&agent) {
-                        let _ = std::fs::write(&observer_path, toml_str);
-                        changes.push(format!(
-                            "observer agent → {}",
-                            if enabled { "enabled" } else { "disabled" }
-                        ));
-                    }
-                }
-            }
-
-            // Immediately start or stop recording on connected machines
-            let registry = self.machine_registry.clone();
-            tokio::spawn(async move {
-                let machines = registry.list().await;
-                for m in &machines {
-                    if !m.screen_recording_allowed {
-                        continue;
-                    }
-                    if enabled {
-                        crate::services::tools::screen::start_recording_on_machine(
-                            &registry,
-                            &m.machine_id,
-                            &m.os,
-                        )
-                        .await;
-                    } else {
-                        let stop = crate::services::machine_registry::AgentToolCall {
-                            request_id: uuid::Uuid::new_v4().to_string(),
-                            action: "bash".into(),
-                            params: serde_json::json!({
-                                "command": "pkill -f 'ffmpeg.*nolune_screen' 2>/dev/null; echo stopped"
-                            }),
-                        };
-                        let _ = registry.execute(&m.machine_id, stop).await;
-                    }
-                }
-            });
-        }
-
         // --- Agent interval ---
         if let Some(ref ai) = args.agent_interval {
+            if crate::services::child_agents::is_reserved_agent_name(&ai.agent_name) {
+                return Err(ToolExecError(format!(
+                    "agent '{}' not found",
+                    ai.agent_name
+                )));
+            }
             let agent_path = self
                 .workspace_dir
                 .join("instances")
@@ -1409,6 +1332,9 @@ impl Tool for UpdateConfigTool {
 
         // --- Reset agent to defaults ---
         if let Some(ref name) = args.reset_agent {
+            if crate::services::child_agents::is_reserved_agent_name(name) {
+                return Err(ToolExecError(format!("agent '{name}' not found")));
+            }
             match crate::services::child_agents::get_builtin_default(name) {
                 Some(default_config) => {
                     let agent_path = self
@@ -1425,7 +1351,7 @@ impl Tool for UpdateConfigTool {
                 }
                 None => {
                     return Err(ToolExecError(format!(
-                        "'{name}' is not a built-in agent. built-ins: companion, reflection, night-maintenance, observer, explore-code, deep-research"
+                        "'{name}' is not a built-in agent. built-ins: companion, reflection, night-maintenance, explore-code, deep-research"
                     )));
                 }
             }
@@ -1887,6 +1813,12 @@ impl Tool for CallAgentTool {
         let task = args.task.trim();
         if task.is_empty() {
             return Err(ToolExecError("task cannot be empty".into()));
+        }
+        if crate::services::child_agents::is_reserved_agent_name(&args.agent_name) {
+            return Err(ToolExecError(format!(
+                "agent '{}' not found",
+                args.agent_name
+            )));
         }
 
         // Scheduled mode: write a timer file and return immediately

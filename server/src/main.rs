@@ -59,8 +59,17 @@ async fn main() {
 
     let state = app::state::AppState::new(config).await;
 
-    // Migrate legacy memory (facts.md + episodes.md → library) for all instances
+    // Remove unpublished passive-capture state before any agents start, using
+    // the persistent workspace capability opened by the media store.
     let media_store = state.vector_store.media_store();
+    if let Err(error) = media_store.cleanup_legacy_observers() {
+        log::warn!("legacy observer cleanup was incomplete: {error}");
+    }
+    if let Err(error) = media_store.cleanup_legacy_screen_capture() {
+        log::warn!("legacy passive screen-capture cleanup was incomplete: {error}");
+    }
+
+    // Migrate legacy memory (facts.md + episodes.md → library) for all instances
     services::memory::migrate_all_instances(&media_store);
 
     let addr: SocketAddr = format!("{host}:{port}").parse().unwrap_or_else(|_| {

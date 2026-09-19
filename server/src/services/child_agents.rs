@@ -186,41 +186,6 @@ keep your answer focused and under 3000 chars.".to_string(),
     }
 }
 
-fn builtin_observer() -> ChildAgentConfig {
-    ChildAgentConfig {
-        name: "observer".to_string(),
-        description: "Screen observer — watches the user's screen and offers contextual help"
-            .to_string(),
-        prompt: "\
-you are the screen observer. every time you wake up, follow this exact sequence:
-
-1. call collect_screen_recording — you'll get back an upload_id, machine_id, and a local file path.
-2. call watch_video with the local file path to analyze what the user was doing.
-3. call save_screen_observation with the upload_id, machine_id, and your analysis text.
-4. based on the analysis, decide if you should reach_out to the user with a comment or suggestion.
-
-guidelines for reaching out:
-- if the user is coding, offer tips or catch potential bugs
-- if they're browsing, comment on what's interesting
-- if they're stuck, offer help
-- if they're doing something routine, a brief acknowledgment is fine
-- don't repeat yourself — if it's the same activity as last time, skip the reach_out
-- keep it to 1-2 sentences, natural and casual
-
-if collect_screen_recording fails (no desktop connected, no recording), just skip silently."
-            .to_string(),
-        interval_hours: 0.25, // every 15 min
-        model: "default".to_string(),
-        triage: false,
-        tools: true,
-        enabled: false, // disabled by default — enabled when screen_recording is on
-        tool_groups: vec!["communication", "screen", "media", "memory"]
-            .into_iter()
-            .map(String::from)
-            .collect(),
-    }
-}
-
 /// Get the default config for a built-in agent by name. Returns None for custom agents.
 pub fn get_builtin_default(name: &str) -> Option<ChildAgentConfig> {
     builtins().into_iter().find(|a| a.name == name)
@@ -231,10 +196,15 @@ fn builtins() -> Vec<ChildAgentConfig> {
         builtin_companion(),
         builtin_reflection(),
         builtin_night_maintenance(),
-        builtin_observer(),
         builtin_explore_code(),
         builtin_deep_research(),
     ]
+}
+
+pub const LEGACY_OBSERVER_AGENT: &str = "observer";
+
+pub fn is_reserved_agent_name(name: &str) -> bool {
+    name == LEGACY_OBSERVER_AGENT
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -278,7 +248,12 @@ pub fn load_agents(workspace_dir: &Path, slug: &str) -> Vec<ChildAgentConfig> {
             }
             match fs::read_to_string(&path) {
                 Ok(content) => match toml::from_str::<ChildAgentConfig>(&content) {
-                    Ok(agent) => agents.push(agent),
+                    Ok(agent) if !is_reserved_agent_name(&agent.name) => agents.push(agent),
+                    Ok(agent) => log::warn!(
+                        "[child-agents] ignored reserved legacy agent '{}' from {:?}",
+                        agent.name,
+                        path
+                    ),
                     Err(e) => log::warn!("[child-agents] failed to parse {:?}: {e}", path),
                 },
                 Err(e) => log::warn!("[child-agents] failed to read {:?}: {e}", path),
@@ -314,6 +289,11 @@ pub async fn run_single_agent(
     trigger: &str,
     machine_registry: Option<&crate::services::machine_registry::MachineRegistry>,
 ) -> anyhow::Result<AgentRunResult> {
+    anyhow::ensure!(
+        !is_reserved_agent_name(&agent.name),
+        "agent '{}' is reserved and cannot run",
+        agent.name
+    );
     let soul = fs::read_to_string(instance_dir.join("soul.md")).unwrap_or_default();
     let mood = load_mood_state(instance_dir);
 
@@ -666,23 +646,6 @@ fn build_agent_tools_for(
         }
     }
 
-    // screen (collect_screen_recording only — no screenshot/click/bash)
-    if has("screen") {
-        if let Some(registry) = machine_registry {
-            raw_tools.push(Box::new(tools::screen::CollectScreenRecordingTool::new(
-                registry.clone(),
-                workspace_dir,
-                slug,
-                &public_url,
-                &auth_token,
-            )));
-        }
-        raw_tools.push(Box::new(tools::screen::SaveScreenObservationTool::new(
-            workspace_dir,
-            slug,
-        )));
-    }
-
     // media
     if has("media") {
         if !google_ai_key.is_empty() {
@@ -704,4 +667,50 @@ pub(crate) fn unix_millis() -> u128 {
         .duration_since(UNIX_EPOCH)
         .expect("system time should be after unix epoch")
         .as_millis()
+}
+
+#[cfg(test)]
+mod legacy_observer_tests {
+    use super::*;
+
+    fn seeded_agent(name: &str) -> ChildAgentConfig {
+        ChildAgentConfig {
+            name: name.to_owned(),
+            description: "seeded".into(),
+            prompt: "seeded".into(),
+            interval_hours: 1.0,
+            model: "default".into(),
+            triage: false,
+            tools: false,
+            enabled: true,
+            tool_groups: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn seeded_legacy_observer_is_filtered_without_runtime_deletion() {
+        let workspace = tempfile::tempdir().unwrap();
+        let agents = workspace.path().join("instances/one/agents");
+        fs::create_dir_all(&agents).unwrap();
+        fs::write(
+            agents.join("observer.toml"),
+            toml::to_string(&seeded_agent("observer")).unwrap(),
+        )
+        .unwrap();
+        fs::write(agents.join(".last_run_observer"), "123").unwrap();
+
+        let loaded = load_agents(workspace.path(), "one");
+        assert!(loaded.iter().all(|agent| agent.name != "observer"));
+        assert!(agents.join("observer.toml").exists());
+        assert!(agents.join(".last_run_observer").exists());
+
+        let loaded_again = load_agents(workspace.path(), "one");
+        assert!(loaded_again.iter().all(|agent| agent.name != "observer"));
+    }
+
+    #[test]
+    fn observer_is_a_reserved_agent_name() {
+        assert!(is_reserved_agent_name("observer"));
+        assert!(!is_reserved_agent_name("observer-2"));
+    }
 }

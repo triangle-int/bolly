@@ -136,3 +136,5 @@ jobs:
         run: bash scripts/tests/install.sh
       - name: Test release workflow
         run: bash scripts/tests/release-workflow.sh
+      - name: Enforce no passive screen recording
+        run: python3 scripts/tests/no-continuous-screen-recording.py
