@@ -97,18 +97,8 @@
 	$effect(() => {
 		if (!iframe) return;
 
-		const doc = iframe.contentDocument;
-		if (!doc) return;
-		doc.open();
-		doc.write(html);
-		doc.close();
-
-		try {
-			const style = doc.createElement("style");
-			style.textContent = `:root { color-scheme: dark; }`;
-			doc.head?.appendChild(style);
-		} catch {};
-
+		// The frame is an opaque origin (sandbox="allow-scripts", no same-origin):
+		// content goes in through srcdoc and the only channel is postMessage.
 		const iframeWindow = iframe.contentWindow!;
 
 		const bridge = new AppBridge(
@@ -155,7 +145,10 @@
 		};
 
 		bridge.onopenlink = async (params) => {
-			window.open(params.url, "_blank", "noopener,noreferrer");
+			// Untrusted content may only ask the host to open web links.
+			if (/^https?:\/\//i.test(params.url)) {
+				window.open(params.url, "_blank", "noopener,noreferrer");
+			}
 			return {};
 		};
 
@@ -188,7 +181,9 @@
 		{/if}
 		<iframe
 			bind:this={iframe}
-			sandbox="allow-scripts allow-same-origin"
+			sandbox="allow-scripts"
+			referrerpolicy="no-referrer"
+			srcdoc={`<style>:root{color-scheme:dark}</style>${html}`}
 			title={toolName}
 			class="mcp-app-frame"
 			class:loaded={ready}

@@ -376,6 +376,139 @@ pub async fn connect_all(configs: &[McpServerConfig]) -> Vec<McpConnection> {
     connections
 }
 
+// ---------------------------------------------------------------------------
+// Curated catalog and grants (#97)
+// ---------------------------------------------------------------------------
+
+/// A reviewed server users can add with one click.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct CuratedServer {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub url: &'static str,
+    pub requires_key: bool,
+    pub key_env: &'static str,
+    pub key_url: &'static str,
+}
+
+pub fn curated_servers() -> &'static [CuratedServer] {
+    &[
+        CuratedServer {
+            name: "fal-ai",
+            description: "AI image & video generation (Flux, SDXL, etc.)",
+            url: "https://mcp.fal.ai/mcp",
+            requires_key: true,
+            key_env: "FAL_KEY",
+            key_url: "https://fal.ai/dashboard/keys",
+        },
+        CuratedServer {
+            name: "brave-search",
+            description: "Web search via Brave Search API",
+            url: "https://mcp.bravesearch.com/sse",
+            requires_key: true,
+            key_env: "BRAVE_API_KEY",
+            key_url: "https://brave.com/search/api/",
+        },
+        CuratedServer {
+            name: "github",
+            description: "GitHub repos, issues, PRs, code search",
+            url: "https://api.githubcopilot.com/mcp/",
+            requires_key: true,
+            key_env: "GITHUB_TOKEN",
+            key_url: "https://github.com/settings/tokens",
+        },
+        CuratedServer {
+            name: "firecrawl",
+            description: "Web scraping and crawling",
+            url: "https://mcp.firecrawl.dev/sse",
+            requires_key: true,
+            key_env: "FIRECRAWL_API_KEY",
+            key_url: "https://firecrawl.dev",
+        },
+    ]
+}
+
+/// Exact name and URL match against the catalog.
+pub fn is_curated(name: &str, url: &str) -> bool {
+    curated_servers()
+        .iter()
+        .any(|entry| entry.name == name && entry.url == url)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ToolGrant {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub enabled: bool,
+}
+
+/// What the config API reports per server: never headers.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct ServerGrants {
+    pub name: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    pub trust: crate::config::McpTrust,
+    pub connected: bool,
+    pub tools: Vec<ToolGrant>,
+}
+
+impl ServerGrants {
+    /// `discovered` is `(raw name, description)` per tool when connected.
+    pub fn from_config(
+        config: &McpServerConfig,
+        discovered: Option<&[(String, Option<String>)]>,
+    ) -> Self {
+        let tools = match discovered {
+            Some(discovered) => discovered
+                .iter()
+                .map(|(name, description)| ToolGrant {
+                    name: name.clone(),
+                    description: description.clone(),
+                    enabled: config.allows_tool(name),
+                })
+                .collect(),
+            None => config
+                .enabled_tools
+                .iter()
+                .map(|name| ToolGrant {
+                    name: name.clone(),
+                    description: None,
+                    enabled: true,
+                })
+                .collect(),
+        };
+        Self {
+            name: config.name.clone(),
+            url: config.url.clone(),
+            trust: config.trust,
+            connected: discovered.is_some(),
+            tools,
+        }
+    }
+}
+
+/// Raw names a chat may use: the grant intersected with what the server offers.
+#[cfg(test)]
+pub fn allowed_tool_names(config: &McpServerConfig, discovered: &[String]) -> Vec<String> {
+    discovered
+        .iter()
+        .filter(|name| config.allows_tool(name))
+        .cloned()
+        .collect()
+}
+
+impl McpTool {
+    pub fn raw_name(&self) -> &str {
+        &self.definition.name
+    }
+
+    pub fn raw_description(&self) -> Option<String> {
+        self.definition.description.as_deref().map(str::to_owned)
+    }
+}
+
 /// A shared handle holding all MCP tool registrations.
 /// Tools are discovered once at startup and reconnect per call (or use persistent sink).
 #[derive(Clone, Default)]
@@ -399,39 +532,84 @@ impl McpRegistry {
         *self.connections.write().await = new_connections;
     }
 
-    /// List connected server names.
-    pub async fn server_names(&self) -> Vec<String> {
-        self.connections
-            .read()
-            .await
-            .iter()
-            .map(|c| c.name.clone())
-            .collect()
-    }
-
-    /// Get all MCP tools as boxed ToolDyn.
-    pub async fn tools_as_dyn(&self) -> Vec<Box<dyn ToolDyn>> {
+    /// Tools ordinary chats may use: only the explicit grant of each
+    /// connected server (#97). Nothing is exposed just because it connected.
+    pub async fn active_tools_as_dyn(&self) -> Vec<Box<dyn ToolDyn>> {
+        let configs = self.configs.read().await;
         self.connections
             .read()
             .await
             .iter()
             .flat_map(|conn| {
-                conn.tools.iter().map(|t| {
-                    let boxed: Box<dyn ToolDyn> = Box::new(t.clone());
-                    boxed
-                })
+                let config = configs.iter().find(|c| c.name == conn.name);
+                conn.tools
+                    .iter()
+                    .filter(move |t| config.is_some_and(|c| c.allows_tool(t.raw_name())))
+                    .map(|t| {
+                        let boxed: Box<dyn ToolDyn> = Box::new(t.clone());
+                        boxed
+                    })
             })
             .collect()
     }
 
-    /// Snapshot app tool info for sync access.
+    /// Discovered raw tool names for a connected server, if connected.
+    pub async fn discovered_tools(&self, server: &str) -> Option<Vec<(String, Option<String>)>> {
+        self.connections
+            .read()
+            .await
+            .iter()
+            .find(|conn| conn.name == server)
+            .map(|conn| {
+                conn.tools
+                    .iter()
+                    .map(|t| (t.raw_name().to_owned(), t.raw_description()))
+                    .collect()
+            })
+    }
+
+    /// Per-server trust and grants for the config API. Never includes headers.
+    pub async fn grants(&self, configs: &[McpServerConfig]) -> Vec<ServerGrants> {
+        let connections = self.connections.read().await;
+        configs
+            .iter()
+            .map(|config| {
+                let discovered: Option<Vec<(String, Option<String>)>> = connections
+                    .iter()
+                    .find(|conn| conn.name == config.name)
+                    .map(|conn| {
+                        conn.tools
+                            .iter()
+                            .map(|t| (t.raw_name().to_owned(), t.raw_description()))
+                            .collect()
+                    });
+                ServerGrants::from_config(config, discovered.as_deref())
+            })
+            .collect()
+    }
+
+    /// Snapshot app tool HTML for sync access. Only curated servers' granted
+    /// tools may render an app frame (#97).
     pub async fn snapshot_app_tools(&self) -> McpAppSnapshot {
+        let configs = self.configs.read().await;
         let guard = self.connections.read().await;
         let mut tool_html = HashMap::new();
         for conn in guard.iter() {
-            for (tool_name, uri) in &conn.ui_tools {
+            let Some(config) = configs.iter().find(|c| c.name == conn.name) else {
+                continue;
+            };
+            if config.trust != crate::config::McpTrust::Curated {
+                continue;
+            }
+            for tool in &conn.tools {
+                if !config.allows_tool(tool.raw_name()) {
+                    continue;
+                }
+                let Some(uri) = conn.ui_tools.get(&tool.name()) else {
+                    continue;
+                };
                 if let Some(html) = conn.resources.get(uri) {
-                    tool_html.insert(tool_name.clone(), html.clone());
+                    tool_html.insert(tool.name(), html.clone());
                 }
             }
         }
@@ -465,5 +643,86 @@ impl McpAppSnapshot {
 
     pub fn get_html(&self, tool_name: &str) -> Option<&String> {
         self.tool_html.get(tool_name)
+    }
+}
+
+#[cfg(test)]
+mod grant_tests {
+    use super::*;
+    use crate::config::McpTrust;
+
+    fn config(trust: McpTrust, enabled: &[&str]) -> McpServerConfig {
+        McpServerConfig {
+            name: "srv".into(),
+            url: Some("https://srv.example/mcp".into()),
+            command: None,
+            args: Vec::new(),
+            headers: [("Authorization".to_owned(), "Bearer secret".to_owned())]
+                .into_iter()
+                .collect(),
+            trust,
+            enabled_tools: enabled.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn custom_servers_grant_nothing_until_enabled_and_grants_are_exact() {
+        let discovered = vec!["search".to_owned(), "fetch".to_owned(), "run".to_owned()];
+        assert!(allowed_tool_names(&config(McpTrust::Custom, &[]), &discovered).is_empty());
+        assert_eq!(
+            allowed_tool_names(
+                &config(McpTrust::Custom, &["fetch", "missing"]),
+                &discovered
+            ),
+            vec!["fetch"]
+        );
+        assert_eq!(
+            allowed_tool_names(
+                &config(McpTrust::Curated, &["search", "fetch", "run"]),
+                &discovered
+            ),
+            discovered
+        );
+    }
+
+    #[test]
+    fn catalog_matches_require_exact_name_and_url() {
+        assert!(is_curated(
+            "brave-search",
+            "https://mcp.bravesearch.com/sse"
+        ));
+        assert!(!is_curated("brave-search", "https://evil.example/sse"));
+        assert!(!is_curated("mine", "https://mcp.bravesearch.com/sse"));
+        assert!(
+            curated_servers()
+                .iter()
+                .all(|entry| entry.url.starts_with("https://"))
+        );
+    }
+
+    #[test]
+    fn grants_report_discovery_and_never_headers() {
+        let cfg = config(McpTrust::Custom, &["fetch"]);
+        let discovered = vec![
+            ("search".to_owned(), Some("web search".to_owned())),
+            ("fetch".to_owned(), None),
+        ];
+        let grants = ServerGrants::from_config(&cfg, Some(&discovered));
+        assert!(grants.connected);
+        assert_eq!(
+            grants
+                .tools
+                .iter()
+                .map(|t| (t.name.as_str(), t.enabled))
+                .collect::<Vec<_>>(),
+            vec![("search", false), ("fetch", true)]
+        );
+        let offline = ServerGrants::from_config(&cfg, None);
+        assert!(!offline.connected);
+        assert_eq!(offline.tools.len(), 1);
+        for value in [&grants, &offline] {
+            let json = serde_json::to_string(value).unwrap();
+            assert!(!json.contains("secret") && !json.contains("headers"));
+        }
     }
 }

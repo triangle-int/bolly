@@ -64,27 +64,10 @@ fn validate_skill_id(id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// The built-in "skill_creator" skill that is always present.
-fn builtin_skill_creator() -> Skill {
-    Skill {
-        id: "skill_creator".into(),
-        name: "Skill Creator".into(),
-        description: "Create and manage new skills for your companion. Teach it new abilities by defining instructions, triggers, and behaviors.".into(),
-        icon: "+".into(),
-        builtin: true,
-        enabled: true,
-        kind: Default::default(),
-        anthropic_skill_id: None,
-        anthropic_version: None,
-        instructions: String::new(),
-        source: None,
-        resources: Vec::new(),
-    }
-}
-
 /// Read all skills: builtins + user-created ones from the skills directory.
 pub fn list_skills(workspace_dir: &Path) -> Vec<Skill> {
-    let mut skills = vec![builtin_skill_creator()];
+    // Reviewed installs and developer-authored folders only (#97).
+    let mut skills = Vec::new();
 
     let skills_dir = workspace_dir.join("skills");
     if skills_dir.is_dir() {
@@ -224,36 +207,8 @@ pub fn get_skill(workspace_dir: &Path, skill_id: &str) -> Option<Skill> {
         .find(|s| s.id == skill_id)
 }
 
-/// Create a new skill directory with SKILL.md.
-pub fn create_skill(workspace_dir: &Path, skill: &Skill) -> io::Result<()> {
-    let skill_dir = workspace_dir.join("skills").join(&skill.id);
-    fs::create_dir_all(&skill_dir)?;
-
-    // Write SKILL.md with frontmatter
-    let skill_md = format!(
-        "---\nname: {}\ndescription: {}\n---\n\n{}",
-        skill.id,
-        skill.description.replace('\n', " "),
-        skill.instructions
-    );
-    fs::write(skill_dir.join("SKILL.md"), skill_md)?;
-
-    // Write source tracking
-    if let Some(source) = &skill.source {
-        let source_json = serde_json::to_string_pretty(source)
-            .map_err(|e| io::Error::new(io::ErrorKind::Other, e))?;
-        fs::write(skill_dir.join(".source.json"), source_json)?;
-    }
-
-    Ok(())
-}
-
-/// Delete a user-created skill (cannot delete builtins).
+/// Delete an installed skill directory.
 pub fn delete_skill(workspace_dir: &Path, skill_id: &str) -> io::Result<bool> {
-    if skill_id == "skill_creator" {
-        return Ok(false);
-    }
-
     let skill_dir = workspace_dir.join("skills").join(skill_id);
     if skill_dir.is_dir() {
         fs::remove_dir_all(&skill_dir)?;

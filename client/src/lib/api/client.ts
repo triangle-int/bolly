@@ -281,21 +281,42 @@ export function updateModelMode(mode: string): Promise<{ status: string; model_m
 	});
 }
 
+export interface McpToolGrant {
+	name: string;
+	description?: string;
+	enabled: boolean;
+}
+
+/** One extension server with its trust label and exact tool grant (#97). Never carries headers. */
 export interface McpServerInfo {
 	name: string;
 	url?: string;
+	trust: "curated" | "custom";
 	connected: boolean;
+	tools: McpToolGrant[];
 }
 
 export function fetchMcpServers(): Promise<McpServerInfo[]> {
 	return json("/api/config/mcp");
 }
 
-export function addMcpServer(name: string, url: string): Promise<{ status: string; name: string; tool_count: number }> {
+/**
+ * Add a server. Catalog entries need no acknowledgement; anything else must
+ * carry `acknowledgeUntrusted: true` or the server refuses it.
+ */
+export function addMcpServer(name: string, url: string, acknowledgeUntrusted = false): Promise<{ status: string; name: string; tool_count: number }> {
 	return json("/api/config/mcp", {
 		method: "POST",
 		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify({ name, url }),
+		body: JSON.stringify({ name, url, acknowledge_untrusted: acknowledgeUntrusted }),
+	});
+}
+
+export function updateMcpToolGrants(name: string, enabled: string[]): Promise<McpServerInfo> {
+	return json(`/api/config/mcp/${encodeURIComponent(name)}/tools`, {
+		method: "PUT",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ enabled }),
 	});
 }
 
@@ -642,14 +663,6 @@ export function fetchSkills(): Promise<Skill[]> {
 
 export function fetchSkill(skillId: string): Promise<Skill> {
 	return json(`/api/skills/${encodeURIComponent(skillId)}`);
-}
-
-export function createSkill(skill: Skill): Promise<Skill> {
-	return json("/api/skills", {
-		method: "POST",
-		headers: { "Content-Type": "application/json" },
-		body: JSON.stringify(skill),
-	});
 }
 
 export async function deleteSkill(skillId: string): Promise<void> {

@@ -5,7 +5,7 @@ use axum::{
     routing::{delete, get, post, put},
 };
 // Note: `put` still used by update_model_mode
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::{
@@ -27,6 +27,7 @@ pub fn router() -> Router<AppState> {
         .route("/api/config/mcp", post(add_mcp_server))
         .route("/api/config/mcp/suggested", get(suggested_mcp_servers))
         .route("/api/config/mcp/{name}", delete(remove_mcp_server))
+        .route("/api/config/mcp/{name}/tools", put(update_mcp_tool_grants))
         .route("/api/config/github", get(get_github))
         .route("/api/config/github", put(update_github))
         .route("/api/config/server", get(get_server))
@@ -237,98 +238,76 @@ async fn update_llm_key(
 // MCP server management
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
-struct McpServerInfo {
-    name: String,
-    url: Option<String>,
-    connected: bool,
-}
-
-async fn list_mcp_servers(State(state): State<AppState>) -> Json<Vec<McpServerInfo>> {
+async fn list_mcp_servers(
+    State(state): State<AppState>,
+) -> Json<Vec<crate::services::mcp::ServerGrants>> {
     let config = state.config.read().await;
-    let connected_names = state.mcp_registry.server_names().await;
-    let servers: Vec<McpServerInfo> = config
-        .mcp_servers
-        .iter()
-        .map(|s| McpServerInfo {
-            name: s.name.clone(),
-            url: s.url.clone(),
-            connected: connected_names.contains(&s.name),
-        })
-        .collect();
-    Json(servers)
+    Json(state.mcp_registry.grants(&config.mcp_servers).await)
 }
 
-/// Curated list of popular MCP servers users can add with one click.
+/// The reviewed catalog users can add with one click (#97).
 async fn suggested_mcp_servers(State(state): State<AppState>) -> Json<serde_json::Value> {
     let config = state.config.read().await;
-    let installed: Vec<String> = config.mcp_servers.iter().map(|s| s.name.clone()).collect();
-
-    let suggested = serde_json::json!([
-        {
-            "name": "fal-ai",
-            "description": "AI image & video generation (Flux, SDXL, etc.)",
-            "url": "https://mcp.fal.ai/mcp",
-            "requires_key": true,
-            "key_env": "FAL_KEY",
-            "key_url": "https://fal.ai/dashboard/keys",
-            "installed": installed.contains(&"fal-ai".to_string()),
-        },
-        {
-            "name": "brave-search",
-            "description": "Web search via Brave Search API",
-            "url": "https://mcp.bravesearch.com/sse",
-            "requires_key": true,
-            "key_env": "BRAVE_API_KEY",
-            "key_url": "https://brave.com/search/api/",
-            "installed": installed.contains(&"brave-search".to_string()),
-        },
-        {
-            "name": "github",
-            "description": "GitHub repos, issues, PRs, code search",
-            "url": "https://api.githubcopilot.com/mcp/",
-            "requires_key": true,
-            "key_env": "GITHUB_TOKEN",
-            "key_url": "https://github.com/settings/tokens",
-            "installed": installed.contains(&"github".to_string()),
-        },
-        {
-            "name": "firecrawl",
-            "description": "Web scraping and crawling",
-            "url": "https://mcp.firecrawl.dev/sse",
-            "requires_key": true,
-            "key_env": "FIRECRAWL_API_KEY",
-            "key_url": "https://firecrawl.dev",
-            "installed": installed.contains(&"firecrawl".to_string()),
-        },
-    ]);
-
-    Json(suggested)
+    let installed: Vec<&str> = config.mcp_servers.iter().map(|s| s.name.as_str()).collect();
+    let suggested: Vec<serde_json::Value> = crate::services::mcp::curated_servers()
+        .iter()
+        .map(|entry| {
+            json!({
+                "name": entry.name,
+                "description": entry.description,
+                "url": entry.url,
+                "requires_key": entry.requires_key,
+                "key_env": entry.key_env,
+                "key_url": entry.key_url,
+                "installed": installed.contains(&entry.name),
+            })
+        })
+        .collect();
+    Json(serde_json::Value::Array(suggested))
 }
 
 #[derive(Deserialize)]
 struct AddMcpServerRequest {
     name: String,
     url: String,
+    /// Required for anything outside the catalog.
+    #[serde(default)]
+    acknowledge_untrusted: bool,
 }
 
 async fn add_mcp_server(
     State(state): State<AppState>,
     Json(request): Json<AddMcpServerRequest>,
-) -> Result<Json<serde_json::Value>, (StatusCode, String)> {
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<serde_json::Value>)> {
+    fn reject(status: StatusCode, message: &str) -> (StatusCode, Json<serde_json::Value>) {
+        (
+            status,
+            Json(json!({ "error": "invalid_request", "message": message })),
+        )
+    }
+
     let name = request.name.trim().to_string();
     let url = request.url.trim().to_string();
     if name.is_empty() || url.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "name and url are required".into()));
+        return Err(reject(StatusCode::BAD_REQUEST, "name and url are required"));
+    }
+    let curated = crate::services::mcp::is_curated(&name, &url);
+    if !curated && !request.acknowledge_untrusted {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(json!({
+                "error": "untrusted_extension_requires_acknowledgement",
+                "message": "this server is not in the reviewed catalog; add it from Advanced setup and acknowledge that its tools act with your data",
+            })),
+        ));
     }
 
-    // Update config
     {
         let mut config = state.config.write().await;
         if config.mcp_servers.iter().any(|s| s.name == name) {
-            return Err((
+            return Err(reject(
                 StatusCode::CONFLICT,
-                format!("MCP server '{name}' already exists"),
+                &format!("MCP server '{name}' already exists"),
             ));
         }
         config.mcp_servers.push(McpServerConfig {
@@ -337,20 +316,107 @@ async fn add_mcp_server(
             command: None,
             args: Default::default(),
             headers: Default::default(),
+            trust: if curated {
+                config::McpTrust::Curated
+            } else {
+                config::McpTrust::Custom
+            },
+            enabled_tools: Vec::new(),
         });
-        save_config(&config)?;
+        save_config_at(&config, &state.workspace_dir.join("config.toml"))
+            .map_err(|(status, message)| reject(status, &message))?;
     }
 
-    // Reconnect all MCP servers
+    // Connect, then grant: curated servers get every discovered tool,
+    // custom servers get none until the user enables them.
     let configs = state.config.read().await.mcp_servers.clone();
     state.mcp_registry.reconnect(&configs).await;
-    let tool_count = state.mcp_registry.tool_count().await;
+    let discovered = state.mcp_registry.discovered_tools(&name).await;
+    if curated && let Some(discovered) = &discovered {
+        let mut config = state.config.write().await;
+        if let Some(server) = config.mcp_servers.iter_mut().find(|s| s.name == name) {
+            server.enabled_tools = discovered.iter().map(|(n, _)| n.clone()).collect();
+        }
+        save_config_at(&config, &state.workspace_dir.join("config.toml"))
+            .map_err(|(status, message)| reject(status, &message))?;
+        let configs = config.mcp_servers.clone();
+        drop(config);
+        state.mcp_registry.reconnect(&configs).await;
+    }
+    let tool_count = discovered.map(|d| d.len()).unwrap_or(0);
 
     Ok(Json(json!({
         "status": "ok",
         "name": name,
+        "trust": if curated { "curated" } else { "custom" },
         "tool_count": tool_count,
     })))
+}
+
+#[derive(Deserialize)]
+struct UpdateMcpGrantsRequest {
+    enabled: Vec<String>,
+}
+
+/// Exact capability grant for one server (#97).
+async fn update_mcp_tool_grants(
+    State(state): State<AppState>,
+    axum::extract::Path(name): axum::extract::Path<String>,
+    Json(request): Json<UpdateMcpGrantsRequest>,
+) -> Result<Json<crate::services::mcp::ServerGrants>, (StatusCode, String)> {
+    if !state
+        .config
+        .read()
+        .await
+        .mcp_servers
+        .iter()
+        .any(|s| s.name == name)
+    {
+        return Err((
+            StatusCode::NOT_FOUND,
+            format!("MCP server '{name}' not found"),
+        ));
+    }
+    let Some(discovered) = state.mcp_registry.discovered_tools(&name).await else {
+        return Err((
+            StatusCode::CONFLICT,
+            format!("MCP server '{name}' is not connected; tools can be granted once it is"),
+        ));
+    };
+    let known: Vec<&str> = discovered.iter().map(|(n, _)| n.as_str()).collect();
+    if let Some(unknown) = request
+        .enabled
+        .iter()
+        .find(|n| !known.contains(&n.as_str()))
+    {
+        return Err((
+            StatusCode::BAD_REQUEST,
+            format!("'{unknown}' is not a tool of '{name}'"),
+        ));
+    }
+    let mut enabled = request.enabled;
+    enabled.sort();
+    enabled.dedup();
+    let grants = {
+        let mut config = state.config.write().await;
+        let server = config
+            .mcp_servers
+            .iter_mut()
+            .find(|s| s.name == name)
+            .expect("checked above");
+        server.enabled_tools = enabled;
+        save_config_at(&config, &state.workspace_dir.join("config.toml"))?;
+        let configs = config.mcp_servers.clone();
+        drop(config);
+        state.mcp_registry.reconnect(&configs).await;
+        let config = state.config.read().await;
+        state.mcp_registry.grants(&config.mcp_servers).await
+    };
+    grants
+        .into_iter()
+        .find(|g| g.name == name)
+        .map(Json)
+        .ok_or((StatusCode::INTERNAL_SERVER_ERROR, "grant vanished".into()))
 }
 
 async fn remove_mcp_server(
@@ -367,7 +433,7 @@ async fn remove_mcp_server(
                 format!("MCP server '{name}' not found"),
             ));
         }
-        save_config(&config)?;
+        save_config_at(&config, &state.workspace_dir.join("config.toml"))?;
     }
 
     // Reconnect
@@ -748,5 +814,129 @@ mod embedding_status_tests {
         guard.auth_token = "new-token".into();
         drop(guard);
         assert_eq!(request.await.unwrap().status(), StatusCode::OK);
+    }
+}
+
+#[cfg(test)]
+mod extension_tests {
+    use super::*;
+
+    async fn state_with_workspace() -> (tempfile::TempDir, AppState) {
+        let workspace = tempfile::tempdir().unwrap();
+        let mut state = AppState::new(config::Config::default()).await;
+        state.workspace_dir = workspace.path().to_owned();
+        (workspace, state)
+    }
+
+    #[tokio::test]
+    async fn custom_servers_need_an_explicit_acknowledgement_and_start_with_no_grant() {
+        let (workspace, state) = state_with_workspace().await;
+        let (status, Json(denied)) = add_mcp_server(
+            State(state.clone()),
+            Json(AddMcpServerRequest {
+                name: "mine".into(),
+                url: "https://127.0.0.1:9/mcp".into(),
+                acknowledge_untrusted: false,
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(status, StatusCode::FORBIDDEN);
+        assert_eq!(
+            denied["error"],
+            "untrusted_extension_requires_acknowledgement"
+        );
+        assert!(state.config.read().await.mcp_servers.is_empty());
+
+        let Json(added) = add_mcp_server(
+            State(state.clone()),
+            Json(AddMcpServerRequest {
+                name: "mine".into(),
+                url: "https://127.0.0.1:9/mcp".into(),
+                acknowledge_untrusted: true,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(added["trust"], "custom");
+        let persisted: config::Config =
+            toml::from_str(&std::fs::read_to_string(workspace.path().join("config.toml")).unwrap())
+                .unwrap();
+        assert_eq!(persisted.mcp_servers[0].trust, config::McpTrust::Custom);
+        assert!(persisted.mcp_servers[0].enabled_tools.is_empty());
+
+        // Not connected (the URL is unreachable): grants must wait.
+        let (code, _) = update_mcp_tool_grants(
+            State(state.clone()),
+            axum::extract::Path("mine".into()),
+            Json(UpdateMcpGrantsRequest {
+                enabled: vec!["anything".into()],
+            }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(code, StatusCode::CONFLICT);
+        let (code, _) = update_mcp_tool_grants(
+            State(state.clone()),
+            axum::extract::Path("missing".into()),
+            Json(UpdateMcpGrantsRequest { enabled: vec![] }),
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(code, StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn catalog_servers_need_no_acknowledgement_and_listing_never_leaks_headers() {
+        let (_workspace, state) = state_with_workspace().await;
+        {
+            let mut cfg = state.config.write().await;
+            cfg.mcp_servers.push(McpServerConfig {
+                name: "old".into(),
+                url: Some("https://old.example/mcp".into()),
+                command: None,
+                args: Vec::new(),
+                headers: [(
+                    "Authorization".to_owned(),
+                    "Bearer secret-header".to_owned(),
+                )]
+                .into_iter()
+                .collect(),
+                trust: config::McpTrust::Custom,
+                enabled_tools: vec!["fetch".into()],
+            });
+        }
+        let Json(added) = add_mcp_server(
+            State(state.clone()),
+            Json(AddMcpServerRequest {
+                name: "brave-search".into(),
+                url: "https://mcp.bravesearch.com/sse".into(),
+                acknowledge_untrusted: false,
+            }),
+        )
+        .await
+        .unwrap();
+        assert_eq!(added["trust"], "curated");
+
+        let Json(listed) = list_mcp_servers(State(state.clone())).await;
+        let json = serde_json::to_string(&listed).unwrap();
+        assert!(!json.contains("secret-header"));
+        assert!(!json.contains("headers"));
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].trust, config::McpTrust::Custom);
+        assert_eq!(listed[1].trust, config::McpTrust::Curated);
+        assert!(
+            !listed[1].connected,
+            "the catalog URL is not reachable from tests"
+        );
+
+        let Json(suggested) = suggested_mcp_servers(State(state.clone())).await;
+        let brave = suggested
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|s| s["name"] == "brave-search")
+            .unwrap();
+        assert_eq!(brave["installed"], true);
     }
 }

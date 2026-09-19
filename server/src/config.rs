@@ -313,6 +313,17 @@ impl EmailAccounts {
     }
 }
 
+/// Who reviewed an MCP server (#97). Legacy entries without the field are custom.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum McpTrust {
+    /// Installed from the reviewed catalog; every discovered tool is granted.
+    Curated,
+    /// Added through the advanced path; no tool is granted until enabled.
+    #[default]
+    Custom,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct McpServerConfig {
     /// Human-readable name for this MCP server.
@@ -325,8 +336,21 @@ pub struct McpServerConfig {
     #[serde(default)]
     pub args: Vec<String>,
     /// HTTP headers to send with requests / env vars for stdio servers.
+    /// Only this server's connection ever sees them.
     #[serde(default)]
     pub headers: std::collections::HashMap<String, String>,
+    /// Review status (#97).
+    #[serde(default)]
+    pub trust: McpTrust,
+    /// Exact tool grant: raw tool names ordinary chats may use. Empty = none.
+    #[serde(default)]
+    pub enabled_tools: Vec<String>,
+}
+
+impl McpServerConfig {
+    pub fn allows_tool(&self, raw_tool_name: &str) -> bool {
+        self.enabled_tools.iter().any(|name| name == raw_tool_name)
+    }
 }
 
 /// Model names belong to configuration, not provider identity.
@@ -1053,6 +1077,38 @@ heavy_multiplier = 2.5
         assert!(json.get("landing_url").is_none());
         assert!(json.get("plan").is_none());
         assert!(json["llm"].get("heavy_multiplier").is_none());
+    }
+
+    #[test]
+    fn legacy_mcp_entries_load_as_custom_with_no_grants_and_never_expose_headers() {
+        let raw = r#"
+[[mcp_servers]]
+name = "old"
+url = "https://old.example/mcp"
+[mcp_servers.headers]
+Authorization = "Bearer secret-token"
+
+[[mcp_servers]]
+name = "brave-search"
+url = "https://mcp.bravesearch.com/sse"
+trust = "curated"
+enabled_tools = ["brave_web_search"]
+"#;
+        let config: Config = toml::from_str(raw).unwrap();
+        let old = &config.mcp_servers[0];
+        assert_eq!(old.trust, super::McpTrust::Custom);
+        assert!(old.enabled_tools.is_empty());
+        assert!(
+            !old.allows_tool("anything"),
+            "legacy servers grant nothing until reviewed"
+        );
+        let curated = &config.mcp_servers[1];
+        assert_eq!(curated.trust, super::McpTrust::Curated);
+        assert!(curated.allows_tool("brave_web_search"));
+        assert!(!curated.allows_tool("brave_news"));
+        let grants = crate::services::mcp::ServerGrants::from_config(curated, None);
+        let json = serde_json::to_string(&grants).unwrap();
+        assert!(!json.contains("secret-token") && !json.contains("headers"));
     }
 
     #[test]

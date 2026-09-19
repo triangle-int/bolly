@@ -9,14 +9,12 @@
 	import { getToasts } from "$lib/stores/toast.svelte.js";
 	import SkillCard from "./SkillCard.svelte";
 	import RegistryCard from "./RegistryCard.svelte";
-	import CreateSkillModal from "./CreateSkillModal.svelte";
 
 	const toast = getToasts();
 
 	let skills = $state<Skill[]>([]);
 	let loading = $state(true);
 	let loadError = $state("");
-	let showCreate = $state(false);
 
 	let mode = $state<"installed" | "browse">("installed");
 	let registry = $state<RegistryEntry[]>([]);
@@ -74,10 +72,6 @@
 		}
 	}
 
-	function handleCreated(skill: Skill) {
-		skills = [...skills, skill];
-		showCreate = false;
-	}
 
 	async function handleInstall(id: string) {
 		installingId = id;
@@ -122,11 +116,6 @@
 					Browse
 				</button>
 			</div>
-			{#if mode === "installed"}
-				<button class="skills-add" onclick={() => (showCreate = true)}>
-					+ New skill
-				</button>
-			{/if}
 		</div>
 
 		{#if mode === "installed"}
@@ -190,12 +179,6 @@
 		{/if}
 	{/if}
 
-	{#if showCreate}
-		<CreateSkillModal
-			onclose={() => (showCreate = false)}
-			oncreated={handleCreated}
-		/>
-	{/if}
 </div>
 
 <style>

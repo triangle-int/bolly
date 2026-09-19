@@ -15,7 +15,6 @@ use crate::{
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/skills", get(list_skills))
-        .route("/api/skills", post(create_skill))
         .route("/api/skills/registry", get(list_registry))
         .route("/api/skills/registry/install", post(install_registry_skill))
         .route("/api/skills/{skill_id}", get(get_skill))
@@ -34,15 +33,6 @@ async fn get_skill(
     skills::get_skill(&state.workspace_dir, &skill_id)
         .map(Json)
         .ok_or(StatusCode::NOT_FOUND)
-}
-
-async fn create_skill(
-    State(state): State<AppState>,
-    Json(skill): Json<Skill>,
-) -> Result<Json<Skill>, StatusCode> {
-    skills::create_skill(&state.workspace_dir, &skill)
-        .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
-    Ok(Json(skill))
 }
 
 async fn delete_skill(State(state): State<AppState>, Path(skill_id): Path<String>) -> StatusCode {
