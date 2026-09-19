@@ -2,6 +2,7 @@ use axum::{
     Json, Router,
     extract::{Path, State},
     http::StatusCode,
+    response::IntoResponse,
     routing::{delete, get, post},
 };
 use std::io::ErrorKind;
@@ -49,21 +50,30 @@ fn task_key(slug: &str, chat_id: &str) -> String {
 async fn post_chat(
     State(state): State<AppState>,
     Json(request): Json<ChatRequest>,
-) -> Result<Json<ChatResponse>, super::ProviderRequestError> {
-    super::require_provider(&state).await?;
+) -> Result<Json<ChatResponse>, axum::response::Response> {
+    // The body names the companion; admit it exactly like a path parameter.
+    crate::app::companion_boundary::admit(
+        &state.workspace_dir,
+        &request.instance_slug,
+        &axum::http::Method::POST,
+    )
+    .map_err(IntoResponse::into_response)?;
+    super::require_provider(&state)
+        .await
+        .map_err(IntoResponse::into_response)?;
     let instance_slug = request.instance_slug.clone();
     let chat_id = request.chat_id.clone();
     let content = request.content.trim().to_string();
     let voice_mode = request.voice_mode;
 
-    if instance_slug.is_empty() || content.is_empty() {
-        return Err((StatusCode::BAD_REQUEST, "slug and content required".into()).into());
+    if content.is_empty() {
+        return Err((StatusCode::BAD_REQUEST, "content required").into_response());
     }
 
     // Save user message immediately
     let user_message =
         chat::save_user_message(&state.workspace_dir, &instance_slug, &chat_id, &content)
-            .map_err(map_chat_error)?;
+            .map_err(|error| map_chat_error(error).into_response())?;
 
     // Broadcast user message
     let _ = state.events.send(ServerEvent::ChatMessageCreated {
@@ -71,13 +81,6 @@ async fn post_chat(
         chat_id: chat_id.clone(),
         message: user_message.clone(),
     });
-
-    // Discover instance
-    if let Ok(Some(instance)) = chat::discover_instance(&state.workspace_dir, &instance_slug) {
-        let _ = state
-            .events
-            .send(ServerEvent::InstanceDiscovered { instance });
-    }
 
     let key = task_key(&instance_slug, &chat_id);
 
@@ -278,11 +281,10 @@ pub async fn run_agent_loop(
         iteration += 1;
 
         let config_path = config::config_path();
-        let (fast_model_name, google_ai_key, public_url) = {
+        let (fast_model_name, public_url) = {
             let cfg = state.config.read().await;
             (
                 cfg.llm.fast_model_name().to_string(),
-                cfg.llm.tokens.google_ai.clone(),
                 cfg.public_url.clone(),
             )
         };
@@ -323,9 +325,9 @@ pub async fn run_agent_loop(
             &state.mcp_registry,
             voice_mode,
             state.vector_store.clone(),
-            &google_ai_key,
             state.machine_registry.clone(),
             &public_url,
+            &state.resources,
         );
 
         let result = tokio::select! {

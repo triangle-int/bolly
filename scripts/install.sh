@@ -181,6 +181,10 @@ log "install dir: ${BOLD}$NOLUNE_DIR${NC}"
 # ─── Download binary ─────────────────────────────────────────────────────────
 step "downloading nolune"
 
+# github.com can be slow or intermittently unreachable on some networks;
+# fail fast on a dead connection and retry transient errors instead of hanging.
+CURL_NET_OPTS="--connect-timeout 15 --retry 3 --retry-delay 2 --retry-connrefused"
+
 AUTH_HEADER=""
 if [ -n "${GITHUB_TOKEN:-}" ]; then
     AUTH_HEADER="Authorization: token $GITHUB_TOKEN"
@@ -191,7 +195,7 @@ ASSET_NAME="nolune-server-$TARGET"
 if [ "$CHANNEL" = "nightly" ]; then
     # Nightly: must use API to get tag
     API_URL="https://api.github.com/repos/$REPO/releases/tags/nightly"
-    RELEASE_JSON=$(curl -fsSL ${AUTH_HEADER:+-H "$AUTH_HEADER"} "$API_URL" 2>/dev/null) || fail "could not fetch release info (try setting GITHUB_TOKEN if rate limited)"
+    RELEASE_JSON=$(curl -fsSL $CURL_NET_OPTS ${AUTH_HEADER:+-H "$AUTH_HEADER"} "$API_URL" 2>/dev/null) || fail "could not fetch release info (try setting GITHUB_TOKEN if rate limited)"
     TAG=$(echo "$RELEASE_JSON" | grep '"tag_name"' | head -1 | sed 's/.*: "//;s/".*//')
     if [ -z "$TAG" ] || [ "$TAG" = "null" ]; then
         fail "could not find a nightly release"
@@ -206,12 +210,14 @@ fi
 mkdir -p "$BIN_DIR" "$NOLUNE_DIR"
 
 info "downloading ${BOLD}$CHANNEL${NC} for $TARGET..."
-curl -fL --progress-bar "$DOWNLOAD_URL" -o "$BIN" || \
-    fail "download failed — check https://github.com/$REPO/releases"
+curl -fL --progress-bar $CURL_NET_OPTS "$DOWNLOAD_URL" -o "$BIN" || \
+    fail "download failed — could not fetch $DOWNLOAD_URL (check that github.com is reachable, then see https://github.com/$REPO/releases)"
 
 # Resolve actual version from downloaded binary or GitHub redirect
 if [ "$TAG" = "latest" ]; then
-    RESOLVED=$(curl -fsSIL "$DOWNLOAD_URL" 2>/dev/null | grep -i '^location:' | tail -1 | sed 's|.*/download/\([^/]*\)/.*|\1|' | tr -d '\r')
+    # HEAD -L follows two redirects: /releases/download/<tag>/... and then the
+    # signed CDN URL. Only the first carries the tag.
+    RESOLVED=$(curl -fsSIL $CURL_NET_OPTS "$DOWNLOAD_URL" 2>/dev/null | grep -i '^location:' | grep '/releases/download/' | head -1 | sed 's|.*/releases/download/\([^/]*\)/.*|\1|' | tr -d '\r')
     TAG="${RESOLVED:-latest}"
 fi
 
@@ -235,7 +241,6 @@ model_mode = "auto"
 
 [llm.tokens]
 ANTHROPIC = ""       # Required — get key at https://console.anthropic.com
-GOOGLE_AI = ""       # Optional — embeddings + media analysis
 ELEVENLABS = ""      # Optional — text-to-speech
 CONF
     log "created $NOLUNE_DIR/config.toml"
@@ -260,19 +265,20 @@ REPO="$REPO"
 BIN="$BIN"
 CHANNEL="\${NOLUNE_CHANNEL:-$CHANNEL}"
 TARGET="$TARGET"
+CURL_NET_OPTS="$CURL_NET_OPTS"
 # Use redirect URL for stable — no API call, no rate limit
 DOWNLOAD_URL="https://github.com/\$REPO/releases/latest/download/nolune-server-\$TARGET"
 if [ "\$CHANNEL" = "nightly" ]; then
     API_URL="https://api.github.com/repos/\$REPO/releases/tags/nightly"
-    RELEASE_JSON=\$(curl -fsSL "\$API_URL") || { echo "could not fetch release info"; exit 1; }
+    RELEASE_JSON=\$(curl -fsSL \$CURL_NET_OPTS "\$API_URL") || { echo "could not fetch release info"; exit 1; }
     TAG=\$(echo "\$RELEASE_JSON" | grep '"tag_name"' | head -1 | sed 's/.*: "//;s/".*//')
     DOWNLOAD_URL="https://github.com/\$REPO/releases/download/\$TAG/nolune-server-\$TARGET"
 fi
 echo "checking for updates..."
-curl -fsSL "\$DOWNLOAD_URL" -o "\$BIN.tmp" 2>/dev/null || \
-    { echo "download failed"; exit 1; }
-# Resolve version from redirect
-TAG=\$(curl -fsSIL "\$DOWNLOAD_URL" 2>/dev/null | grep -i '^location:' | tail -1 | sed 's|.*/download/\([^/]*\)/.*|\1|' | tr -d '\r')
+curl -fsSL \$CURL_NET_OPTS "\$DOWNLOAD_URL" -o "\$BIN.tmp" 2>/dev/null || \
+    { echo "download failed — could not fetch \$DOWNLOAD_URL"; exit 1; }
+# Resolve version from the /releases/download/<tag>/ redirect hop (the final hop is the CDN URL)
+TAG=\$(curl -fsSIL \$CURL_NET_OPTS "\$DOWNLOAD_URL" 2>/dev/null | grep -i '^location:' | grep '/releases/download/' | head -1 | sed 's|.*/releases/download/\([^/]*\)/.*|\1|' | tr -d '\r')
 TAG="\${TAG:-unknown}"
 CURRENT=\$(cat "$BIN_DIR/.version" 2>/dev/null || echo "none")
 if [ "\$TAG" = "\$CURRENT" ]; then

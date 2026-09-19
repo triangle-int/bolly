@@ -4,7 +4,7 @@ import type {
 	ChatSummary,
 	ContextStats,
 	Drop,
-	InstanceSummary,
+	CompanionContext,
 	RegistryEntry,
 	ServerMeta,
 	Skill,
@@ -13,7 +13,6 @@ import type {
 	Thought,
 	UpdateLlmRequest,
 	MemoryEntry,
-	Stats,
 	UploadMeta,
 	ChildAgent,
 	AgentHistoryEntry,
@@ -42,9 +41,18 @@ export function isDesktopRelay(): boolean {
 	return typeof window !== "undefined" && "__NOLUNE_DESKTOP_RELAY__" in window;
 }
 
-/** Same-origin URL for an uploaded file, authenticated by the session cookie. */
-export function mediaUrl(slug: string, uploadId: string): string {
-	return uploadFileUrl(slug, uploadId);
+/** Issue a resource-scoped browser URL through the session-authenticated API. */
+export interface ResourceGrant { url: string; refresh_after_seconds: number }
+export async function mediaUrl(slug: string, uploadId: string): Promise<ResourceGrant> {
+    return json<ResourceGrant>(`/api/instances/${encodeURIComponent(slug)}/resource-capabilities/files`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id: uploadId }),
+    });
+}
+
+export async function memoryMediaUrl(slug: string, path: string): Promise<ResourceGrant> {
+    return json<ResourceGrant>(`/api/instances/${encodeURIComponent(slug)}/resource-capabilities/memory`, {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ path }),
+    });
 }
 
 export type AuthKind = "disabled" | "token" | "session";
@@ -174,16 +182,9 @@ export function fetchMeta(): Promise<ServerMeta> {
 	return json("/api/meta");
 }
 
-export function fetchInstances(): Promise<InstanceSummary[]> {
-	return json("/api/instances");
-}
-
-export async function deleteInstance(slug: string): Promise<void> {
-	const res = await authedFetch(`/api/instances/${encodeURIComponent(slug)}`, {
-		method: "DELETE",
-	});
-	if (res.status === 401) throw new AuthError();
-	if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
+/** The one companion this server owns. `exists` drives onboarding. */
+export function fetchCompanion(): Promise<CompanionContext> {
+	return json("/api/companion");
 }
 
 export function fetchChats(slug: string): Promise<ChatSummary[]> {
@@ -210,7 +211,6 @@ export function sendMessage(
 export function updateLlmConfig(req: {
 	api_key?: string;
 	openai?: string;
-	google_ai?: string;
 	elevenlabs?: string;
 	openrouter?: string;
 }): Promise<void> {
@@ -530,8 +530,17 @@ export function fetchAgentRun(slug: string, runId: string): Promise<import("./ty
 	return json(`/api/instances/${encodeURIComponent(slug)}/agent-runs/${encodeURIComponent(runId)}`);
 }
 
-export function fetchStats(slug: string): Promise<Stats> {
-	return json(`/api/instances/${encodeURIComponent(slug)}/stats`);
+/** Interaction-rhythm tracking (#95): the one retained behavioral aggregate. */
+export function fetchRhythmTracking(slug: string): Promise<{ enabled: boolean }> {
+	return json(`/api/instances/${encodeURIComponent(slug)}/rhythm`);
+}
+
+export function updateRhythmTracking(slug: string, enabled: boolean): Promise<void> {
+	return json(`/api/instances/${encodeURIComponent(slug)}/rhythm`, {
+		method: "PUT",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ enabled }),
+	});
 }
 
 export function fetchMemory(slug: string): Promise<MemoryEntry[]> {
@@ -554,8 +563,12 @@ export function reindexMemory(slug: string): Promise<{ status: string }> {
 	return json(`/api/instances/${encodeURIComponent(slug)}/memory/reindex`, { method: 'POST' });
 }
 
+function encodedMemoryPath(path: string): string {
+    return path.split('/').map(part => encodeURIComponent(part).replace(/[!'()*]/g, char => `%${char.charCodeAt(0).toString(16).toUpperCase()}`)).join('/');
+}
+
 export async function fetchMemoryContent(slug: string, path: string): Promise<string> {
-	const res = await authedFetch(`/api/instances/${encodeURIComponent(slug)}/memory/${path}`);
+	const res = await authedFetch(`/api/instances/${encodeURIComponent(slug)}/memory/${encodedMemoryPath(path)}`);
 	if (res.status === 401) throw new AuthError();
 	if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
 	return res.text();
@@ -577,7 +590,7 @@ export function fetchMemoryGraph(slug: string): Promise<import("./types.js").Mem
 }
 
 export async function deleteMemoryFile(slug: string, path: string): Promise<void> {
-	const res = await authedFetch(`/api/instances/${encodeURIComponent(slug)}/memory/${path}`, { method: 'DELETE' });
+	const res = await authedFetch(`/api/instances/${encodeURIComponent(slug)}/memory/${encodedMemoryPath(path)}`, { method: 'DELETE' });
 	if (res.status === 401) throw new AuthError();
 	if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
 }
@@ -643,8 +656,8 @@ export async function deleteUpload(slug: string, uploadId: string): Promise<void
 	);
 }
 
-export function uploadFileUrl(slug: string, uploadId: string): string {
-	return `${BASE}/api/instances/${encodeURIComponent(slug)}/uploads/${encodeURIComponent(uploadId)}/file`;
+export async function uploadFileUrl(slug: string, uploadId: string): Promise<string> {
+    return (await mediaUrl(slug, uploadId)).url;
 }
 
 // ---------------------------------------------------------------------------
@@ -788,7 +801,7 @@ export async function exportInstance(
 	onProgress?: (downloadedBytes: number) => void,
 ): Promise<Blob> {
 	const url = exportInstanceUrl(slug);
-	const res = await fetch(url);
+	const res = await authedFetch(url);
 	if (!res.ok) throw new Error(await res.text() || "export failed");
 
 	const reader = res.body!.getReader();
@@ -844,6 +857,7 @@ export async function submitComputerUseResult(
 // WebSocket
 // ---------------------------------------------------------------------------
 
+// ISSUE-112: sole query-control-token exemption; WebSocket handshake only.
 export function createWebSocket(): WebSocket {
 	// Same-origin: the browser attaches the session cookie to the upgrade.
 	const proto = location.protocol === "https:" ? "wss:" : "ws:";

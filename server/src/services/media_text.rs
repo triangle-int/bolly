@@ -43,6 +43,7 @@ pub struct MemoryMetadata {
 /// Filesystem authority anchored to the configured workspace at startup.
 pub struct MediaStore {
     root: Dir,
+    upload_dirs: std::sync::Mutex<HashMap<String, std::sync::Arc<Dir>>>,
     #[cfg(test)]
     fail_next_write: std::sync::atomic::AtomicBool,
     #[cfg(test)]
@@ -57,6 +58,7 @@ impl MediaStore {
         }
         Ok(Self {
             root: Dir::open_ambient_dir(workspace_root, ambient_authority())?,
+            upload_dirs: std::sync::Mutex::new(HashMap::new()),
             #[cfg(test)]
             fail_next_write: std::sync::atomic::AtomicBool::new(false),
             #[cfg(test)]
@@ -134,6 +136,118 @@ impl MediaStore {
         }
         slugs.sort();
         Ok(slugs)
+    }
+
+    /// Validate an upload through held capability directories without reading its blob.
+    /// Metadata and blob are opened no-follow and bound by id, name, MIME, and size.
+    pub fn upload_descriptor(
+        &self,
+        slug: &str,
+        upload_id: &str,
+    ) -> io::Result<crate::domain::upload::UploadMeta> {
+        self.validated_upload(slug, upload_id).map(|(meta, _)| meta)
+    }
+
+    pub(crate) fn open_upload_blob(
+        &self,
+        slug: &str,
+        upload_id: &str,
+    ) -> io::Result<(crate::domain::upload::UploadMeta, cap_std::fs::File)> {
+        self.validated_upload(slug, upload_id)
+    }
+
+    fn validated_upload(
+        &self,
+        slug: &str,
+        upload_id: &str,
+    ) -> io::Result<(crate::domain::upload::UploadMeta, cap_std::fs::File)> {
+        validate_slug(slug)?;
+        let id_path = validate_relative(upload_id)?;
+        if id_path.components().count() != 1 || upload_id.len() > 255 {
+            return Err(invalid_path("invalid upload id"));
+        }
+        let uploads = self.upload_dir(slug)?;
+
+        let metadata_name = format!("{upload_id}.json");
+        let metadata = read_named_regular_file(&uploads, &metadata_name, 64 * 1024)?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "upload not found"))?;
+        let meta: crate::domain::upload::UploadMeta = serde_json::from_slice(&metadata)
+            .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+        if meta.id != upload_id {
+            return Err(invalid_path("upload metadata id mismatch"));
+        }
+        let extension = upload_id
+            .rsplit_once('.')
+            .map(|(_, extension)| extension)
+            .filter(|extension| !extension.is_empty())
+            .ok_or_else(|| invalid_path("upload id has no extension"))?;
+        let expected_name = format!("{upload_id}_blob.{extension}");
+        if meta.stored_name != expected_name
+            || validate_relative(&meta.stored_name)?.components().count() != 1
+        {
+            return Err(invalid_path("upload stored name mismatch"));
+        }
+        if meta.mime_type != crate::services::uploads::mime_from_ext(extension) {
+            return Err(invalid_path("upload MIME mismatch"));
+        }
+        if meta.size > crate::services::uploads::MAX_FILE_SIZE {
+            return Err(invalid_path("upload size exceeds limit"));
+        }
+        let blob = open_named_regular_file(&uploads, &meta.stored_name)?
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "upload blob not found"))?;
+        if blob.metadata()?.len() != meta.size {
+            return Err(invalid_path("upload size mismatch"));
+        }
+        Ok((meta, blob))
+    }
+
+    /// Read an inline attachment through a held no-follow handle with a fixed small cap.
+    pub fn read_upload_inline(
+        &self,
+        slug: &str,
+        upload_id: &str,
+    ) -> io::Result<(crate::domain::upload::UploadMeta, Vec<u8>)> {
+        const MAX_INLINE_UPLOAD_BYTES: usize = 4 * 1024 * 1024;
+        let (meta, blob) = self.validated_upload(slug, upload_id)?;
+        if meta.size > MAX_INLINE_UPLOAD_BYTES as u64 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "inline attachment exceeds 4 MiB limit",
+            ));
+        }
+        let bytes = read_bounded_file(blob, MAX_INLINE_UPLOAD_BYTES)?;
+        if bytes.len() as u64 != meta.size {
+            return Err(invalid_path("upload size mismatch"));
+        }
+        Ok((meta, bytes))
+    }
+
+    fn upload_dir(&self, slug: &str) -> io::Result<std::sync::Arc<Dir>> {
+        let mut cache = self
+            .upload_dirs
+            .lock()
+            .map_err(|_| io::Error::other("upload directory cache poisoned"))?;
+        if let Some(directory) = cache.get(slug) {
+            return Ok(directory.clone());
+        }
+        let Some(instances) = open_real_child_dir(&self.root, "instances")? else {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "instance not found",
+            ));
+        };
+        let Some(instance) = open_real_child_dir(&instances, slug)? else {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "instance not found",
+            ));
+        };
+        let Some(uploads) = open_real_child_dir(&instance, "uploads")? else {
+            return Err(io::Error::new(io::ErrorKind::NotFound, "uploads not found"));
+        };
+        let uploads = std::sync::Arc::new(uploads);
+        cache.insert(slug.to_owned(), uploads.clone());
+        Ok(uploads)
     }
 
     /// Remove unpublished passive-screen-capture artifacts through persistently
@@ -489,6 +603,50 @@ impl MediaStore {
                     errors.push(format!("{slug}/agents/{name}: {error}"));
                 }
             }
+        }
+        finish_aggregated(errors)
+    }
+
+    /// Remove the retired per-day `stats/` aggregate store from the canonical
+    /// companion. Bounded, idempotent, and never touches obsolete siblings.
+    pub fn cleanup_legacy_stats(&self) -> io::Result<()> {
+        let Some(instances) = open_real_child_dir(&self.root, "instances")? else {
+            return Ok(());
+        };
+        let Some(companion) =
+            open_real_child_dir(&instances, crate::domain::companion::CANONICAL_SLUG)?
+        else {
+            return Ok(());
+        };
+        let Some(stats) = open_real_child_dir(&companion, "stats")? else {
+            return Ok(());
+        };
+        let mut errors = Vec::new();
+        let mut names = Vec::new();
+        for entry in stats.read_dir(".")? {
+            match entry {
+                Ok(entry) => names.push(entry.file_name()),
+                Err(error) => errors.push(format!("stats entry: {error}")),
+            }
+        }
+        for name in names {
+            let label = name.to_string_lossy().into_owned();
+            let is_daily_file = label.ends_with(".json")
+                && stats
+                    .symlink_metadata(&name)
+                    .map(|metadata| metadata.is_file())
+                    .unwrap_or(false);
+            if !is_daily_file {
+                errors.push(format!("stats/{label}: unexpected entry left in place"));
+                continue;
+            }
+            if let Err(error) = stats.remove_file(&name) {
+                errors.push(format!("stats/{label}: {error}"));
+            }
+        }
+        drop(stats);
+        if errors.is_empty() {
+            companion.remove_dir("stats")?;
         }
         finish_aggregated(errors)
     }
@@ -1125,10 +1283,17 @@ fn open_real_child_dir(parent: &Dir, name: &str) -> io::Result<Option<Dir>> {
 }
 
 fn read_named_regular_file(dir: &Dir, name: &str, max_bytes: usize) -> io::Result<Option<Vec<u8>>> {
+    let Some(file) = open_named_regular_file(dir, name)? else {
+        return Ok(None);
+    };
+    read_bounded_file(file, max_bytes).map(Some)
+}
+
+fn open_named_regular_file(dir: &Dir, name: &str) -> io::Result<Option<cap_std::fs::File>> {
     let mut options = OpenOptions::new();
     options.read(true).follow(FollowSymlinks::No);
     match dir.open_with(name, &options) {
-        Ok(file) if file.metadata()?.is_file() => read_bounded_file(file, max_bytes).map(Some),
+        Ok(file) if file.metadata()?.is_file() => Ok(Some(file)),
         Ok(_) => Ok(None),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
         Err(error) => match dir.symlink_metadata(name) {
@@ -1569,7 +1734,10 @@ mod tests {
 
         let main = include_str!("../main.rs");
         assert!(!main.contains("std::fs::read_dir"));
-        assert!(main.contains("media.instance_slugs()"));
+        assert!(main.contains("services::companion::obsolete_instance_dirs("));
+        let companion = include_str!("companion.rs");
+        assert!(companion.contains("store.instance_slugs()"));
+        assert!(!companion.contains("fs::read_dir"));
 
         let import_route = routes
             .split("async fn import_instance")
@@ -2549,5 +2717,165 @@ mod tests {
         assert!(instance.join("observations").symlink_metadata().is_ok());
         assert!(uploads.join("linked.json").exists());
         assert!(uploads.join("linked.mp4").symlink_metadata().is_ok());
+    }
+
+    #[test]
+    fn upload_reader_binds_metadata_identity_name_mime_and_size() {
+        let workspace = tempfile::tempdir().unwrap();
+        let upload = crate::services::uploads::save_upload(
+            workspace.path(),
+            "one",
+            "photo.png",
+            b"safe bytes",
+        )
+        .unwrap();
+        let uploads = workspace.path().join("instances/one/uploads");
+        let metadata_path = uploads.join(format!("{}.json", upload.id));
+        let original = std::fs::read(&metadata_path).unwrap();
+        let store = MediaStore::open(workspace.path()).unwrap();
+        assert_eq!(
+            store.read_upload_inline("one", &upload.id).unwrap().1,
+            b"safe bytes"
+        );
+        for (field, value) in [
+            ("id", serde_json::json!("other.png")),
+            ("stored_name", serde_json::json!("../outside.png")),
+            ("stored_name", serde_json::json!("/tmp/outside.png")),
+            ("mime_type", serde_json::json!("text/plain")),
+            ("size", serde_json::json!(999)),
+        ] {
+            let mut metadata: serde_json::Value = serde_json::from_slice(&original).unwrap();
+            metadata[field] = value;
+            std::fs::write(&metadata_path, serde_json::to_vec(&metadata).unwrap()).unwrap();
+            assert!(
+                store.read_upload_inline("one", &upload.id).is_err(),
+                "accepted {field}"
+            );
+        }
+        std::fs::write(metadata_path, original).unwrap();
+        for id in ["../photo.png", "/tmp/photo.png", "nested/photo.png"] {
+            assert!(store.read_upload_inline("one", id).is_err());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn upload_reader_rejects_links_and_keeps_held_upload_directory_on_swap() {
+        use std::os::unix::fs::symlink;
+        let parent = tempfile::tempdir().unwrap();
+        let workspace = parent.path().join("workspace");
+        std::fs::create_dir(&workspace).unwrap();
+        let upload =
+            crate::services::uploads::save_upload(&workspace, "one", "photo.png", b"safe bytes")
+                .unwrap();
+        let uploads = workspace.join("instances/one/uploads");
+        let store = MediaStore::open(&workspace).unwrap();
+        assert_eq!(
+            store.read_upload_inline("one", &upload.id).unwrap().1,
+            b"safe bytes"
+        );
+
+        let parked = parent.path().join("parked-uploads");
+        std::fs::rename(&uploads, &parked).unwrap();
+        let outside = parent.path().join("outside");
+        std::fs::create_dir(&outside).unwrap();
+        std::fs::write(outside.join(format!("{}.json", upload.id)), b"outside").unwrap();
+        symlink(&outside, &uploads).unwrap();
+        assert_eq!(
+            store.read_upload_inline("one", &upload.id).unwrap().1,
+            b"safe bytes"
+        );
+
+        let blob = parked.join(&upload.stored_name);
+        std::fs::remove_file(&blob).unwrap();
+        symlink(outside.join("missing"), &blob).unwrap();
+        assert!(store.read_upload_inline("one", &upload.id).is_err());
+    }
+
+    #[test]
+    fn upload_descriptor_does_not_allocate_large_blobs_and_inline_reads_are_capped() {
+        let workspace = tempfile::tempdir().unwrap();
+        let image =
+            crate::services::uploads::save_upload(workspace.path(), "one", "large.png", b"x")
+                .unwrap();
+        let uploads = workspace.path().join("instances/one/uploads");
+        let image_blob = uploads.join(&image.stored_name);
+        let large_size = 128_u64 * 1024 * 1024;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&image_blob)
+            .unwrap()
+            .set_len(large_size)
+            .unwrap();
+        let image_meta = uploads.join(format!("{}.json", image.id));
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&image_meta).unwrap()).unwrap();
+        json["size"] = serde_json::json!(large_size);
+        std::fs::write(&image_meta, serde_json::to_vec(&json).unwrap()).unwrap();
+
+        let text =
+            crate::services::uploads::save_upload(workspace.path(), "one", "large.txt", b"x")
+                .unwrap();
+        let text_blob = uploads.join(&text.stored_name);
+        let text_size = 4_u64 * 1024 * 1024 + 1;
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&text_blob)
+            .unwrap()
+            .set_len(text_size)
+            .unwrap();
+        let text_meta = uploads.join(format!("{}.json", text.id));
+        let mut json: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&text_meta).unwrap()).unwrap();
+        json["size"] = serde_json::json!(text_size);
+        std::fs::write(&text_meta, serde_json::to_vec(&json).unwrap()).unwrap();
+
+        let store = MediaStore::open(workspace.path()).unwrap();
+        assert_eq!(
+            store.upload_descriptor("one", &image.id).unwrap().size,
+            large_size
+        );
+        assert!(store.read_upload_inline("one", &text.id).is_err());
+    }
+}
+
+#[cfg(test)]
+mod legacy_stats_cleanup_tests {
+    use super::*;
+    use crate::domain::companion::CANONICAL_SLUG;
+
+    #[test]
+    fn legacy_stats_directory_is_removed_from_the_companion_only_and_idempotently() {
+        let ws = tempfile::tempdir().unwrap();
+        let companion = ws.path().join("instances").join(CANONICAL_SLUG);
+        std::fs::create_dir_all(companion.join("stats")).unwrap();
+        std::fs::write(companion.join("stats/2026-01-01.json"), "{}").unwrap();
+        std::fs::write(companion.join("stats/2026-01-02.json"), "{}").unwrap();
+        std::fs::write(companion.join("rhythm.json"), "{}").unwrap();
+        std::fs::write(companion.join("soul.md"), "soul").unwrap();
+        let obsolete = ws.path().join("instances/alice/stats");
+        std::fs::create_dir_all(&obsolete).unwrap();
+        std::fs::write(obsolete.join("2026-01-01.json"), "{}").unwrap();
+
+        let store = MediaStore::open(ws.path()).unwrap();
+        store.cleanup_legacy_stats().unwrap();
+        assert!(!companion.join("stats").exists());
+        assert!(companion.join("rhythm.json").is_file());
+        assert!(companion.join("soul.md").is_file());
+        assert!(
+            obsolete.join("2026-01-01.json").is_file(),
+            "obsolete sibling directories are never touched"
+        );
+
+        store.cleanup_legacy_stats().unwrap();
+        assert!(!companion.join("stats").exists());
+    }
+
+    #[test]
+    fn legacy_stats_cleanup_without_a_companion_is_a_no_op() {
+        let ws = tempfile::tempdir().unwrap();
+        let store = MediaStore::open(ws.path()).unwrap();
+        store.cleanup_legacy_stats().unwrap();
+        assert!(!ws.path().join("instances").exists());
     }
 }

@@ -1,5 +1,4 @@
 pub mod chat;
-pub mod daily_stats;
 pub mod embedding;
 
 pub mod keyword_search;
@@ -7,6 +6,7 @@ pub mod keyword_search;
 pub mod agent_runs;
 pub mod browser_sessions;
 pub mod child_agents;
+pub mod companion;
 pub mod drops;
 pub mod heartbeat;
 pub mod llm;
@@ -28,3 +28,5 @@ pub mod vector;
 pub mod workspace;
 
 mod vector_index;
+
+pub(crate) mod resource_access;

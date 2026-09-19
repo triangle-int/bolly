@@ -35,13 +35,12 @@ export interface ChatSummary {
 	created_at: string;
 }
 
-export interface InstanceSummary {
+/** The one companion this server owns; `exists` is false until onboarding created it. */
+export interface CompanionContext {
 	slug: string;
+	exists: boolean;
 	companion_name: string;
 	soul_exists: boolean;
-	drops_count: number;
-	has_memory: boolean;
-	has_skin: boolean;
 }
 
 export interface LlmSummary {
@@ -55,6 +54,8 @@ export interface ServerMeta {
 	commit: string;
 	port: number;
 	workspace_dir: string;
+	/** Stable slug of the one companion this server owns. */
+	companion_slug: string;
 	instances_count: number;
 	skills_count: number;
 	llm: LlmSummary;
@@ -209,18 +210,6 @@ export interface HeartbeatUpdate {
 	preview: string;
 }
 
-export interface Stats {
-	hourly_activity: number[];
-	daily_activity: number[];
-	total_messages: number;
-	avg_message_length: number;
-	avg_response_interval_secs: number;
-	daily_history: [string, number][];
-	mood_counts: Record<string, number>;
-	streak_days: number;
-	first_message_at: string | null;
-}
-
 export interface MemoryEntry {
 	path: string;
 	summary: string;
@@ -237,10 +226,6 @@ export type ServerEvent =
 			instance_slug: string;
 			chat_id: string;
 			message: ChatMessage;
-	  }
-	| {
-			type: "instance_discovered";
-			instance: InstanceSummary;
 	  }
 	| {
 			type: "mood_updated";

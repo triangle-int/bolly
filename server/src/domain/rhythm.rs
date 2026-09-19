@@ -2,7 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// Aggregated interaction rhythm patterns for a user.
 /// Computed from message history and persisted to rhythm.json.
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct InteractionRhythm {
     /// Message count per hour of day (0-23), user messages only.
     #[serde(default)]
@@ -29,12 +29,24 @@ pub struct InteractionRhythm {
     #[serde(default)]
     pub updated_at: i64,
 
-    /// Accumulated daily message counts: {date_str: count}.
-    /// Persists across context clears so stats aren't lost.
-    #[serde(default)]
-    pub daily_history: std::collections::BTreeMap<String, u32>,
-
-    /// Accumulated total chars for avg_message_length across clears.
+    /// Accumulated total chars for avg_message_length.
     #[serde(default)]
     pub total_chars: u64,
+
+    /// Unix timestamp of the most recent user message; the only per-event
+    /// datum kept, needed to measure the next within-session interval.
+    #[serde(default)]
+    pub last_message_at: i64,
+
+    /// Number of within-session intervals folded into the average.
+    #[serde(default)]
+    pub interval_count: u32,
+
+    /// Sum of within-session intervals in seconds.
+    #[serde(default)]
+    pub interval_total_secs: u64,
+
+    /// Aggregate format version. 2 = incremental, no per-day history.
+    #[serde(default)]
+    pub version: u32,
 }

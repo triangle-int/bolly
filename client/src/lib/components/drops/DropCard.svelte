@@ -1,7 +1,9 @@
 <script lang="ts">
 	import type { Drop } from "$lib/api/types.js";
+	import { resourceFromUrl, resourceMedia } from "$lib/api/resource-media.js";
 	let {
 		drop,
+		slug,
 		icon,
 		time,
 		expanded,
@@ -9,6 +11,7 @@
 		ondelete,
 	}: {
 		drop: Drop;
+		slug: string;
 		icon: string;
 		time: string;
 		expanded: boolean;
@@ -41,6 +44,7 @@
 	};
 
 	const accentColor = $derived(moodColors[drop.mood] ?? "var(--primary)");
+	const imageResource = $derived(drop.image_url ? resourceFromUrl(drop.image_url, slug) : null);
 </script>
 
 <article
@@ -57,7 +61,11 @@
 	<h3 class="drop-card-title"><button class="card-expand" aria-expanded={expanded} onclick={onexpand}>{drop.title}</button></h3>
 
 	{#if drop.image_url}
-		<img class="drop-card-image" src={drop.image_url} alt={drop.title} loading="lazy" />
+		{#if imageResource}
+			<img class="drop-card-image" use:resourceMedia={imageResource} alt={drop.title} loading="lazy" />
+		{:else}
+			<img class="drop-card-image" src={drop.image_url} alt={drop.title} loading="lazy" />
+		{/if}
 	{/if}
 
 	<div class="drop-card-content" class:drop-card-content-expanded={expanded}>

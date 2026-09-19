@@ -420,7 +420,6 @@ import McpAppViewer from "./McpAppViewer.svelte";
 				return;
 			}
 
-			if (event.type === "instance_discovered") return;
 			if (event.instance_slug !== currentSlug) return;
 
 			// Filter chat-specific events by chat_id

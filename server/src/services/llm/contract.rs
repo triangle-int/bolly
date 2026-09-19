@@ -263,6 +263,7 @@ mod tests {
                 media_type: "image/png".into(),
                 data: "abc".into(),
             },
+            resource_provenance: None,
         };
         let messages = [Message::User {
             content: vec![
@@ -300,6 +301,7 @@ mod tests {
                 source: DocumentSource::Url {
                     url: "https://example.test/doc.pdf".into(),
                 },
+                resource_provenance: None,
             }],
         }];
         assert!(matches!(
@@ -345,6 +347,7 @@ mod tests {
                         source: ImageSource::Url {
                             url: "https://example.test/image".into(),
                         },
+                        resource_provenance: None,
                     },
                 ]),
             }],

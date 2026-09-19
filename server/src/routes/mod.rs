@@ -1,5 +1,6 @@
 pub mod agents;
 pub mod chat;
+pub mod companion;
 pub mod config;
 pub mod drops;
 
@@ -77,3 +78,5 @@ mod provider_error_tests {
         assert!(body["message"].as_str().unwrap().contains("Codex"));
     }
 }
+
+pub(crate) mod resources;

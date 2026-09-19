@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resourceMedia, resourceFromUrl, issueResource } from "$lib/api/resource-media.js";
 	import { fetchMemory, fetchMemoryContent, searchMemory, deleteMemoryFile, fetchVectors, fetchMemoryGraph, type MemorySearchResult, type VectorEntry } from "$lib/api/client.js";
 	import { Play, Music, FileText } from "@lucide/svelte";
 	import type { MemoryEntry, MemoryGraph } from "$lib/api/types.js";
@@ -530,10 +531,7 @@
 		return 'text';
 	}
 
-	function mediaUrl(path: string): string {
-		// Same-origin: the session cookie authenticates media requests.
-		return `/api/instances/${encodeURIComponent(slug)}/memory/${path}`;
-	}
+
 
 	async function openDocument(entry: MemoryEntry) {
 		viewingEntry = entry;
@@ -665,9 +663,9 @@
 			{#if viewingLoading}
 				<div class="doc-loading">Loading…</div>
 			{:else if mediaType(viewingEntry.path) === 'image'}
-				<img src={mediaUrl(viewingEntry.path)} alt={viewingEntry.path} class="doc-media-img" />
+				<img use:resourceMedia={{ slug, kind: "memory", path: viewingEntry.path }} alt={viewingEntry.path} class="doc-media-img" />
 			{:else if mediaType(viewingEntry.path) === 'video'}
-				<video src={mediaUrl(viewingEntry.path)} controls playsinline class="doc-media-video">
+				<video use:resourceMedia={{ slug, kind: "memory", path: viewingEntry.path }} controls playsinline class="doc-media-video">
 					<track kind="captions" />
 				</video>
 			{:else if mediaType(viewingEntry.path) === 'audio'}
@@ -678,10 +676,10 @@
 							<circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/>
 						</svg>
 					</div>
-					<audio src={mediaUrl(viewingEntry.path)} controls class="doc-media-audio"></audio>
+					<audio use:resourceMedia={{ slug, kind: "memory", path: viewingEntry.path }} controls class="doc-media-audio"></audio>
 				</div>
 			{:else if mediaType(viewingEntry.path) === 'pdf'}
-				<iframe src={mediaUrl(viewingEntry.path)} class="doc-media-pdf" title="PDF viewer"></iframe>
+				<iframe use:resourceMedia={{ slug, kind: "memory", path: viewingEntry.path }} class="doc-media-pdf" title="PDF viewer"></iframe>
 			{:else}
 				<pre class="doc-content">{viewingContent}</pre>
 			{/if}
@@ -740,7 +738,8 @@ ttt<!-- svelte-ignore a11y_autofocus -->
 				<div class="search-results">
 					{#each searchResults as result}
 						{@const isMedia = result.source_type?.startsWith("media_")}
-						{@const basePath = result.path.split("#")[0]}
+						{@const basePath = isMedia ? result.path : result.path.split("#")[0]}
+                        {@const resource = resourceFromUrl(result.media_url ?? "", slug)}
 						{@const folder = isMedia ? result.source_type?.replace("media_", "") ?? "media" : (basePath.split("/")[0] ?? "(root)")}
 						{@const preview = result.text.trim().slice(0, 200)}
 						<!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -749,18 +748,18 @@ ttt<!-- svelte-ignore a11y_autofocus -->
 							class="search-result"
 							class:search-result-media={isMedia}
 							style="--c: {isMedia ? 'var(--primary)' : getHex(folder)}"
-							onclick={() => {
-								if (isMedia && result.media_url) {
+							onclick={async () => {
+								if (isMedia && resource) {
 									const ext = result.source_type === "media_image" ? "image.jpg" : result.source_type === "media_video" ? "video.mp4" : "audio.mp3";
-									openFile(result.media_url, basePath || ext);
+									openFile((await issueResource(resource)).url, basePath || ext);
 								} else {
 									const entry = entries.find(e => e.path === basePath);
 									if (entry) openDocument(entry);
 								}
 							}}
 						>
-							{#if isMedia && result.media_url && result.source_type === "media_image"}
-								<img class="search-result-thumb" src={result.media_url} alt={basePath} />
+							{#if isMedia && resource && result.source_type === "media_image"}
+								<img class="search-result-thumb" use:resourceMedia={resource} alt={basePath} />
 							{/if}
 							<div class="search-result-body">
 								<div class="search-result-path">
@@ -866,9 +865,9 @@ ttt<!-- svelte-ignore a11y_autofocus -->
 								onclick={() => openDocument(node.entry)}
 							>
 								{#if isImage}
-									<img class="bubble-thumb" src={mediaUrl(node.entry.path)} alt="" loading="lazy" />
+									<img class="bubble-thumb" use:resourceMedia={{ slug, kind: "memory", path: node.entry.path }} alt="" loading="lazy" />
 								{:else if fileType === 'video'}
-									<video class="bubble-thumb" src={mediaUrl(node.entry.path)} autoplay muted loop playsinline></video>
+									<video class="bubble-thumb" use:resourceMedia={{ slug, kind: "memory", path: node.entry.path }} autoplay muted loop playsinline></video>
 								{:else if fileType === 'audio'}
 									<div class="bubble-type-icon"><Music size={20} /></div>
 								{:else if fileType === 'pdf'}
@@ -963,9 +962,9 @@ ttt<!-- svelte-ignore a11y_autofocus -->
 								onclick={() => handleCircleClick(circle)}
 							>
 								{#if isImage}
-									<img class="bubble-thumb" src={mediaUrl(circle.entry?.path ?? '')} alt="" loading="lazy" />
+									<img class="bubble-thumb" use:resourceMedia={{ slug, kind: "memory", path: circle.entry?.path ?? '' }} alt="" loading="lazy" />
 								{:else if fileType === 'video'}
-									<video class="bubble-thumb" src={mediaUrl(circle.entry?.path ?? '')} autoplay muted loop playsinline></video>
+									<video class="bubble-thumb" use:resourceMedia={{ slug, kind: "memory", path: circle.entry?.path ?? '' }} autoplay muted loop playsinline></video>
 								{:else if fileType === 'audio'}
 									<div class="bubble-type-icon"><Music size={20} /></div>
 								{:else if fileType === 'pdf'}

@@ -25,6 +25,7 @@ pub struct PendingSecret {
 #[derive(Clone)]
 pub struct AppState {
     pub config: Arc<RwLock<Config>>,
+    pub(crate) resources: crate::services::resource_access::ResourceAccess,
     pub workspace_dir: PathBuf,
     pub events: broadcast::Sender<ServerEvent>,
     pub llm: Arc<RwLock<Option<LlmBackend>>>,
@@ -68,6 +69,7 @@ impl AppState {
             VectorStore::connect_with_config(&config::workspace_root(), &config).await;
 
         Self {
+            resources: crate::services::resource_access::ResourceAccess::new(&config.auth_token),
             config: Arc::new(RwLock::new(config)),
             workspace_dir: config::workspace_root(),
             events,
@@ -93,7 +95,7 @@ impl AppState {
         };
 
         let (llm_changed, mcp_changed) = {
-            let old = self.config.read().await;
+            let mut old = self.config.write().await;
             let tokens = old.llm.tokens != new_config.llm.tokens;
             let provider = old.llm.provider != new_config.llm.provider;
             let models = old.llm.profiles != new_config.llm.profiles;
@@ -104,6 +106,10 @@ impl AppState {
                     .iter()
                     .zip(new_config.mcp_servers.iter())
                     .any(|(a, b)| a.name != b.name || a.url != b.url);
+            if old.auth_token != new_config.auth_token {
+                self.resources.replace(&new_config.auth_token);
+            }
+            *old = new_config.clone();
             (llm, mcp)
         };
 
@@ -129,7 +135,5 @@ impl AppState {
                 "embedding settings changed: restart required; active index remains unchanged"
             );
         }
-
-        *self.config.write().await = new_config;
     }
 }

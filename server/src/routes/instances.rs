@@ -11,13 +11,11 @@ use std::fs;
 
 use crate::{
     app::state::AppState,
-    domain::instance::InstanceSummary,
     domain::memory::MemoryEntry,
-    services::{chat, memory, tools, workspace},
+    services::{chat, memory, tools},
 };
 
-/// Public memory file route (no auth middleware) — uses ?token= query param.
-/// Used by LLM providers (Anthropic) to fetch memory images via URL.
+/// Retired control-token resource namespace; always denies access.
 pub fn public_memory_router() -> Router<AppState> {
     Router::new().route(
         "/public/memory/{instance_slug}/{*path}",
@@ -27,8 +25,6 @@ pub fn public_memory_router() -> Router<AppState> {
 
 pub fn router() -> Router<AppState> {
     Router::new()
-        .route("/api/instances", get(list_instances))
-        .route("/api/instances/{instance_slug}", delete(delete_instance))
         .route("/api/instances/{instance_slug}/mood", get(get_mood))
         .route(
             "/api/instances/{instance_slug}/companion-name",
@@ -53,7 +49,10 @@ pub fn router() -> Router<AppState> {
             "/api/instances/{instance_slug}/{chat_id}/context-stats",
             get(get_context_stats_chat),
         )
-        .route("/api/instances/{instance_slug}/stats", get(get_stats))
+        .route(
+            "/api/instances/{instance_slug}/rhythm",
+            get(get_rhythm_tracking).put(set_rhythm_tracking),
+        )
         .route("/api/instances/{instance_slug}/memory", get(list_memory))
         .route(
             "/api/instances/{instance_slug}/memory/search",
@@ -115,36 +114,6 @@ pub fn router() -> Router<AppState> {
             "/api/instances/{instance_slug}/import",
             post(import_instance),
         )
-}
-
-async fn list_instances(State(state): State<AppState>) -> Json<Vec<InstanceSummary>> {
-    let instances =
-        workspace::read_instances(&state.workspace_dir.join("instances")).unwrap_or_default();
-    Json(instances)
-}
-
-async fn delete_instance(
-    State(state): State<AppState>,
-    Path(instance_slug): Path<String>,
-) -> StatusCode {
-    // Validate slug to prevent path traversal
-    if instance_slug.contains('/')
-        || instance_slug.contains('\\')
-        || instance_slug == ".."
-        || instance_slug == "."
-    {
-        return StatusCode::BAD_REQUEST;
-    }
-
-    let instance_dir = state.workspace_dir.join("instances").join(&instance_slug);
-    if !instance_dir.exists() {
-        return StatusCode::NOT_FOUND;
-    }
-
-    match fs::remove_dir_all(&instance_dir) {
-        Ok(_) => StatusCode::NO_CONTENT,
-        Err(_) => StatusCode::INTERNAL_SERVER_ERROR,
-    }
 }
 
 #[derive(Serialize)]
@@ -442,8 +411,19 @@ async fn get_context_stats(
 ) -> Json<chat::ContextStats> {
     let wd = state.workspace_dir.clone();
     let slug = instance_slug.clone();
+    let public_url = state.config.read().await.public_url.clone();
+    let resources = state.resources.clone();
+    let http_client = state.http_client.clone();
     let stats = tokio::spawn(async move {
-        chat::compute_context_stats_async(wd, slug, "default".to_string()).await
+        chat::compute_context_stats_async(
+            wd,
+            slug,
+            "default".to_string(),
+            public_url,
+            resources,
+            http_client,
+        )
+        .await
     })
     .await
     .unwrap_or_else(|_| {
@@ -459,11 +439,16 @@ async fn get_context_stats_chat(
     let wd = state.workspace_dir.clone();
     let slug = instance_slug.clone();
     let cid = chat_id.clone();
-    let stats = tokio::spawn(async move { chat::compute_context_stats_async(wd, slug, cid).await })
-        .await
-        .unwrap_or_else(|_| {
-            chat::compute_context_stats(&state.workspace_dir, &instance_slug, &chat_id)
-        });
+    let public_url = state.config.read().await.public_url.clone();
+    let resources = state.resources.clone();
+    let http_client = state.http_client.clone();
+    let stats = tokio::spawn(async move {
+        chat::compute_context_stats_async(wd, slug, cid, public_url, resources, http_client).await
+    })
+    .await
+    .unwrap_or_else(|_| {
+        chat::compute_context_stats(&state.workspace_dir, &instance_slug, &chat_id)
+    });
     Json(stats)
 }
 
@@ -471,142 +456,43 @@ async fn get_context_stats_chat(
 // Stats / Analytics
 // ---------------------------------------------------------------------------
 
-#[derive(Serialize)]
-struct StatsResponse {
-    /// Messages per hour of day (0-23)
-    hourly_activity: [u32; 24],
-    /// Messages per day of week (0=Mon, 6=Sun)
-    daily_activity: [u32; 7],
-    /// Total user messages
-    total_messages: u32,
-    /// Average message length (chars)
-    avg_message_length: f64,
-    /// Average seconds between messages in a session
-    avg_response_interval_secs: f64,
-    /// Daily message counts: [(date_str, count)]
-    daily_history: Vec<(String, u32)>,
-    /// Mood distribution: {mood: count}
-    mood_counts: std::collections::HashMap<String, u32>,
-    /// Current streak (consecutive days with messages)
-    streak_days: u32,
-    /// First message timestamp (millis)
-    first_message_at: Option<String>,
+// ---------------------------------------------------------------------------
+// Interaction rhythm (#95): the one retained behavioral aggregate, with opt-out.
+// ---------------------------------------------------------------------------
+
+#[derive(Serialize, Deserialize)]
+struct RhythmTrackingResponse {
+    enabled: bool,
 }
 
-async fn get_stats(
+async fn get_rhythm_tracking(
     State(state): State<AppState>,
     Path(instance_slug): Path<String>,
-) -> Json<StatsResponse> {
-    let instance_dir = state.workspace_dir.join("instances").join(&instance_slug);
-
-    // Load all daily stats files — one per day, no double-counting
-    let days = crate::services::daily_stats::load_all(&state.workspace_dir, &instance_slug);
-
-    let mut hourly_activity = [0u32; 24];
-    let mut daily_activity = [0u32; 7];
-    let mut total_messages: u32 = 0;
-    let mut total_chars: u64 = 0;
-
-    for day in &days {
-        total_messages += day.messages;
-        total_chars += day.chars;
-        for (h, count) in day.hours.iter().enumerate() {
-            hourly_activity[h] += count;
-        }
-        daily_activity[day.weekday as usize % 7] += day.messages;
-    }
-
-    let daily_history: Vec<(String, u32)> =
-        days.iter().map(|d| (d.date.clone(), d.messages)).collect();
-
-    let avg_message_length = if total_messages > 0 {
-        total_chars as f64 / total_messages as f64
-    } else {
-        0.0
-    };
-
-    // Load avg_response_interval from rhythm.json (still computed by heartbeat)
-    let rhythm: crate::domain::rhythm::InteractionRhythm =
-        fs::read_to_string(instance_dir.join("rhythm.json"))
-            .ok()
-            .and_then(|r| serde_json::from_str(&r).ok())
-            .unwrap_or_default();
-    let avg_response_interval_secs = rhythm.avg_response_interval_secs;
-
-    // Scan thoughts for mood distribution
-    let mut mood_counts: std::collections::HashMap<String, u32> = std::collections::HashMap::new();
-    let thoughts_dir = instance_dir.join("thoughts");
-    if let Ok(entries) = fs::read_dir(&thoughts_dir) {
-        for entry in entries.filter_map(Result::ok) {
-            if entry.path().extension().and_then(|e| e.to_str()) != Some("json") {
-                continue;
-            }
-            if let Ok(raw) = fs::read_to_string(entry.path()) {
-                if let Ok(thought) = serde_json::from_str::<serde_json::Value>(&raw) {
-                    if let Some(m) = thought["mood"].as_str() {
-                        if !m.is_empty() {
-                            *mood_counts.entry(m.to_string()).or_insert(0) += 1;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Streak: consecutive days ending today or yesterday (local time)
-    let tz: chrono_tz::Tz = read_timezone(&instance_dir)
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(chrono_tz::UTC);
-    let local_now = chrono::Utc::now().with_timezone(&tz);
-    let today = local_now.format("%Y-%m-%d").to_string();
-    let yesterday = (local_now - chrono::Duration::days(1))
-        .format("%Y-%m-%d")
-        .to_string();
-    let dates: std::collections::HashSet<String> =
-        daily_history.iter().map(|(d, _)| d.clone()).collect();
-    let mut streak_days = 0u32;
-    let mut check_date = if dates.contains(&today) {
-        local_now.date_naive()
-    } else if dates.contains(&yesterday) {
-        (local_now - chrono::Duration::days(1)).date_naive()
-    } else {
-        local_now.date_naive()
-    };
-    loop {
-        if dates.contains(&check_date.format("%Y-%m-%d").to_string()) {
-            streak_days += 1;
-            check_date -= chrono::Duration::days(1);
-        } else {
-            break;
-        }
-    }
-
-    // First message: earliest date from daily stats
-    let first_message_at = days.first().and_then(|d| {
-        chrono::NaiveDate::parse_from_str(&d.date, "%Y-%m-%d")
-            .ok()
-            .map(|nd| {
-                let ts = nd.and_hms_opt(0, 0, 0).unwrap().and_utc().timestamp();
-                (ts * 1000).to_string()
-            })
-    });
-
-    Json(StatsResponse {
-        hourly_activity,
-        daily_activity,
-        total_messages,
-        avg_message_length,
-        avg_response_interval_secs,
-        daily_history,
-        mood_counts,
-        streak_days,
-        first_message_at,
+) -> Json<RhythmTrackingResponse> {
+    Json(RhythmTrackingResponse {
+        enabled: crate::services::rhythm::tracking_enabled(&state.workspace_dir, &instance_slug),
     })
 }
 
-// ---------------------------------------------------------------------------
-// Memory library
-// ---------------------------------------------------------------------------
+/// Turning tracking off also deletes the aggregate; nothing is retained.
+async fn set_rhythm_tracking(
+    State(state): State<AppState>,
+    Path(instance_slug): Path<String>,
+    Json(req): Json<RhythmTrackingResponse>,
+) -> StatusCode {
+    let mut inst = crate::config::InstanceConfig::load(&state.workspace_dir, &instance_slug);
+    inst.rhythm_tracking = req.enabled;
+    if inst.save(&state.workspace_dir, &instance_slug).is_err() {
+        return StatusCode::INTERNAL_SERVER_ERROR;
+    }
+    if !req.enabled {
+        let instance_dir = state.workspace_dir.join("instances").join(&instance_slug);
+        if crate::services::rhythm::clear_rhythm(&instance_dir).is_err() {
+            return StatusCode::INTERNAL_SERVER_ERROR;
+        }
+    }
+    StatusCode::OK
+}
 
 async fn list_memory(
     State(state): State<AppState>,
@@ -641,11 +527,6 @@ async fn search_memory(
 
     let media = state.vector_store.media_store();
 
-    let cfg = state.config.read().await;
-    let auth_token = cfg.auth_token.clone();
-    let public_url = cfg.public_url.clone();
-    drop(cfg);
-
     let json: Vec<serde_json::Value> = results
         .into_iter()
         .map(|r| {
@@ -669,32 +550,24 @@ async fn search_memory(
             // For media results, include a URL to the file
             if is_media {
                 if let Some(upload_id) = &r.upload_id {
-                    let url = if upload_id == &r.path || upload_id.contains('/') {
-                        if public_url.is_empty() {
-                            format!(
-                                "/api/instances/{instance_slug}/memory/{}",
-                                crate::services::tools::encode_url_path(upload_id)
-                            )
-                        } else {
-                            crate::services::tools::public_memory_url(
-                                &public_url,
-                                &instance_slug,
-                                upload_id,
-                                &auth_token,
-                            )
-                        }
-                    } else {
-                        if public_url.is_empty() {
-                            format!("/api/instances/{instance_slug}/uploads/{upload_id}/file")
-                        } else {
-                            crate::services::tools::public_file_url(
-                                &public_url,
-                                &instance_slug,
-                                upload_id,
-                                &auth_token,
-                            )
-                        }
+                    use crate::services::resource_capability::{
+                        CapabilityAudience, CapabilityResource,
                     };
+                    let resource = if upload_id == &r.path || upload_id.contains('/') {
+                        CapabilityResource::memory(upload_id)
+                    } else {
+                        CapabilityResource::uploaded_file(upload_id)
+                    };
+                    let url = resource
+                        .and_then(|resource| {
+                            state.resources.url(
+                                "",
+                                &instance_slug,
+                                resource,
+                                CapabilityAudience::Browser,
+                            )
+                        })
+                        .unwrap_or_default();
                     obj["media_url"] = serde_json::Value::String(url);
                 }
             }
@@ -761,21 +634,8 @@ async fn reindex_memory(
     Ok(Json(serde_json::json!({ "status": "reindexing" })))
 }
 
-#[derive(Deserialize)]
-struct MemoryTokenQuery {
-    token: Option<String>,
-}
-
-async fn serve_memory_file_public(
-    State(state): State<AppState>,
-    Path((instance_slug, file_path)): Path<(String, String)>,
-    axum::extract::Query(query): axum::extract::Query<MemoryTokenQuery>,
-) -> Result<axum::response::Response<axum::body::Body>, StatusCode> {
-    let expected = state.config.read().await.auth_token.clone();
-    if expected.is_empty() || query.token.as_deref() != Some(&expected) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-    serve_memory_file_inner(&state, &instance_slug, &file_path).await
+async fn serve_memory_file_public() -> StatusCode {
+    StatusCode::UNAUTHORIZED
 }
 
 async fn read_memory_file(
@@ -785,7 +645,7 @@ async fn read_memory_file(
     serve_memory_file_inner(&state, &instance_slug, &file_path).await
 }
 
-async fn serve_memory_file_inner(
+pub(super) async fn serve_memory_file_inner(
     state: &AppState,
     instance_slug: &str,
     file_path: &str,
@@ -812,6 +672,15 @@ async fn serve_memory_file_inner(
         Some("webp") => "image/webp",
         Some("svg") => "image/svg+xml",
         Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
+        Some("mov") => "video/quicktime",
+        Some("ogg") => "audio/ogg",
+        Some("m4a") => "audio/mp4",
+        Some("flac") => "audio/flac",
+        Some("aac") => "audio/aac",
+        Some("avif") => "image/avif",
+        Some("bmp") => "image/bmp",
+        Some("ico") => "image/x-icon",
         Some("mp3") => "audio/mpeg",
         Some("wav") => "audio/wav",
         Some("pdf") => "application/pdf",
@@ -834,7 +703,7 @@ async fn serve_memory_file_inner(
             axum::http::header::CONTENT_DISPOSITION,
             format!("{disposition}; filename=\"{filename}\""),
         )
-        .header(axum::http::header::CACHE_CONTROL, "public, max-age=86400")
+        .header(axum::http::header::CACHE_CONTROL, "private, no-store")
         .body(axum::body::Body::from(bytes))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -1245,6 +1114,7 @@ mod media_tests {
             .unwrap();
         let app = router()
             .merge(public_memory_router())
+            .merge(crate::routes::resources::router())
             .with_state(state.clone());
         let response = app
             .clone()
@@ -1269,18 +1139,10 @@ mod media_tests {
                     .starts_with("media_")
             );
             let url = result["media_url"].as_str().unwrap();
-            assert!(
-                url.starts_with("https://memory.example/public/memory/one/"),
-                "{url}"
-            );
+            assert!(url.starts_with("/resources/browser/memory/one/"), "{url}");
             let response = app
                 .clone()
-                .oneshot(
-                    Request::builder()
-                        .uri(url.strip_prefix("https://memory.example").unwrap())
-                        .body(Body::empty())
-                        .unwrap(),
-                )
+                .oneshot(Request::builder().uri(url).body(Body::empty()).unwrap())
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK, "{url}");
@@ -1315,7 +1177,7 @@ mod media_tests {
             r["media_url"]
                 .as_str()
                 .unwrap()
-                .starts_with("/api/instances/one/memory/")
+                .starts_with("/resources/browser/memory/one/")
         }));
         assert_eq!(
             delete_memory_file(

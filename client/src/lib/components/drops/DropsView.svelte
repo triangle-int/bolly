@@ -114,6 +114,7 @@
 			{#each drops as drop (drop.id)}
 				<DropCard
 					{drop}
+					{slug}
 					icon={kindIcon[drop.kind] ?? "~"}
 					time={formatTime(drop.created_at)}
 					expanded={expandedId === drop.id}

@@ -155,11 +155,6 @@ async fn trigger_agent(
         )
     })?;
 
-    let google_ai_key = {
-        let cfg = state.config.read().await;
-        cfg.llm.tokens.google_ai.clone()
-    };
-
     // Run the agent in background
     let ws = state.workspace_dir.clone();
     let slug = instance_slug.clone();
@@ -175,11 +170,11 @@ async fn trigger_agent(
             &llm_clone,
             &events,
             &vs,
-            &google_ai_key,
             &agent,
             None,
             "manual",
             None,
+            &state.resources,
         )
         .await
         {

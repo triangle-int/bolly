@@ -23,6 +23,7 @@ async fn main() {
     // No subcommand → run the server
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .filter_module("tracing::span", log::LevelFilter::Warn)
+        .format(app::logging::format_record)
         .init();
 
     let mut config = config::load_config().unwrap_or_else(|err| {
@@ -32,6 +33,7 @@ async fn main() {
         )
     });
 
+    services::tools::register_control_secret(&config.auth_token);
     let host = config.host.clone();
     let port = config.port;
     let static_dir = if config.static_dir.is_empty() {
@@ -73,9 +75,26 @@ async fn main() {
     if let Err(error) = media_store.cleanup_legacy_screen_capture() {
         log::warn!("legacy passive screen-capture cleanup was incomplete: {error}");
     }
+    if let Err(error) = media_store.cleanup_legacy_stats() {
+        log::warn!("legacy stats aggregate cleanup was incomplete: {error}");
+    }
 
-    // Migrate legacy memory (facts.md + episodes.md → library) for all instances
-    services::memory::migrate_all_instances(&media_store);
+    // One companion per server (#103). Sibling directories from the unpublished
+    // multi-instance layout are reported and otherwise ignored.
+    let obsolete = services::companion::obsolete_instance_dirs(&state.workspace_dir);
+    if !obsolete.is_empty() {
+        log::warn!(
+            "ignoring {} obsolete multi-instance director{}: {:?}. This server owns one companion \
+             ({}); see docs/companion-storage.md",
+            obsolete.len(),
+            if obsolete.len() == 1 { "y" } else { "ies" },
+            obsolete,
+            domain::companion::CANONICAL_SLUG,
+        );
+    }
+
+    // Migrate legacy memory (facts.md + episodes.md → library) for the companion
+    services::memory::migrate_companion(&media_store);
 
     let addr: SocketAddr = format!("{host}:{port}").parse().unwrap_or_else(|_| {
         log::warn!("invalid host:port {host}:{port}, falling back to 0.0.0.0:{port}");
@@ -102,54 +121,48 @@ async fn main() {
 
     // Start heartbeat — companion's autonomous inner life
     {
-        let google_ai_key = state.config.read().await.llm.tokens.google_ai.clone();
         services::heartbeat::start(
             &state.workspace_dir,
             state.llm.clone(),
             state.events.clone(),
             state.vector_store.clone(),
-            google_ai_key.clone(),
             state.machine_registry.clone(),
+            state.resources.clone(),
         );
 
         // Backfill missing or invalid local indexes from memory files (background, non-blocking)
         let vs = state.vector_store.clone();
         let ws = state.workspace_dir.clone();
-        let media = state.vector_store.media_store();
         tokio::spawn(async move {
-            let slugs = match media.instance_slugs() {
-                Ok(slugs) => slugs,
-                Err(error) => {
-                    log::warn!("[backfill] cannot list instances: {error}");
+            let slug = domain::companion::CANONICAL_SLUG;
+            match services::companion::read_identity(&ws) {
+                Ok(Some(_)) => {}
+                Ok(None) => {
+                    info!("[backfill] companion not created yet; nothing to index");
                     return;
                 }
-            };
-
-            let mut had_errors = false;
-            for slug in slugs {
-                match vs.needs_backfill(&slug).await {
-                    Ok(false) => continue,
-                    Ok(true) => {}
-                    Err(e) => {
-                        log::warn!("[backfill] {slug}: cannot prepare index: {e}");
-                        had_errors = true;
-                        continue;
-                    }
-                }
-                info!("[backfill] starting for instance {slug}");
-                match vs.backfill_text_memories(&ws, &slug).await {
-                    Ok(count) => info!("[backfill] {slug}: indexed {count} chunks"),
-                    Err(e) => {
-                        log::warn!("[backfill] {slug}: failed: {e}");
-                        had_errors = true;
-                    }
+                Err(error) => {
+                    log::warn!("[backfill] companion storage is unusable: {error}");
+                    return;
                 }
             }
-
-            if !had_errors {
-                info!("[backfill] completed");
-            } else {
-                log::warn!("[backfill] completed with errors — will retry on next restart");
+            match vs.needs_backfill(slug).await {
+                Ok(false) => {
+                    info!("[backfill] completed");
+                    return;
+                }
+                Ok(true) => {}
+                Err(e) => {
+                    log::warn!(
+                        "[backfill] {slug}: cannot prepare index: {e} — will retry on next restart"
+                    );
+                    return;
+                }
+            }
+            info!("[backfill] starting for companion {slug}");
+            match vs.backfill_text_memories(&ws, slug).await {
+                Ok(count) => info!("[backfill] {slug}: indexed {count} chunks"),
+                Err(e) => log::warn!("[backfill] {slug}: failed: {e} — will retry on next restart"),
             }
         });
     }

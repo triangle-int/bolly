@@ -79,7 +79,7 @@ pub(crate) fn messages_to_openai(
                             }));
                             if let super::types::ToolOutputContent::Blocks(blocks) = content {
                                 for block in blocks {
-                                    if let ContentBlock::Image { source } = block {
+                                    if let ContentBlock::Image { source, .. } = block {
                                         input.push(serde_json::json!({"type": "message", "role": "user", "content": [image_source_to_openai(&source)]}));
                                     }
                                 }
@@ -92,7 +92,7 @@ pub(crate) fn messages_to_openai(
                                 "content": text,
                             }));
                         }
-                        ContentBlock::Image { source } => {
+                        ContentBlock::Image { source, .. } => {
                             input.push(serde_json::json!({
                                 "type": "message",
                                 "role": "user",
@@ -157,7 +157,13 @@ pub(crate) fn messages_to_openai(
         }
     }
 
-    (instructions, input)
+    (
+        crate::services::tools::redact_secrets(&instructions),
+        input
+            .into_iter()
+            .map(crate::services::tools::redact_value)
+            .collect(),
+    )
 }
 
 /// Convert tool definitions to OpenAI Responses API format.
@@ -227,7 +233,7 @@ pub(crate) async fn openai_complete(
         .post(&format!("{base_url}/v1/responses"))
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
-        .json(&body)
+        .json(&crate::services::tools::redact_value(body.clone()))
         .send()
         .await?;
 
@@ -236,7 +242,7 @@ pub(crate) async fn openai_complete(
     if !status.is_success() {
         return Err(LlmError::Http {
             status: status.as_u16(),
-            message: resp_text,
+            message: crate::services::tools::redact_secrets(&resp_text),
         }
         .into());
     }
@@ -344,7 +350,7 @@ pub(crate) async fn openai_stream(
         .post(&format!("{base_url}/v1/responses"))
         .header("Authorization", format!("Bearer {api_key}"))
         .header("Content-Type", "application/json")
-        .json(&body)
+        .json(&crate::services::tools::redact_value(body.clone()))
         .send()
         .await?;
 
@@ -353,7 +359,7 @@ pub(crate) async fn openai_stream(
         let text = resp.text().await.unwrap_or_default();
         return Err(LlmError::Http {
             status: status.as_u16(),
-            message: text,
+            message: crate::services::tools::redact_secrets(&text),
         }
         .into());
     }

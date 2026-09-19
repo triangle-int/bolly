@@ -12,69 +12,58 @@ use chrono::Utc;
 use tokio::sync::{RwLock, broadcast};
 
 use crate::domain::child_agent::ChildAgentConfig;
+use crate::domain::companion::CANONICAL_SLUG;
 use crate::domain::events::ServerEvent;
 use crate::domain::thought::Thought;
 use crate::services::machine_registry::MachineRegistry;
 use crate::services::tools::load_mood_state;
-use crate::services::{chat, llm::LlmBackend, rhythm, thoughts};
+use crate::services::{chat, companion, llm::LlmBackend, rhythm, thoughts};
 
 pub fn start(
     workspace_dir: &Path,
     llm: Arc<RwLock<Option<LlmBackend>>>,
     events: broadcast::Sender<ServerEvent>,
     vector_store: Arc<crate::services::vector::VectorStore>,
-    google_ai_key: String,
     machine_registry: MachineRegistry,
+    resources: crate::services::resource_access::ResourceAccess,
 ) {
-    let instances_dir = workspace_dir.join("instances");
-
-    // Ensure built-in child agents exist for all instances
-    if let Ok(entries) = fs::read_dir(&instances_dir) {
-        for entry in entries.filter_map(Result::ok) {
-            if entry.path().is_dir() && entry.path().join("soul.md").exists() {
-                let slug = entry.file_name().to_string_lossy().to_string();
-                crate::services::child_agents::ensure_builtins(workspace_dir, &slug);
-            }
-        }
+    // One companion per server: only the canonical identity has an inner life.
+    let slug = CANONICAL_SLUG.to_owned();
+    if !companion::companion_dir(workspace_dir)
+        .join("soul.md")
+        .exists()
+    {
+        log::info!("heartbeat: companion not onboarded yet; no loops spawned");
+        return;
     }
+    crate::services::child_agents::ensure_builtins(workspace_dir, &slug);
 
-    // Spawn independent loops for each instance × agent
-    let entries = match fs::read_dir(&instances_dir) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
+    // Spawn one independent loop per scheduled agent of the companion
+    let agents = crate::services::child_agents::load_agents(workspace_dir, &slug);
 
-    for entry in entries.filter_map(Result::ok) {
-        if !entry.path().is_dir() || !entry.path().join("soul.md").exists() {
-            continue;
+    for agent in agents {
+        if agent.interval_hours <= 0.0 {
+            continue; // skip on-demand agents
         }
-        let slug = entry.file_name().to_string_lossy().to_string();
-        let agents = crate::services::child_agents::load_agents(workspace_dir, &slug);
 
-        for agent in agents {
-            if agent.interval_hours <= 0.0 {
-                continue; // skip on-demand agents
-            }
+        let ws = workspace_dir.to_path_buf();
+        let s = slug.clone();
+        let l = llm.clone();
+        let ev = events.clone();
+        let vs = vector_store.clone();
+        let mr = machine_registry.clone();
+        let resources = resources.clone();
+        let agent_name = agent.name.clone();
+        let agent_hours = agent.interval_hours;
+        let agent_clone = agent.clone();
 
-            let ws = workspace_dir.to_path_buf();
-            let s = slug.clone();
-            let l = llm.clone();
-            let ev = events.clone();
-            let vs = vector_store.clone();
-            let gai = google_ai_key.clone();
-            let mr = machine_registry.clone();
-            let agent_name = agent.name.clone();
-            let agent_hours = agent.interval_hours;
-            let agent_clone = agent.clone();
+        tokio::spawn(async move {
+            run_agent_loop(&ws, &s, &agent_clone, l, ev, vs, mr, resources).await;
+        });
 
-            tokio::spawn(async move {
-                run_agent_loop(&ws, &s, &agent_clone, l, ev, vs, &gai, mr).await;
-            });
-
-            log::info!(
-                "heartbeat: spawned '{agent_name}' for instance '{slug}' (every {agent_hours}h)"
-            );
-        }
+        log::info!(
+            "heartbeat: spawned '{agent_name}' for instance '{slug}' (every {agent_hours}h)"
+        );
     }
 }
 
@@ -86,8 +75,8 @@ async fn run_agent_loop(
     llm: Arc<RwLock<Option<LlmBackend>>>,
     events: broadcast::Sender<ServerEvent>,
     vector_store: Arc<crate::services::vector::VectorStore>,
-    google_ai_key: &str,
     machine_registry: MachineRegistry,
+    resources: crate::services::resource_access::ResourceAccess,
 ) {
     let interval_secs = (agent.interval_hours * 3600.0) as u64;
     let instance_dir = workspace_dir.join("instances").join(slug);
@@ -156,9 +145,9 @@ async fn run_agent_loop(
                 backend,
                 &events,
                 &vector_store,
-                google_ai_key,
                 agent,
                 &machine_registry,
+                &resources,
             )
             .await;
         }
@@ -176,17 +165,21 @@ async fn run_agent_tick(
     llm: &LlmBackend,
     events: &broadcast::Sender<ServerEvent>,
     vector_store: &Arc<crate::services::vector::VectorStore>,
-    google_ai_key: &str,
     agent: &ChildAgentConfig,
     machine_registry: &MachineRegistry,
+    resources: &crate::services::resource_access::ResourceAccess,
 ) {
     log::info!("[heartbeat] {slug}: running '{}'", agent.name);
 
     // ── Rhythm update (companion only) ──
     if agent.name == "companion" {
-        let rhythm_data = rhythm::recompute_rhythm(workspace_dir, slug);
-        rhythm::save_rhythm(instance_dir, &rhythm_data);
-        let rhythm_insights = rhythm::build_rhythm_insights(workspace_dir, slug, &rhythm_data);
+        // Incremental aggregate only; nothing rescans history here (#95).
+        let rhythm_insights = if rhythm::tracking_enabled(workspace_dir, slug) {
+            let rhythm_data = rhythm::load_rhythm(instance_dir);
+            rhythm::build_rhythm_insights(workspace_dir, slug, &rhythm_data)
+        } else {
+            String::new()
+        };
         if !rhythm_insights.trim().is_empty() {
             let label = format!("[system] rhythm update\n{rhythm_insights}");
             let _ = chat::save_system_message(workspace_dir, slug, "default", &label);
@@ -201,11 +194,11 @@ async fn run_agent_tick(
         llm,
         events,
         vector_store,
-        google_ai_key,
         agent,
         None,
         "heartbeat",
         Some(machine_registry),
+        resources,
     )
     .await
     {

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resourceMedia, resourceProse, prepareResourceHtml } from "$lib/api/resource-media.js";
 	import type { ChatMessage } from "$lib/api/types.js";
 	import { uploadFileUrl } from "$lib/api/client.js";
 	import { openFile } from "$lib/stores/fileviewer.svelte.js";
@@ -24,7 +25,7 @@
 		// Click on <a> pointing to a media/upload file → open in viewer
 		const anchor = (e.target as HTMLElement).closest("a") as HTMLAnchorElement | null;
 		if (anchor?.href) {
-			const isUpload = anchor.href.includes("/uploads/") || anchor.href.includes("/public/files/");
+			const isUpload = anchor.href.includes("/uploads/") || anchor.href.includes("/public/files/") || anchor.href.includes("/resources/");
 			const isMedia = MEDIA_EXTS.test(anchor.href);
 			if (isUpload || isMedia) {
 				e.preventDefault();
@@ -90,7 +91,6 @@
 		name: string;
 		id: string;
 		isImage: boolean;
-		url: string;
 	}
 
 	const ATTACH_RE = /\[attached:\s*(.+?)\s*\(([^)]+)\)\]/g;
@@ -107,7 +107,6 @@
 				name,
 				id,
 				isImage: IMAGE_EXTS.includes(ext),
-				url: uploadFileUrl(slug, id),
 			});
 		}
 		return results;
@@ -118,7 +117,7 @@
 	);
 
 	const html = $derived(
-		isUser || streaming ? "" : DOMPurify.sanitize(marked.parse(textContent) as string)
+		isUser || streaming ? "" : prepareResourceHtml(DOMPurify.sanitize(marked.parse(textContent) as string), slug)
 	);
 
 	/** Words for voice reveal (only used when speaking). */
@@ -158,15 +157,15 @@
      <!-- Delegates file links to the file viewer; regular links retain native behavior. -->
      <!-- svelte-ignore a11y_no_static_element_interactions -->
      <!-- svelte-ignore a11y_click_events_have_key_events -->
-     <div class="text prose" onclick={handleProseClick}>{@html html}</div>
+     <div class="text prose" use:resourceProse={html} onclick={handleProseClick}>{@html html}</div>
     {/if}
    </MessageContent>
   {/if}
   {#if attachments.length}
    <div class="attachments">
     {#each attachments as attachment (attachment.id)}
-     <button type="button" onclick={() => openFile(attachment.url, attachment.name)} class:picture={attachment.isImage} aria-label={`Open ${attachment.name}`}>
-      {#if attachment.isImage}<img src={attachment.url} alt={attachment.name} loading="lazy" />{:else}<FileText size={16} /><span>{attachment.name}</span>{/if}
+     <button type="button" onclick={async () => openFile(await uploadFileUrl(slug, attachment.id), attachment.name)} class:picture={attachment.isImage} aria-label={`Open ${attachment.name}`}>
+      {#if attachment.isImage}<img use:resourceMedia={{ slug, kind: "files", path: attachment.id }} alt={attachment.name} loading="lazy" />{:else}<FileText size={16} /><span>{attachment.name}</span>{/if}
      </button>
     {/each}
    </div>

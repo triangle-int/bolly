@@ -547,6 +547,7 @@ fn validate_instance_slug(slug: &str) -> Result<(), CapabilityError> {
 fn validate_single_component(value: &str, error: CapabilityError) -> Result<(), CapabilityError> {
     if value.is_empty()
         || value.len() > 255
+        || value.nfc().ne(value.chars())
         || matches!(value, "." | "..")
         || value.contains(['/', '\\', '\0'])
         || value.chars().any(char::is_control)
@@ -610,6 +611,12 @@ fn percent_encode_component(value: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn upload_identity_requires_nfc() {
+        assert!(CapabilityResource::uploaded_file("e\u{301}.png").is_err());
+        assert!(CapabilityResource::uploaded_file("é.png").is_ok());
+    }
+
     use super::*;
     use std::sync::{
         Arc, Mutex,

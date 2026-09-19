@@ -13,7 +13,8 @@
 		updateProvider,
 	} from "$lib/api/client.js";
 	import type { SoulTemplate } from "$lib/api/types.js";
-	import { getInstances } from "$lib/stores/instances.svelte.js";
+	import { getCompanion } from "$lib/stores/companion.svelte.js";
+	import { introGreeting, onboardingHandshake } from "$lib/companion/context.js";
 	import { getSceneStore } from "$lib/stores/scene.svelte.js";
 	import { getSkinStore, SKINS } from "$lib/stores/skin.svelte.js";
 	import { getToasts } from "$lib/stores/toast.svelte.js";
@@ -26,7 +27,16 @@
 
 	let { slug, oncomplete }: { slug: string; oncomplete: () => void } = $props();
 
-	const instances = getInstances();
+	// Optional: set by an earlier visit; never falls back to the companion slug.
+	function readPreferredName(): string | null {
+		try {
+			return typeof localStorage !== "undefined" ? localStorage.getItem("nolune:preferredName") : null;
+		} catch {
+			return null;
+		}
+	}
+
+	const companion = getCompanion();
 
 	type Stage =
 		| "reveal"
@@ -112,8 +122,7 @@
 		revealed = true;
 		stage = "intro";
 		await pause(400);
-		const userName = typeof localStorage !== "undefined" ? localStorage.getItem("nolune:preferredName") || slug : slug;
-		await typewrite(`hey, ${userName}.`);
+		await typewrite(introGreeting(readPreferredName()));
 		await pause(400);
 		await typewrite("a new space, just for us.");
 		await pause(600);
@@ -263,11 +272,10 @@
 		if (!content) return;
 		stage = "sending";
 		const langLabel = LANGUAGES.find((l) => l.id === chosenLanguage)?.label ?? chosenLanguage;
-		const preferredName = typeof localStorage !== "undefined" ? localStorage.getItem("nolune:preferredName") || slug : slug;
-		const combined = `my name is ${preferredName}. please speak to me in ${langLabel}.\n\n${content}`;
+		const combined = `${onboardingHandshake(readPreferredName(), langLabel)}\n\n${content}`;
 		try {
 			await sendMessage(slug, combined);
-			await instances.refresh();
+			await companion.refresh();
 		} catch {
 			toast.error("setup failed — try sending a message after");
 		}

@@ -283,11 +283,11 @@ pub async fn run_single_agent(
     llm: &LlmBackend,
     events: &broadcast::Sender<ServerEvent>,
     vector_store: &Arc<crate::services::vector::VectorStore>,
-    google_ai_key: &str,
     agent: &ChildAgentConfig,
     task_override: Option<&str>,
     trigger: &str,
     machine_registry: Option<&crate::services::machine_registry::MachineRegistry>,
+    resources: &crate::services::resource_access::ResourceAccess,
 ) -> anyhow::Result<AgentRunResult> {
     anyhow::ensure!(
         !is_reserved_agent_name(&agent.name),
@@ -440,9 +440,9 @@ pub async fn run_single_agent(
             slug,
             events.clone(),
             vector_store.clone(),
-            google_ai_key,
             machine_registry,
             &agent.tool_groups,
+            resources,
         );
         model_llm
             .chat_with_tools_traced(&system, &prompt, prev_messages, agent_tools)
@@ -501,15 +501,11 @@ fn build_agent_tools_for(
     slug: &str,
     events: broadcast::Sender<ServerEvent>,
     vector_store: Arc<crate::services::vector::VectorStore>,
-    google_ai_key: &str,
     machine_registry: Option<&crate::services::machine_registry::MachineRegistry>,
     tool_groups: &[String],
+    resources: &crate::services::resource_access::ResourceAccess,
 ) -> Vec<Box<dyn ToolDyn>> {
     let cfg = config::load_config().ok();
-    let auth_token = cfg
-        .as_ref()
-        .map(|c| c.auth_token.clone())
-        .unwrap_or_default();
     let public_url = cfg
         .as_ref()
         .map(|c| c.public_url.clone())
@@ -539,6 +535,7 @@ fn build_agent_tools_for(
             slug,
             &public_url,
             vector_store.clone(),
+            resources,
         )));
         raw_tools.push(Box::new(MemoryListTool::new(
             workspace_dir,
@@ -555,6 +552,7 @@ fn build_agent_tools_for(
             slug,
             vector_store.clone(),
             &public_url,
+            resources,
         )));
         raw_tools.push(Box::new(MemoryConnectTool::new(slug, vector_store.clone())));
     }
@@ -583,6 +581,7 @@ fn build_agent_tools_for(
             workspace_dir,
             slug,
             &public_url,
+            resources,
         )));
         raw_tools.push(Box::new(WriteFileTool::new(workspace_dir, slug)));
         raw_tools.push(Box::new(EditFileTool::new(workspace_dir, slug)));
@@ -628,22 +627,9 @@ fn build_agent_tools_for(
                 workspace_dir,
                 slug,
                 &public_url,
-                &auth_token,
+                resources,
             )));
             raw_tools.push(Box::new(tools::RemoteBashTool::new(registry.clone())));
-        }
-    }
-
-    // media
-    if has("media") {
-        if !google_ai_key.is_empty() {
-            raw_tools.push(Box::new(tools::WatchVideoTool::new(
-                google_ai_key,
-                workspace_dir,
-                slug,
-                &public_url,
-                &auth_token,
-            )));
         }
     }
 

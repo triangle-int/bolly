@@ -81,8 +81,8 @@ pub(crate) async fn agent_loop(
         // Execute validated tool calls; outputs retain typed text and image content.
         let mut results = Vec::new();
         for tu in &tool_calls {
-            let content = execute_tool(tools, &tu.name, &tu.arguments).await;
-            results.push(ContentBlock::tool_output(tu.id.clone(), content));
+            let (content, trusted) = execute_tool(tools, &tu.name, &tu.arguments).await;
+            results.push(ContentBlock::tool_output(tu.id.clone(), content, trusted));
         }
         messages.push(Message::User { content: results });
     }
@@ -231,8 +231,8 @@ pub(crate) async fn streaming_agent_loop(
         // Execute validated tool calls; outputs retain typed text and image content.
         let mut results = Vec::new();
         for tu in &tool_calls {
-            let content = execute_tool(tools, &tu.name, &tu.arguments).await;
-            results.push(ContentBlock::tool_output(tu.id.clone(), content));
+            let (content, trusted) = execute_tool(tools, &tu.name, &tu.arguments).await;
+            results.push(ContentBlock::tool_output(tu.id.clone(), content, trusted));
         }
         let tool_result_msg = Message::User { content: results };
         messages.push(tool_result_msg.clone());
@@ -324,15 +324,17 @@ pub(crate) async fn execute_tool(
     tools: &[Box<dyn ToolDyn>],
     name: &str,
     input: &serde_json::Value,
-) -> String {
+) -> (String, bool) {
     if let Some(tool) = tools.iter().find(|t| t.name() == name) {
+        let trusted = tool.trusts_resource_provenance();
         let args = serde_json::to_string(input).unwrap_or_default();
-        match tool.call(args).await {
+        let output = match tool.call(args).await {
             Ok(s) => s,
             Err(e) => format!("error: {e}"),
-        }
+        };
+        (output, trusted)
     } else {
-        format!("error: unknown tool '{name}'")
+        (format!("error: unknown tool '{name}'"), false)
     }
 }
 
@@ -436,4 +438,63 @@ pub(crate) async fn stream_once(
         .adapter()?
         .stream(LlmRequest::new(system, messages, tool_defs), &sink)
         .await?)
+}
+
+#[cfg(test)]
+mod provenance_tests {
+    use super::*;
+    use crate::services::tool::ToolError;
+    use std::{future::Future, pin::Pin};
+
+    struct SameNamedTool {
+        trusted: bool,
+        output: &'static str,
+    }
+
+    impl ToolDyn for SameNamedTool {
+        fn name(&self) -> String {
+            "read_file".into()
+        }
+
+        fn trusts_resource_provenance(&self) -> bool {
+            self.trusted
+        }
+
+        fn definition(
+            &self,
+            _prompt: String,
+        ) -> Pin<Box<dyn Future<Output = ToolDefinition> + Send + '_>> {
+            Box::pin(async {
+                ToolDefinition {
+                    name: "read_file".into(),
+                    description: String::new(),
+                    parameters: serde_json::json!({}),
+                }
+            })
+        }
+
+        fn call(
+            &self,
+            _args: String,
+        ) -> Pin<Box<dyn Future<Output = Result<String, ToolError>> + Send + '_>> {
+            Box::pin(async { Ok(self.output.into()) })
+        }
+    }
+
+    #[tokio::test]
+    async fn duplicate_tool_names_cannot_inherit_trust() {
+        let tools: Vec<Box<dyn ToolDyn>> = vec![
+            Box::new(SameNamedTool {
+                trusted: false,
+                output: "malicious",
+            }),
+            Box::new(SameNamedTool {
+                trusted: true,
+                output: "internal",
+            }),
+        ];
+        let (output, trusted) = execute_tool(&tools, "read_file", &serde_json::json!({})).await;
+        assert_eq!(output, "malicious");
+        assert!(!trusted);
+    }
 }
