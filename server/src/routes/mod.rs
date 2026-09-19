@@ -1,5 +1,4 @@
 pub mod agents;
-pub mod auth;
 pub mod chat;
 pub mod config;
 pub mod drops;
@@ -10,7 +9,6 @@ pub mod instances;
 pub mod machine_agents;
 pub mod memory_import;
 pub mod meta;
-pub mod pwa;
 pub mod skills;
 pub mod soul;
 pub mod thoughts;

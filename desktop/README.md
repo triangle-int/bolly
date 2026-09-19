@@ -24,8 +24,8 @@ invalid records or an unavailable keychain require re-entry. Interrupted writes
 and superseded secrets are cleaned up through the reference journal. Failed
 cleanup remains retryable rather than silently dropping the last reference.
 
-The server's existing auth middleware accepts Bearer headers and `nolune_token`
-cookies. However, Tauri 2.10's `set_cookie(Cookie)` API has no source URL or portable
+The server auth middleware accepts Bearer headers. Tauri 2.10's
+`set_cookie(Cookie)` API has no source URL or portable
 host-only flag: Wry's WebKit, WebView2, and WebKitGTK adapters construct cookies
 from a domain. Moreover, even host-only cookies cannot isolate ports or HTTP from
 HTTPS. Therefore **the desktop never sets a server-token cookie**.

@@ -118,6 +118,15 @@ assert_contains() {
   fi
 }
 
+assert_exact_call() {
+  local file=$1 expected=$2
+  if ! grep -Fxq -- "$expected" "$file"; then
+    printf 'FAIL: missing exact call: %s\n--- calls ---\n' "$expected" >&2
+    cat "$file" >&2
+    exit 1
+  fi
+}
+
 wait_for_call() {
   local file=$1 expected=$2
   for _ in $(seq 1 100); do
@@ -146,6 +155,23 @@ assert_status() {
     cat "$tmp/$name/output" >&2
     exit 1
   fi
+}
+
+assert_generated_token_private() {
+  local name=$1 token config
+  config="$tmp/$name/data/config.toml"
+  token=$(grep -E '^auth_token\s*=' "$config" | head -1 | sed 's/[^=]*=\s*//' | tr -d ' "')
+  if [[ -z "$token" ]]; then
+    printf 'FAIL: %s did not generate an auth token\n' "$name" >&2
+    exit 1
+  fi
+  for file in "$tmp/$name/output" "$tmp/$name/calls"; do
+    if grep -Fq -- "$token" "$file"; then
+      printf 'FAIL: %s exposed its generated auth token in %s\n' "$name" "$file" >&2
+      cat "$file" >&2
+      exit 1
+    fi
+  done
 }
 
 run_installer() {
@@ -181,6 +207,7 @@ run_installer() {
 # macOS: native service manager owns startup; health uses the public endpoint.
 run_installer macos Darwin arm64 1 spawn
 assert_status macos 0
+assert_generated_token_private macos
 assert_contains "$tmp/macos/calls" 'launchctl bootstrap gui/501 '
 assert_contains "$tmp/macos/calls" 'launchctl kickstart -k gui/501/dev.nolune.nolune'
 assert_contains "$tmp/macos/calls" 'launchctl print gui/501/dev.nolune.nolune'
@@ -198,6 +225,7 @@ assert_contains "$tmp/macos/calls" 'ps -axo pid=,command='
 assert_contains "$tmp/macos/calls" '/healthz'
 assert_absent "$tmp/macos/calls" '/api/health'
 assert_absent "$tmp/macos/calls" 'direct binary start'
+assert_exact_call "$tmp/macos/calls" 'open http://localhost:26559'
 if grep -Eq 'auth token:|/auth\?token=' "$tmp/macos/output"; then
   echo 'FAIL: installer printed the auth token' >&2
   exit 1
@@ -214,12 +242,14 @@ assert_contains "$tmp/macos/update-output" 'already at v0.33.0'
 # Re-running the macOS installer against the same home/data remains idempotent.
 run_installer macos Darwin arm64 1
 assert_status macos 0
+assert_generated_token_private macos
 assert_contains "$tmp/macos/calls" 'launchctl bootstrap gui/501 '
 assert_contains "$tmp/macos/calls" '/healthz'
 
 # Root Linux uses and verifies the system service without touching real /etc.
 run_installer linux-root Linux x86_64 1 '' 0
 assert_status linux-root 0
+assert_generated_token_private linux-root
 assert_contains "$tmp/linux-root/calls" 'systemctl daemon-reload'
 assert_contains "$tmp/linux-root/calls" 'systemctl enable nolune'
 assert_contains "$tmp/linux-root/calls" 'systemctl restart nolune'
@@ -229,6 +259,7 @@ assert_contains "$tmp/linux-root/calls" 'systemctl is-active --quiet nolune'
 # Non-root Linux uses and verifies the user systemd service.
 run_installer linux Linux x86_64 1
 assert_status linux 0
+assert_generated_token_private linux
 assert_contains "$tmp/linux/calls" 'systemctl --user daemon-reload'
 assert_contains "$tmp/linux/calls" 'systemctl --user enable nolune'
 assert_contains "$tmp/linux/calls" 'systemctl --user restart nolune'
@@ -239,15 +270,19 @@ assert_absent "$tmp/linux/calls" 'direct binary start'
 # Re-running Linux against the same home/data remains idempotent.
 run_installer linux Linux x86_64 1
 assert_status linux 0
+assert_generated_token_private linux
 assert_contains "$tmp/linux/calls" 'systemctl --user enable nolune'
 
 # Linux without systemd uses the explicit direct-process fallback.
 run_installer linux-fallback Linux x86_64 1 '' 501 0
 assert_status linux-fallback 0
+assert_generated_token_private linux-fallback
 wait_for_call "$tmp/linux-fallback/calls" 'direct binary start'
+assert_exact_call "$tmp/linux-fallback/calls" 'xdg-open http://localhost:26559'
 
 # A process that ignores SIGTERM blocks service startup and fails closed.
 run_installer stubborn Darwin arm64 1 stubborn
+assert_generated_token_private stubborn
 [[ $(cat "$tmp/stubborn/status") -ne 0 ]]
 assert_absent "$tmp/stubborn/calls" 'launchctl bootstrap gui/501 '
 if ! grep -Fq 'could not stop the existing Nolune process' "$tmp/stubborn/output"; then
@@ -257,6 +292,7 @@ fi
 
 # A service that never becomes healthy makes installation fail honestly.
 run_installer unhealthy Darwin arm64 0
+assert_generated_token_private unhealthy
 [[ $(cat "$tmp/unhealthy/status") -ne 0 ]]
 assert_contains "$tmp/unhealthy/calls" '/healthz'
 if grep -Fq 'installation complete' "$tmp/unhealthy/output"; then

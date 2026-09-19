@@ -7,6 +7,10 @@ import ts from "typescript";
 const source = ts.transpile(readFileSync(new URL("../../client/src/lib/api/client.ts", import.meta.url), "utf8"), {
   target: ts.ScriptTarget.ESNext, module: ts.ModuleKind.ESNext,
 });
+const cleanupSource = readFileSync(
+  new URL("../../client/src/lib/api/legacy-auth-cleanup.js", import.meta.url),
+  "utf8",
+);
 
 async function setup(desktop) {
   const urls = [];
@@ -19,7 +23,12 @@ async function setup(desktop) {
     URL,
   });
   const module = new vm.SourceTextModule(source, { context });
-  await module.link(() => { throw Error("Unexpected runtime import"); });
+  await module.link((specifier) => {
+    if (specifier === "./legacy-auth-cleanup.js") {
+      return new vm.SourceTextModule(cleanupSource, { context });
+    }
+    throw Error(`Unexpected runtime import: ${specifier}`);
+  });
   await module.evaluate();
   return { api: module.namespace, urls };
 }

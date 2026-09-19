@@ -14,7 +14,6 @@ export default defineConfig({
 		proxy: {
 			"/api/ws": { target: "ws://localhost:26559", ws: true },
 			"/api": "http://localhost:26559",
-			"/manifest.webmanifest": "http://localhost:26559",
 		},
 	},
 });

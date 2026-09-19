@@ -491,18 +491,15 @@ for _ in $(seq 1 30); do
     sleep 0.5
 done
 
-    # Read auth token from config for browser URL
-AUTH_TOKEN=$(grep -E '^auth_token\s*=' "$NOLUNE_DIR/config.toml" | head -1 | sed 's/[^=]*=\s*//' | tr -d ' "')
-AUTH_URL="$NOLUNE_URL/auth?token=$AUTH_TOKEN"
-
 if curl -sf "$NOLUNE_URL/healthz" >/dev/null 2>&1; then
     log "nolune is running on port $NOLUNE_PORT"
 
-    # Open browser with auth
+    # Open the plain URL. Authentication is entered explicitly in the client;
+    # long-lived credentials must never be placed in browser navigation.
     if [ "$PLATFORM" = "macos" ]; then
-        open "$AUTH_URL" 2>/dev/null
+        open "$NOLUNE_URL" 2>/dev/null
     elif command -v xdg-open &>/dev/null; then
-        xdg-open "$AUTH_URL" 2>/dev/null
+        xdg-open "$NOLUNE_URL" 2>/dev/null
     fi
 
     echo ""
