@@ -39,7 +39,12 @@ case "$*" in
 printf 'direct binary start\n' >> "${MOCK_CALLS:?}"
 BIN
     ;;
-  *'-fsSIL '*) printf 'location: https://github.com/triangle-int/nolune/releases/download/v0.33.0/artifact\r\n' ;;
+  *'-fsSIL '*)
+    # Real chain: latest/download -> /releases/download/<tag>/ -> signed CDN URL.
+    printf 'HTTP/2 302 \r\nlocation: https://github.com/triangle-int/nolune/releases/download/v0.33.0/artifact\r\n'
+    printf 'HTTP/2 302 \r\nlocation: https://release-assets.githubusercontent.com/github-production-release-asset/1/abc?sig=x%%2By&response-content-disposition=attachment%%3B%%20filename%%3Dartifact\r\n'
+    printf 'HTTP/2 200 \r\n'
+    ;;
   *'/healthz'*) [[ "${MOCK_HEALTHY:-1}" = 1 ]] ;;
   *'/api/health'*) exit 42 ;;
   *) ;;
@@ -235,6 +240,17 @@ fi
 assert_contains "$tmp/macos/calls" 'https://github.com/triangle-int/nolune/releases/latest/download/nolune-server-aarch64-apple-darwin'
 assert_contains "$tmp/macos/home/Library/LaunchAgents/dev.nolune.nolune.plist" '<key>NOLUNE_HOME</key>'
 assert_contains "$tmp/macos/data/bin/update" 'nolune-server-'
+if [[ "$(cat "$tmp/macos/data/bin/.version")" != v0.33.0 ]]; then
+  printf 'FAIL: recorded version is %q, expected v0.33.0\n' "$(cat "$tmp/macos/data/bin/.version")" >&2
+  exit 1
+fi
+# The tag is printed in bold, so match through the escape sequence.
+if ! grep -Fq $'downloaded \033[1mv0.33.0\033[0m' "$tmp/macos/output"; then
+  echo 'FAIL: installer did not report the resolved release tag' >&2
+  exit 1
+fi
+# Network calls must fail fast and retry instead of hanging on an unreachable github.com.
+assert_contains "$tmp/macos/calls" '--connect-timeout 15 --retry 3'
 bash -n "$tmp/macos/data/bin/update"
 MOCK_CALLS="$tmp/macos/calls" PATH="$mock_bin:$PATH" bash "$tmp/macos/data/bin/update" > "$tmp/macos/update-output"
 assert_contains "$tmp/macos/update-output" 'already at v0.33.0'
