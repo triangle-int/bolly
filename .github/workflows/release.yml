@@ -264,7 +264,8 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: nolune-desktop-${{ matrix.platform }}
-          path: desktop/src-tauri/target/**/release/bundle/**
+          # The desktop crate is a workspace member, so it builds into the root target dir.
+          path: target/**/release/bundle/**
           if-no-files-found: error
 
   # Publish only after every native artifact has been uploaded.
