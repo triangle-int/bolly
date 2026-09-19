@@ -318,10 +318,10 @@ impl ProactiveLoop {
                 continue;
             }
             let too_old = run.finished_at.unwrap_or(run.started_at) < oldest_allowed;
-            if index >= policy.retention_max || too_old {
-                if fs::remove_file(self.run_path(&run.id)).is_ok() {
-                    removed += 1;
-                }
+            if (index >= policy.retention_max || too_old)
+                && fs::remove_file(self.run_path(&run.id)).is_ok()
+            {
+                removed += 1;
             }
         }
         removed
