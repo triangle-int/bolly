@@ -1,3 +1,7 @@
+#[path = "../test-support/source_scan.rs"]
+mod source_scan;
+
+use source_scan::without_cfg_test_items;
 use std::{
     fs,
     path::{Path, PathBuf},
@@ -23,120 +27,6 @@ fn source_files(root: &Path, extensions: &[&str]) -> Vec<PathBuf> {
     visit(root, extensions, &mut files);
     files.sort();
     files
-}
-
-fn cfg_test_item_end(source: &str, marker: usize) -> usize {
-    let bytes = source.as_bytes();
-    let mut index = marker + "#[cfg(test)]".len();
-    let mut opening = None;
-
-    while index < bytes.len() {
-        match bytes[index] {
-            b'{' | b';' | b',' => {
-                opening = Some((index, bytes[index]));
-                break;
-            }
-            _ => index += 1,
-        }
-    }
-
-    let Some((opening_index, delimiter)) = opening else {
-        return bytes.len();
-    };
-    if delimiter != b'{' {
-        return opening_index + 1;
-    }
-
-    let mut depth = 0usize;
-    let mut index = opening_index;
-    let mut block_comment_depth = 0usize;
-    while index < bytes.len() {
-        if block_comment_depth > 0 {
-            if bytes.get(index..index + 2) == Some(b"/*") {
-                block_comment_depth += 1;
-                index += 2;
-            } else if bytes.get(index..index + 2) == Some(b"*/") {
-                block_comment_depth -= 1;
-                index += 2;
-            } else {
-                index += 1;
-            }
-            continue;
-        }
-
-        if bytes.get(index..index + 2) == Some(b"//") {
-            index = source[index..]
-                .find('\n')
-                .map_or(bytes.len(), |newline| index + newline + 1);
-            continue;
-        }
-        if bytes.get(index..index + 2) == Some(b"/*") {
-            block_comment_depth = 1;
-            index += 2;
-            continue;
-        }
-        if matches!(bytes[index], b'"' | b'\'') {
-            let quote = bytes[index];
-            index += 1;
-            while index < bytes.len() {
-                if bytes[index] == b'\\' {
-                    index += 2;
-                } else if bytes[index] == quote {
-                    index += 1;
-                    break;
-                } else {
-                    index += 1;
-                }
-            }
-            continue;
-        }
-        if bytes[index] == b'r' {
-            let mut cursor = index + 1;
-            while bytes.get(cursor) == Some(&b'#') {
-                cursor += 1;
-            }
-            if bytes.get(cursor) == Some(&b'"') {
-                let hashes = cursor - index - 1;
-                cursor += 1;
-                loop {
-                    let Some(relative_quote) = source[cursor..].find('"') else {
-                        return bytes.len();
-                    };
-                    cursor += relative_quote + 1;
-                    if bytes.get(cursor..cursor + hashes) == Some(&vec![b'#'; hashes]) {
-                        index = cursor + hashes;
-                        break;
-                    }
-                }
-                continue;
-            }
-        }
-
-        match bytes[index] {
-            b'{' => depth += 1,
-            b'}' => {
-                depth -= 1;
-                if depth == 0 {
-                    return index + 1;
-                }
-            }
-            _ => {}
-        }
-        index += 1;
-    }
-    bytes.len()
-}
-
-fn without_cfg_test_items(source: &str) -> String {
-    let mut production = String::with_capacity(source.len());
-    let mut cursor = 0;
-    while let Some(relative_marker) = source[cursor..].find("#[cfg(test)]") {
-        let marker = cursor + relative_marker;
-        production.push_str(&source[cursor..marker]);
-        cursor = cfg_test_item_end(source, marker);
-    }
-    production.push_str(&source[cursor..]);
-    production
 }
 
 fn allow_exact(source: &mut String, path: &str, allowed: &str, expected: usize) {

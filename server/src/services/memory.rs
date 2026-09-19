@@ -103,15 +103,6 @@ pub fn get_frozen_catalog(media: &super::media_text::MediaStore, instance_slug: 
         .clone()
 }
 
-/// Invalidate the frozen catalog for an instance.
-/// Call after context clear, compaction, or catalog rebuild.
-pub fn invalidate_frozen_catalog(instance_slug: &str) {
-    let mut guard = FROZEN_CATALOG.lock().unwrap();
-    if let Some(map) = guard.as_mut() {
-        map.remove(instance_slug);
-    }
-}
-
 /// Strictly scan the memory library through the persistent workspace capability.
 pub fn scan_library_checked(
     media: &super::media_text::MediaStore,

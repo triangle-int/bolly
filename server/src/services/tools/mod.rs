@@ -73,7 +73,6 @@ pub mod companion;
 pub mod computer;
 pub mod files;
 pub mod image;
-pub mod import_data;
 pub mod media;
 pub mod memory_tools;
 pub mod project;
@@ -659,18 +658,6 @@ pub fn build_tools(
         instance_slug,
         vector_store.clone(),
     ))));
-    {
-        let api_key = llm.api_key.clone();
-        tools.push(wrap(Box::new(import_data::ImportDataTool::new(
-            workspace_dir,
-            instance_slug,
-            llm.http.clone(),
-            &api_key,
-            events.clone(),
-            vector_store.clone(),
-        ))));
-    }
-
     // ── Email (SMTP/IMAP) ──
     for email_tool in configured_email_tools(email_accounts) {
         tools.push(wrap(email_tool));

@@ -328,12 +328,6 @@ export type ServerEvent =
 			delta: string;
 	  }
 	| {
-			type: "import_progress";
-			instance_slug: string;
-			stage: "parsing" | "extracting" | "organizing" | "writing" | "done" | "error";
-			detail: string;
-	  }
-	| {
 			type: "memory_recall";
 			instance_slug: string;
 			memories: { path: string; preview: string; score: number }[];
