@@ -33,6 +33,7 @@ fn api_router(state: &AppState) -> Router<AppState> {
         .merge(routes::memory_import::router())
         .merge(routes::agents::router())
         .merge(routes::machine_agents::router())
+        .merge(routes::session::router())
         // Removed or unknown API paths answer 404 JSON instead of the SPA shell.
         .route("/api/{*rest}", any(api_not_found))
         // Inner: admit only the canonical companion once the caller is authenticated.
@@ -70,12 +71,15 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
     let public_memory = routes::instances::public_memory_router().route_layer(
         middleware::from_fn_with_state(state.clone(), companion_boundary),
     );
+    // Browser pairing has no credential yet and no companion slug (#112).
+    let pairing = routes::session::public_router();
 
     let app = Router::new()
         .merge(health)
         .merge(routes::resources::router())
         .merge(public_files)
         .merge(public_memory)
+        .merge(pairing)
         .merge(api)
         .with_state(state);
 
@@ -97,3 +101,7 @@ mod tests;
 #[cfg(test)]
 #[path = "../../test-support/companion_boundary.rs"]
 mod companion_boundary_tests;
+
+#[cfg(test)]
+#[path = "../../test-support/session_security.rs"]
+mod session_tests;

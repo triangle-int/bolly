@@ -40,8 +40,10 @@ async function setup(desktop) {
 
 test("desktop client never converts legacy cookies/storage into navigation, media or WebSocket query tokens", async () => {
   const { api, urls } = await setup(true);
-  assert.equal(api.getAuthToken(), null);
-  assert.throws(() => api.setAuthToken("new-secret"), /desktop dashboard/);
+  assert.equal(api.isDesktopRelay(), true);
+  // Since #112 browsers pair for a cookie session; the relay must not, because
+  // it authenticates natively and strips cookies upstream.
+  await assert.rejects(api.pairBrowser("1234-5678"), /desktop dashboard/);
   for (const url of [
     (await api.mediaUrl("a", "b")).url,
     await api.uploadFileUrl("a", "b"),
@@ -54,7 +56,19 @@ test("desktop client never converts legacy cookies/storage into navigation, medi
   assert.deepEqual(urls, ["ws://127.0.0.1:1234/api/ws"]);
 });
 
-test("ordinary browser token behavior remains unchanged", async () => {
-  const { api } = await setup(false);
-  assert.equal(api.getAuthToken(), "legacy-storage");
+test("ordinary browsers hold no credential either: pairing and requests carry nothing from legacy storage", async () => {
+  const { api, urls } = await setup(false);
+  assert.equal(api.isDesktopRelay(), false);
+  // The fetch stub rejects any Authorization header or query token.
+  await api.pairBrowser("1234-5678");
+  for (const url of [
+    (await api.mediaUrl("a", "b")).url,
+    await api.uploadFileUrl("a", "b"),
+    api.exportInstanceUrl("a"),
+  ]) {
+    assert.equal(url.includes("token="), false);
+    assert.equal(url.includes("legacy"), false);
+  }
+  api.createWebSocket();
+  assert.deepEqual(urls, ["ws://127.0.0.1:1234/api/ws"]);
 });

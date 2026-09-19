@@ -460,6 +460,17 @@ async fn update_server(
         save_config_at(&candidate, &state.workspace_dir.join("config.toml"))?;
         if config.auth_token != candidate.auth_token {
             state.resources.replace(&candidate.auth_token);
+            // Rotating or clearing the API token is independent of paired
+            // browsers: their sessions keep working until revoked (#112).
+            log::info!(
+                "[config] API token {}; {} paired browser session(s) unaffected",
+                if candidate.auth_token.is_empty() {
+                    "cleared"
+                } else {
+                    "rotated"
+                },
+                state.browser_sessions.list().len()
+            );
         }
         *config = candidate;
     }

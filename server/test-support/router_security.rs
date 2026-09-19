@@ -771,23 +771,14 @@ fn recursive_resource_producer_and_consumer_regression_scan() {
                 continue;
             }
             let source = fs::read_to_string(&file).unwrap();
-            let mut source = if file.extension().and_then(|v| v.to_str()) == Some("rs") {
+            let source = if file.extension().and_then(|v| v.to_str()) == Some("rs") {
                 source_scan::without_cfg_test_items(&source)
             } else {
                 source
             };
-            // ISSUE-112 is limited to these exact WebSocket handshake implementations.
-            if file.ends_with("server/src/app/auth.rs") {
-                let start = source.find("    // ISSUE-112:").unwrap();
-                let end = source[start..].find("    let provided").unwrap() + start;
-                source.replace_range(start..end, "");
-                source = source.replace("`?token=<value>`", "WebSocket credential");
-            }
-            if file.ends_with("client/src/lib/api/client.ts") {
-                let start = source.find("// ISSUE-112:").unwrap();
-                let end = source[start..].find("\n}").unwrap() + start + 2;
-                source.replace_range(start..end, "");
-            }
+            // #112 removed the last query-credential exemptions (the WebSocket
+            // handshake now authenticates with the session cookie), so nothing
+            // is stripped before scanning.
             assert!(
                 !source.contains("?token=") && !source.contains("&token="),
                 "HTTP query credential in {}",

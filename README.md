@@ -41,7 +41,9 @@ Install the Nolune server on an always-on macOS or Linux machine. It keeps your 
 curl -fsSL https://nolune.dev/install.sh | bash
 ```
 
-Open `http://localhost:26559` and follow the onboarding.
+Open `http://localhost:26559`. The first browser has to be paired: run `nolune pair` on the machine you just installed on and enter the eight-digit code it prints. Then follow the onboarding.
+
+Paired browsers stay signed in. Review or revoke them, or mint a code for another device, under **Settings → Server**. The installer adds `~/.nolune/bin` to your `PATH`; until you open a new shell, use `~/.nolune/bin/nolune pair`.
 
 ### 2. Connect your computers
 
@@ -153,6 +155,7 @@ Everything important is stored as files under `~/.nolune`:
 ```text
 ~/.nolune/
 ├── config.toml
+├── browser_sessions.json    paired browsers (hashes only)
 └── instances/
     └── {slug}/
         ├── soul.md              personality definition
@@ -174,7 +177,7 @@ Most settings are available through the interface. Advanced configuration lives 
 | Environment variable | Description |
 |----------------------|-------------|
 | `NOLUNE_HOME` | Data directory, defaults to `~/.nolune` |
-| `NOLUNE_AUTH_TOKEN` | Authentication token override |
+| `NOLUNE_AUTH_TOKEN` | API token override. The token is for automation, the CLI and the desktop app; browsers pair for a revocable session instead and are unaffected when it changes |
 | `NOLUNE_PUBLIC_URL` | Public URL for the server |
 | `ANTHROPIC_API_KEY` | Anthropic API key override |
 | `OPENAI_API_KEY` | OpenAI API key override |
