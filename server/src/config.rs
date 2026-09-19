@@ -16,8 +16,6 @@ pub struct Config {
     #[serde(default)]
     pub static_dir: String,
     #[serde(default)]
-    pub landing_url: String,
-    #[serde(default)]
     pub llm: LlmConfig,
     #[serde(default)]
     pub embedding: EmbeddingConfig,
@@ -25,8 +23,6 @@ pub struct Config {
     pub registry_url: String,
     #[serde(default)]
     pub public_url: String,
-    #[serde(default)]
-    pub plan: String,
     #[serde(default)]
     pub mcp_servers: Vec<McpServerConfig>,
     #[serde(default)]
@@ -435,10 +431,6 @@ impl Default for ModelMode {
     }
 }
 
-fn default_heavy_multiplier() -> f32 {
-    1.7
-}
-
 #[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(from = "LegacyLlmConfig")]
 pub struct LlmConfig {
@@ -448,8 +440,6 @@ pub struct LlmConfig {
     pub tokens: LlmTokens,
     #[serde(default)]
     pub model_mode: ModelMode,
-    #[serde(default = "default_heavy_multiplier")]
-    pub heavy_multiplier: f32,
     #[serde(default)]
     pub profiles: ProviderProfiles,
     #[serde(flatten)]
@@ -464,8 +454,6 @@ struct LegacyLlmConfig {
     pub tokens: LlmTokens,
     #[serde(default)]
     pub model_mode: ModelMode,
-    #[serde(default = "default_heavy_multiplier")]
-    pub heavy_multiplier: f32,
     #[serde(default)]
     pub profiles: ProviderProfiles,
     /// Preserve legacy model overrides (including the old example config).
@@ -477,6 +465,7 @@ struct LegacyLlmConfig {
 
 impl From<LegacyLlmConfig> for LlmConfig {
     fn from(mut old: LegacyLlmConfig) -> Self {
+        old.extra.remove("heavy_multiplier");
         if let Some(model) = old.model.take().filter(|s| !s.is_empty()) {
             // Claude overrides originate from Anthropic even if the provider was
             // subsequently switched in an old config. Unknown names use that
@@ -497,7 +486,6 @@ impl From<LegacyLlmConfig> for LlmConfig {
             provider: old.provider,
             tokens: old.tokens,
             model_mode: old.model_mode,
-            heavy_multiplier: old.heavy_multiplier,
             profiles: old.profiles,
             extra: old.extra,
         }
@@ -549,12 +537,10 @@ impl Default for Config {
             port: default_port(),
             auth_token: String::new(),
             static_dir: String::new(),
-            landing_url: String::new(),
             public_url: String::new(),
             llm: LlmConfig::default(),
             embedding: EmbeddingConfig::default(),
             registry_url: default_registry_url(),
-            plan: String::new(),
             mcp_servers: Vec::new(),
             github: GithubConfig::default(),
         }
@@ -663,7 +649,6 @@ impl Default for LlmConfig {
             provider: LlmProvider::default(),
             tokens: LlmTokens::default(),
             model_mode: ModelMode::default(),
-            heavy_multiplier: default_heavy_multiplier(),
             profiles: ProviderProfiles::default(),
             extra: Default::default(),
         }
@@ -725,32 +710,53 @@ pub fn load_config() -> anyhow::Result<Config> {
     let mut config: Config = toml::from_str(&raw)?;
     ensure_workspace_layout(&workspace_root())?;
 
-    // Allow env var overrides for managed hosting
+    let document: toml::Value = toml::from_str(&raw)?;
+    let mut obsolete = Vec::new();
+    for key in ["landing_url", "plan", "landing_auth_token"] {
+        if document.get(key).is_some() {
+            obsolete.push(format!("config.{key}"));
+        }
+    }
+    if document
+        .get("llm")
+        .and_then(|value| value.get("heavy_multiplier"))
+        .is_some()
+    {
+        obsolete.push("config.llm.heavy_multiplier".to_string());
+    }
+    for key in ["LANDING_URL", "FLY_APP_NAME", "FLY_MACHINE_ID"] {
+        if env::var_os(key).is_some() {
+            obsolete.push(format!("env.{key}"));
+        }
+    }
+    if !obsolete.is_empty() {
+        log::warn!(
+            "ignoring obsolete managed control-plane settings ({}); Nolune now runs only as a self-hosted server",
+            obsolete.join(", ")
+        );
+    }
+
+    // Generic runtime override for local, remote, or container deployments.
     if let Ok(token) = env::var("NOLUNE_AUTH_TOKEN") {
         if !token.is_empty() {
             config.auth_token = token;
         }
     }
 
-    if let Ok(url) = env::var("LANDING_URL") {
-        if !url.is_empty() {
-            config.landing_url = url;
-        }
-    }
     if let Ok(url) = env::var("NOLUNE_PUBLIC_URL") {
         if !url.is_empty() {
             config.public_url = url;
         }
     }
 
-    // PORT env var override (set by Fly.io machine config)
+    // Conventional container/platform port override.
     if let Ok(port) = env::var("PORT") {
         if let Ok(p) = port.parse::<u16>() {
             config.port = p;
         }
     }
 
-    // API key overrides from env (for managed hosting)
+    // Provider credential overrides.
     if let Ok(key) = env::var("ANTHROPIC_API_KEY") {
         if !key.is_empty() {
             config.llm.tokens.anthropic = key;
@@ -818,6 +824,14 @@ pub fn serialize_config_preserving_keys(config: &Config, original: &str) -> anyh
         }
     }
     let mut document: toml::Value = toml::from_str(original)?;
+    if let Some(root) = document.as_table_mut() {
+        for obsolete in ["landing_url", "plan", "landing_auth_token"] {
+            root.remove(obsolete);
+        }
+        if let Some(llm) = root.get_mut("llm").and_then(toml::Value::as_table_mut) {
+            llm.remove("heavy_multiplier");
+        }
+    }
     // Avoid duplicate fields when an old token alias and its canonical spelling
     // would otherwise coexist after merging the serialized config.
     if let Some(tokens) = document
@@ -860,7 +874,6 @@ custom_global = "retained"
 [llm]
 provider = "{name}"
 model_mode = "fast"
-heavy_multiplier = 2.5
 model = "custom-model"
 custom_llm = "retained"
 [llm.tokens]
@@ -882,7 +895,7 @@ custom_github = "retained"
             for (key, value) in source["llm"]["tokens"].as_table().unwrap() {
                 assert_eq!(&result["llm"]["tokens"][key], value);
             }
-            for key in ["model_mode", "heavy_multiplier", "custom_llm"] {
+            for key in ["model_mode", "custom_llm"] {
                 assert_eq!(result["llm"][key], source["llm"][key]);
             }
             assert_eq!(result["custom_global"], source["custom_global"]);
@@ -1000,6 +1013,32 @@ cheap = "custom-cheap"
 }
 #[cfg(test)]
 mod tests {
+    use super::Config;
+
+    #[test]
+    fn obsolete_control_plane_fields_are_ignored_and_removed_on_save() {
+        let original = r#"
+landing_url = "https://control.example"
+plan = "unlimited"
+future_setting = "retained"
+
+[llm]
+heavy_multiplier = 2.5
+"#;
+        let config: Config = toml::from_str(original).unwrap();
+        let serialized = super::serialize_config_preserving_keys(&config, original).unwrap();
+        let value: toml::Value = toml::from_str(&serialized).unwrap();
+
+        assert!(value.get("landing_url").is_none());
+        assert!(value.get("plan").is_none());
+        assert!(value["llm"].get("heavy_multiplier").is_none());
+        assert_eq!(value["future_setting"].as_str(), Some("retained"));
+        let json = serde_json::to_value(config).unwrap();
+        assert!(json.get("landing_url").is_none());
+        assert!(json.get("plan").is_none());
+        assert!(json["llm"].get("heavy_multiplier").is_none());
+    }
+
     #[test]
     fn new_instance_and_omitted_skin_use_little_moon() {
         assert_eq!(super::InstanceConfig::default().skin, "moon");

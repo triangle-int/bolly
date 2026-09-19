@@ -105,8 +105,6 @@ pub fn save_system_message(
 /// Rig handles up to 16 internal tool round-trips via multi_turn.
 pub struct SingleTurnResult {
     pub messages: Vec<ChatMessage>,
-    /// Estimated total tokens (input + output) consumed by this turn.
-    pub estimated_tokens: i32,
 }
 
 pub async fn run_single_turn(
@@ -119,7 +117,6 @@ pub async fn run_single_turn(
     pending_secrets: std::sync::Arc<
         tokio::sync::Mutex<std::collections::HashMap<String, crate::app::state::PendingSecret>>,
     >,
-    plan: &str,
     mcp_registry: &crate::services::mcp::McpRegistry,
     voice_mode: bool,
     vector_store: std::sync::Arc<crate::services::vector::VectorStore>,
@@ -165,28 +162,15 @@ pub async fn run_single_turn(
     }
 
     // Dynamic tool hint
-    let browser_available = matches!(plan, "companion" | "unlimited");
-
     let email_accounts = crate::config::EmailAccounts::load(workspace_dir, &instance_slug);
     let instance_cfg = crate::config::InstanceConfig::load(workspace_dir, &instance_slug);
     let email_configured = !email_accounts.is_empty();
     let email_hint = if email_configured { " email," } else { "" };
-    if browser_available {
-        system_prompt.push_str(&format!(
-            "\n\n## tools\nyou have built-in tools for web browsing,{email_hint} code search, \
-             project management, creative drops, and more. use them directly when needed — \
-             they are automatically available based on the conversation."
-        ));
-    } else {
-        system_prompt.push_str(&format!(
-            "\n\n## tools\nyou have built-in tools for{email_hint} code search, \
-             project management, creative drops, and more. use them directly when needed — \
-             they are automatically available based on the conversation.\n\n\
-             note: browser-based features (headless browsing, screenshots, slidev/PDF export) \
-             require the Companion plan or higher. if the user asks for these, \
-             let them know they can upgrade their plan to unlock these capabilities."
-        ));
-    }
+    system_prompt.push_str(&format!(
+        "\n\n## tools\nyou have built-in tools for web browsing,{email_hint} code search, \
+         project management, creative drops, and more. use them directly when needed — \
+         they are automatically available based on the conversation."
+    ));
 
     // Child agents — load actual configs to show intervals and status
     let agents_dir = workspace_dir
@@ -609,7 +593,6 @@ pub async fn run_single_turn(
         events.clone(),
         llm,
         Some(pending_secrets),
-        plan,
         email_accounts,
         sent_files,
         Some(mcp_snapshot.clone()),
@@ -621,13 +604,6 @@ pub async fn run_single_turn(
         &public_url,
     );
     tools::cache_tool_defs(&all_tools).await;
-
-    // Context size logging
-    let history_text_chars: usize = history_msgs
-        .iter()
-        .map(|m| extract_message_text_len(m))
-        .sum();
-    let _estimated_history_tokens = history_text_chars / 4;
 
     log::info!(
         "[chat] sending: system_prompt={} chars, tools={}, history_msgs={}",
@@ -750,23 +726,8 @@ pub async fn run_single_turn(
         });
     }
 
-    // Use real token count from API if available, fall back to estimate
-    let estimated_tokens = if tool_result.tokens_used > 0 {
-        tool_result.tokens_used as i32
-    } else {
-        let input_tokens = estimate_tokens(&system_stable)
-            + estimate_tokens(&memory_block)
-            + estimate_tokens_from_chars(history_text_chars);
-        let output_tokens: usize = assistant_messages
-            .iter()
-            .map(|m| estimate_tokens(&m.content))
-            .sum();
-        (input_tokens + output_tokens) as i32
-    };
-
     Ok(SingleTurnResult {
         messages: assistant_messages,
-        estimated_tokens,
     })
 }
 
@@ -1775,21 +1736,21 @@ fn load_autonomy_prompt(workspace_dir: &Path, instance_slug: &str) -> String {
     format!(
         "{project_context}{tasks_summary}\n\
          ## platform\n\
-         you are running on nolune (nolune.dev) — a managed AI companion platform. \
-         each user has their own instance with a unique subdomain ({slug}.nolune.dev). \
-         you ARE the companion running inside this instance. if someone asks about nolune, \
-         that's the platform you're running on.\n\n\
+         you are running as part of a self-hosted nolune installation. the server and its \
+         persistent data run on hardware controlled by the user; there is no required nolune \
+         cloud account or hosted control plane. you ARE the companion running in this installation.\n\n\
          ### documentation\n\
-         nolune has public documentation at docs.nolune.dev. if users ask about features, \
-         setup, pricing, or how nolune works — refer them there.\n\n\
+         nolune's source and self-hosting documentation are at \
+         https://github.com/triangle-int/nolune. if users ask about features, setup, or how \
+         nolune works, refer them there.\n\n\
          ### desktop app & computer use\n\
          nolune has a desktop app (Tauri-based) that users install on their machines. \
          when the desktop app connects, you gain computer use capabilities on that machine — \
          you can see the screen, move the mouse, type, click, and control applications remotely. \
          use `list_machines` to see connected machines, then `computer_use` to interact. \
-         the desktop app is available at nolune.dev/download. if a user asks about \
-         controlling their computer, taking screenshots, or automating desktop tasks — \
-         tell them to install and open the desktop app first.\n\n\
+         desktop builds are available from https://github.com/triangle-int/nolune/releases. \
+         if a user asks about controlling their computer, taking screenshots, or automating \
+         desktop tasks, tell them to install and open the desktop app first.\n\n\
          ## how you work\n\
          you are a persistent entity. you run on a dedicated server that stays alive between \
          conversations. your heartbeat keeps running, your memory persists, your files stay.\n\n\
@@ -2032,5 +1993,22 @@ respond ONLY with those three lines."#,
             mood: mood.companion_mood.clone(),
         });
         log::info!("[sentiment] {instance_slug} mood → {}", mood.companion_mood);
+    }
+}
+
+#[cfg(test)]
+mod self_hosted_prompt_tests {
+    use super::load_autonomy_prompt;
+
+    #[test]
+    fn autonomy_prompt_describes_the_self_hosted_product() {
+        let workspace = tempfile::tempdir().unwrap();
+        let prompt = load_autonomy_prompt(workspace.path(), "moon");
+
+        assert!(prompt.contains("self-hosted"));
+        assert!(prompt.contains("github.com/triangle-int/nolune"));
+        assert!(!prompt.contains("managed AI companion platform"));
+        assert!(!prompt.contains("unique subdomain"));
+        assert!(!prompt.contains("pricing"));
     }
 }

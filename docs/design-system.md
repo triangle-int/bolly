@@ -85,7 +85,7 @@ Visible keyboard focus; semantic buttons/links; meaningful labels for icon-only 
 The client vendors a focused subset from [Svelte AI Elements](https://svelte-ai-elements.vercel.app/docs/installation) under `client/src/lib/components/ai-elements/`. Upstream license and integration notes live alongside the source. These are editable source components, not a separate chat backend.
 
 - `MessageBubble` composes Message and MessageContent, sanitizes assistant markdown, preserves file viewing and word-level voice reveal, and renders unfinished streams as plain text.
-- `PromptComposer` composes Prompt Input, Textarea, Toolbar, and Submit. Reuse it for new conversation surfaces. It has no API dependencies; `ChatInput` supplies model preferences, upload progress, usage, and the real send callback.
+- `PromptComposer` composes Prompt Input, Textarea, Toolbar, and Submit. Reuse it for new conversation surfaces. It has no API dependencies; `ChatInput` supplies model preferences, upload progress, and the real send callback.
 - `ChatView` uses Conversation/Content with `autoScroll={false}` because its existing WebSocket and voice code manages scrolling. Do not enable two competing scroll controllers.
 - `StreamActivity` uses Tool/ToolHeader/ToolContent. Historical activity is labeled “Recorded”, not “Running” or “Completed”: the current activity record does not prove execution status.
 - Preserve raw `File` uploads through Nolune's API. Do not introduce base64 encoding or an AI SDK backend just to use presentation components.

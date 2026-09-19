@@ -15,7 +15,6 @@ import type {
 	MemoryEntry,
 	Stats,
 	UploadMeta,
-	Usage,
 	ChildAgent,
 	AgentHistoryEntry,
 } from "./types.js";
@@ -203,7 +202,6 @@ export function fetchConfigStatus(): Promise<{
 	model?: string | null;
 	model_mode?: string;
 	configured_keys?: string[];
-	is_managed?: boolean;
 }> {
 	return json("/api/config/status");
 }
@@ -645,10 +643,6 @@ export function installRegistrySkill(id: string): Promise<Skill> {
 		headers: { "Content-Type": "application/json" },
 		body: JSON.stringify({ id }),
 	});
-}
-
-export function fetchUsage(): Promise<Usage> {
-	return json("/api/usage");
 }
 
 export function fetchContextStats(slug: string, chatId = "default"): Promise<ContextStats> {

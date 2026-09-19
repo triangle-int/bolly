@@ -33,12 +33,8 @@ pub struct AppState {
     pub pending_secrets: Arc<Mutex<HashMap<String, PendingSecret>>>,
     /// Connected MCP servers and their tools.
     pub mcp_registry: McpRegistry,
-    /// Shared HTTP client for landing API calls.
+    /// Shared HTTP client for provider and integration calls.
     pub http_client: reqwest::Client,
-    /// Landing server URL (empty for self-hosted).
-    pub landing_url: String,
-    /// Auth token for landing API calls.
-    pub _landing_auth_token: String,
     /// Versioned local vector store for semantic memory search.
     pub vector_store: Arc<VectorStore>,
     /// Registry of connected Tauri agent machines (for computer use).
@@ -49,7 +45,7 @@ pub struct AppState {
 // Suggested MCP servers are listed in the client's Extensions settings.
 
 impl AppState {
-    pub async fn new(mut config: Config) -> Self {
+    pub async fn new(config: Config) -> Self {
         let (events, _) = broadcast::channel(4096);
         let llm = LlmBackend::from_config(&config);
 
@@ -62,32 +58,10 @@ impl AppState {
         }
 
         let http_client = reqwest::Client::new();
-        let landing_url = config.landing_url.clone();
-        let landing_auth_token = config.auth_token.clone();
 
         // Open the local derived vector index.
         let vector_store =
             VectorStore::connect_with_config(&config::workspace_root(), &config).await;
-
-        // Fetch plan from landing API if configured
-        if !landing_url.is_empty() && !landing_auth_token.is_empty() {
-            match http_client
-                .get(format!("{landing_url}/api/internal/plan"))
-                .bearer_auth(&landing_auth_token)
-                .send()
-                .await
-            {
-                Ok(res) => {
-                    if let Ok(body) = res.json::<serde_json::Value>().await {
-                        if let Some(plan) = body["plan"].as_str() {
-                            log::info!("fetched plan from landing API: {plan}");
-                            config.plan = plan.to_string();
-                        }
-                    }
-                }
-                Err(e) => log::warn!("failed to fetch plan from landing API: {e}"),
-            }
-        }
 
         Self {
             config: Arc::new(RwLock::new(config)),
@@ -98,8 +72,6 @@ impl AppState {
             pending_secrets: Arc::new(Mutex::new(HashMap::new())),
             mcp_registry,
             http_client,
-            landing_url,
-            _landing_auth_token: landing_auth_token,
             vector_store: Arc::new(vector_store),
             machine_registry: MachineRegistry::new(),
         }
@@ -153,12 +125,6 @@ impl AppState {
             );
         }
 
-        // Preserve plan from API — it's not in config.toml
-        let mut cfg = self.config.write().await;
-        let plan = cfg.plan.clone();
-        *cfg = new_config;
-        if cfg.plan.is_empty() {
-            cfg.plan = plan;
-        }
+        *self.config.write().await = new_config;
     }
 }

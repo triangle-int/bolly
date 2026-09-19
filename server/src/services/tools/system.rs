@@ -2140,66 +2140,6 @@ impl Tool for RequestSecretTool {
 }
 
 // ---------------------------------------------------------------------------
-// restart_machine — restart through a service manager when available
-// ---------------------------------------------------------------------------
-
-pub struct RestartMachineTool;
-
-#[derive(Deserialize, JsonSchema)]
-pub struct RestartMachineArgs {
-    /// Reason for the restart (logged for audit).
-    pub reason: String,
-}
-
-impl Tool for RestartMachineTool {
-    const NAME: &'static str = "restart_machine";
-    type Error = ToolExecError;
-    type Args = RestartMachineArgs;
-    type Output = String;
-
-    async fn definition(&self, _prompt: String) -> ToolDefinition {
-        ToolDefinition {
-            name: "restart_machine".into(),
-            description: "Restart the server process through its service manager. \
-                Use when the environment is broken, MCP servers are stuck, \
-                or after an update that needs a clean restart."
-                .into(),
-            parameters: openai_schema::<RestartMachineArgs>(),
-        }
-    }
-
-    async fn call(&self, args: Self::Args) -> Result<Self::Output, Self::Error> {
-        log::info!("[restart] reason: {}", args.reason);
-
-        // Try Fly.io internal API first (if running on Fly)
-        if let (Ok(app), Ok(machine_id)) = (
-            std::env::var("FLY_APP_NAME"),
-            std::env::var("FLY_MACHINE_ID"),
-        ) {
-            log::info!("[restart] Fly.io: {app}/{machine_id}");
-            let client = reqwest::Client::new();
-            let url =
-                format!("http://_api.internal:4280/v1/apps/{app}/machines/{machine_id}/restart");
-            if let Ok(resp) = client.post(&url).send().await {
-                if resp.status().is_success() {
-                    return Ok("restart initiated via Fly.io — back in ~10 seconds".into());
-                }
-            }
-        }
-
-        // Fallback: exit process, rely on supervisor to restart
-        // (for example, systemd Restart=always)
-        log::info!("[restart] exiting process (supervisor will restart)");
-        tokio::spawn(async {
-            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            std::process::exit(0);
-        });
-
-        Ok("server shutting down — supervisor will restart it in a few seconds".into())
-    }
-}
-
-// ---------------------------------------------------------------------------
 // export_profile — create a tar.gz of the instance for the user to download
 // ---------------------------------------------------------------------------
 

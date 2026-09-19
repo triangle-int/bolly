@@ -278,11 +278,9 @@ pub async fn run_agent_loop(
         iteration += 1;
 
         let config_path = config::config_path();
-        let (plan, heavy_multiplier, fast_model_name, google_ai_key, public_url) = {
+        let (fast_model_name, google_ai_key, public_url) = {
             let cfg = state.config.read().await;
             (
-                cfg.plan.clone(),
-                cfg.llm.heavy_multiplier,
                 cfg.llm.fast_model_name().to_string(),
                 cfg.llm.tokens.google_ai.clone(),
                 cfg.public_url.clone(),
@@ -322,7 +320,6 @@ pub async fn run_agent_loop(
             &effective_llm,
             state.events.clone(),
             state.pending_secrets.clone(),
-            &plan,
             &state.mcp_registry,
             voice_mode,
             state.vector_store.clone(),
@@ -359,19 +356,6 @@ pub async fn run_agent_loop(
                         message: msg.clone(),
                     });
                     // TTS handled by background subscriber task
-                }
-
-                // Record usage for rate limiting — heavy model costs ~10x more
-                if !state.landing_url.is_empty() {
-                    let recorded = if used_heavy {
-                        (turn.estimated_tokens as f32 * heavy_multiplier) as i32
-                    } else {
-                        turn.estimated_tokens
-                    };
-                    log::info!(
-                        "[usage] {instance_slug} used {recorded} tokens (raw={}, heavy={used_heavy})",
-                        turn.estimated_tokens
-                    );
                 }
 
                 // Check if a new user message arrived while agent was processing
