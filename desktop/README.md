@@ -13,7 +13,7 @@ Tokens live in the OS credential store, through the maintained
 [Keyring 4 API](https://docs.rs/keyring/4.2.0/keyring/v1/index.html): macOS Keychain
 Services, Windows Credential Manager, or Linux Secret Service (for example GNOME
 Keyring/KWallet). Linux requires an available, unlocked Secret Service session;
-there is no plaintext fallback. Flatpak includes permission to reach that service.
+there is no plaintext fallback.
 `settings.json` contains only the server URL, an opaque random secret reference,
 and opaque cleanup references for recovering interrupted saves. Recording
 preferences remain separate. Editing with a blank token keeps the saved secret.

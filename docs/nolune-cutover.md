@@ -32,8 +32,6 @@ aliases, data migration, or desktop upgrade compatibility.
 - Smoke-test fresh macOS/Linux installs, service startup, configuration at
   `~/.nolune`, authentication, updates, and uninstall. Verify desktop connections
   and credential storage on each supported desktop platform.
-- The Flatpak manifest remains a packaging template: set its release asset URL
-  and SHA-256 to a real Nolune Debian artifact before distributing it.
 
 ## External skills registry
 
