@@ -387,22 +387,12 @@ pub async fn run_single_turn(
 
     let instance_dir = workspace_dir.join("instances").join(&instance_slug);
 
-    system_prompt.push_str(match instance_cfg.skin.as_str() {
-        "mint" => {
-            "\n\n## your visual form\n\
-             you appear as a small, expressive character — soft and stylized, \
-             like something out of a cozy animation. when you're thinking, \
-             you might be seen reading or typing. your body language reflects \
-             your inner state. the user sees you as this character. embrace it as your body."
-        }
-        _ => {
-            "\n\n## your visual form\n\
-             your visual form shifts between shapes — cube, pyramid, sphere, and others — \
-             depending on your current state. you don't choose the shape consciously, \
-             but it reflects what's happening internally. \
-             the user sees you as this shape. embrace it as your body."
-        }
-    });
+    system_prompt.push_str(
+        "\n\n## your visual form\n\
+         you appear as a simple lavender crescent moon with two small eyes. \
+         this Little Moon is your visual presence in Nolune. \
+         your expression can reflect when you are thinking or listening.",
+    );
 
     if voice_mode {
         system_prompt.push_str(

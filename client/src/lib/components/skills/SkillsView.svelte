@@ -15,6 +15,7 @@
 
 	let skills = $state<Skill[]>([]);
 	let loading = $state(true);
+	let loadError = $state("");
 	let showCreate = $state(false);
 
 	let mode = $state<"installed" | "browse">("installed");
@@ -25,9 +26,11 @@
 
 	async function load() {
 		loading = true;
+		loadError = "";
 		try {
 			skills = await fetchSkills();
 		} catch {
+			loadError = "Could not load skills. Please try again.";
 			toast.error("failed to load skills");
 		} finally {
 			loading = false;
@@ -94,9 +97,12 @@
 
 <div class="skills-container">
 	{#if loading}
+		<span class="sr-only" role="status">Loading skills…</span>
 		<div class="skills-loading">
 			<div class="skills-loading-dot"></div>
 		</div>
+	{:else if loadError}
+		<div class="load-error" role="alert"><p>{loadError}</p><button class="nl-button-secondary" onclick={load}>Try again</button></div>
 	{:else}
 		<div class="skills-header">
 			<div class="skills-tabs">
@@ -105,7 +111,7 @@
 					class:skills-tab-active={mode === "installed"}
 					onclick={() => switchMode("installed")}
 				>
-					installed
+					Installed
 					<span class="skills-tab-count">{skills.length}</span>
 				</button>
 				<button
@@ -113,12 +119,12 @@
 					class:skills-tab-active={mode === "browse"}
 					onclick={() => switchMode("browse")}
 				>
-					browse
+					Browse
 				</button>
 			</div>
 			{#if mode === "installed"}
 				<button class="skills-add" onclick={() => (showCreate = true)}>
-					+ new skill
+					+ New skill
 				</button>
 			{/if}
 		</div>
@@ -127,7 +133,7 @@
 			{#if skills.length === 0}
 				<div class="skills-empty">
 					<div class="skills-empty-icon">+</div>
-					<p class="skills-empty-text">no skills yet</p>
+					<p class="skills-empty-text">No skills yet</p>
 					<p class="skills-empty-hint">
 						skills extend what your companion can do — teach it new
 						behaviors, workflows, and abilities.
@@ -150,7 +156,7 @@
 				</div>
 			{:else if registryError}
 				<div class="skills-empty">
-					<p class="skills-empty-text">couldn't load registry</p>
+					<p class="skills-empty-text">Could not load registry</p>
 					<p class="skills-empty-hint">{registryError}</p>
 					<button
 						class="skills-add"
@@ -159,12 +165,12 @@
 							loadRegistry();
 						}}
 					>
-						retry
+						Retry
 					</button>
 				</div>
 			{:else if registry.length === 0}
 				<div class="skills-empty">
-					<p class="skills-empty-text">no community skills available</p>
+					<p class="skills-empty-text">No community skills available</p>
 					<p class="skills-empty-hint">
 						the registry is empty — check back later or set a custom
 						registry URL in config.toml
@@ -193,6 +199,7 @@
 </div>
 
 <style>
+	.load-error { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; min-height: 220px; padding: 24px; color: var(--text-secondary); text-align: center; }
 	.skills-container {
 		height: 100%;
 		overflow-y: auto;
@@ -210,8 +217,8 @@
 		width: 6px;
 		height: 6px;
 		border-radius: 50%;
-		background: oklch(0.78 0.12 75 / 30%);
-		animation: pulse-alive 2s ease-in-out infinite;
+		background: var(--card);
+		animation:none;
 	}
 
 	.skills-header {
@@ -226,15 +233,15 @@
 	.skills-tabs {
 		display: flex;
 		gap: 0.125rem;
-		background: oklch(var(--ink) / 3%);
+		background: var(--card);
 		border-radius: 0.5rem;
 		padding: 0.15rem;
 	}
 
 	.skills-tab {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.75rem;
-		color: oklch(0.78 0.12 75 / 35%);
+		color: var(--text-secondary);
 		background: none;
 		border: none;
 		padding: 0.3rem 0.65rem;
@@ -248,25 +255,25 @@
 	}
 
 	.skills-tab:hover {
-		color: oklch(0.78 0.12 75 / 45%);
+		color: var(--text-secondary);
 	}
 
 	.skills-tab-active {
-		color: oklch(0.78 0.12 75 / 60%);
-		background: oklch(0.78 0.12 75 / 8%);
+		color: var(--text-secondary);
+		background: var(--card);
 	}
 
 	.skills-tab-count {
 		font-size: 0.75rem;
-		color: oklch(0.78 0.12 75 / 30%);
+		color: var(--text-secondary);
 	}
 
 	.skills-add {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.75rem;
-		color: oklch(0.78 0.12 75 / 40%);
-		background: oklch(0.78 0.12 75 / 5%);
-		border: 1px solid oklch(0.78 0.12 75 / 10%);
+		color: var(--text-secondary);
+		background: var(--card);
+		border: 1px solid var(--border);
 		padding: 0.35rem 0.75rem;
 		border-radius: 0.5rem;
 		cursor: pointer;
@@ -275,9 +282,9 @@
 	}
 
 	.skills-add:hover {
-		color: oklch(0.78 0.12 75 / 65%);
-		background: oklch(0.78 0.12 75 / 10%);
-		border-color: oklch(0.78 0.12 75 / 28%);
+		color: var(--text-secondary);
+		background: var(--card);
+		border-color: var(--border);
 	}
 
 	.skills-empty {
@@ -291,21 +298,21 @@
 	}
 
 	.skills-empty-icon {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 1.5rem;
-		color: oklch(0.78 0.12 75 / 28%);
-		animation: pulse-alive 3s ease-in-out infinite;
+		color: var(--text-secondary);
+		animation:none;
 	}
 
 	.skills-empty-text {
 		font-family: var(--font-display);
 		font-size: 0.95rem;
-		color: oklch(0.78 0.12 75 / 50%);
+		color: var(--text-secondary);
 	}
 
 	.skills-empty-hint {
 		font-size: 0.75rem;
-		color: oklch(0.78 0.12 75 / 35%);
+		color: var(--text-secondary);
 		max-width: 30ch;
 		line-height: 1.5;
 	}
@@ -326,4 +333,24 @@
 			padding: 1.5rem 1rem;
 		}
 	}
+
+/* Little Moon surfaces, controls, and readable content. */
+
+.skills-container { padding: 32px; }
+.skills-header, .skills-grid { max-width: 1040px; margin-left: auto; margin-right: auto; }
+.skills-add { background: var(--primary); color: var(--primary-foreground); border-color: var(--primary); padding: 8px 16px; }
+.skills-add:hover { background: var(--primary); color: var(--primary-foreground); filter: brightness(1.06); }
+.skills-tab { min-height: 44px; font-size: 14px; padding: 8px 16px; }
+.skills-tab-active { color: var(--primary); background: var(--accent); }
+.skills-empty-text { font: 400 28px var(--font-display); color: var(--foreground); }
+.skills-empty-hint { font-size: 14px; max-width: 42ch; }
+@media (max-width: 640px) { .skills-container { padding: 20px; } }
+
+button { min-height: 44px; font-family: var(--font-body); }
+
+button:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+.skills-loading-dot { background: var(--primary); }
 </style>

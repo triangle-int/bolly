@@ -1,7 +1,11 @@
 <script lang="ts">
 	import type { ChatMessage } from "$lib/api/types.js";
 	import { uploadFileUrl } from "$lib/api/client.js";
-	import { openFile, detectFileType } from "$lib/stores/fileviewer.svelte.js";
+	import { openFile } from "$lib/stores/fileviewer.svelte.js";
+	import Message from "$lib/components/ai-elements/message/core/message.svelte";
+	import MessageContent from "$lib/components/ai-elements/message/core/message-content.svelte";
+	import { FileText } from "@lucide/svelte";
+	import DOMPurify from "dompurify";
 	import { Marked } from "marked";
 
 	const MEDIA_EXTS = /\.(jpg|jpeg|png|gif|webp|svg|bmp|ico|mp4|webm|mov|ogg|mp3|wav|m4a|flac|aac|pdf)(\?|$)/i;
@@ -114,7 +118,7 @@
 	);
 
 	const html = $derived(
-		isUser || streaming ? textContent : (marked.parse(textContent) as string)
+		isUser || streaming ? "" : DOMPurify.sanitize(marked.parse(textContent) as string)
 	);
 
 	/** Words for voice reveal (only used when speaking). */
@@ -135,552 +139,42 @@
 		return "";
 	});
 </script>
-
-<div
-	class="msg"
-	class:msg-user={isUser}
-	class:msg-companion={!isUser}
-	class:msg-consecutive={isConsecutive()}
-	class:msg-active={!isUser && active}
-	data-mood={mood}
-	style="animation-delay: {Math.min(index * 20, 300)}ms"
->
-	{#if isUser}
-		{#if textContent}
-			<div class="msg-content msg-content-user">
-				{textContent}
-			</div>
-		{/if}
-		{#if attachments.length > 0}
-			<div class="msg-attachments" class:msg-attachments-right={isUser}>
-				{#each attachments as a (a.id)}
-					{#if a.isImage}
-						<!-- svelte-ignore a11y_no_static_element_interactions -->
-						<!-- svelte-ignore a11y_click_events_have_key_events -->
-						<span class="msg-img-link" onclick={() => openFile(a.url, a.name)}>
-							<img src={a.url} alt={a.name} class="msg-img" loading="lazy" />
-						</span>
-					{:else}
-						<!-- svelte-ignore a11y_no_static_element_interactions -->
-						<!-- svelte-ignore a11y_click_events_have_key_events -->
-						<span class="msg-file-link" onclick={() => openFile(a.url, a.name)}>
-							<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" class="w-3 h-3">
-								<path d="M4 1h5.5L13 4.5V14a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z" stroke-linejoin="round"/>
-								<path d="M9 1v4h4" stroke-linejoin="round"/>
-							</svg>
-							<span>{a.name}</span>
-						</span>
-					{/if}
-				{/each}
-			</div>
-		{/if}
-	{:else}
-		<div class="msg-companion-wrap">
-			{#if !isConsecutive()}
-				<div class="msg-presence-line">
-					<span class="msg-presence-dot"></span>
-				</div>
-			{/if}
-			{#if textContent}
-				{#if speaking}
-					<div class="msg-content msg-content-companion msg-voice-reveal">
-						{#each words as word, wi}
-							{#if word.trim()}
-								{@const wordIdx = words.slice(0, wi + 1).filter(w => w.trim()).length}
-								<span class="voice-word" class:voice-word-visible={wordIdx <= revealCount}>{word}</span>
-							{:else}
-								{@html word.includes("\n") ? "<br>" : " "}
-							{/if}
-						{/each}
-					</div>
-				{:else}
-					<!-- svelte-ignore a11y_no_static_element_interactions -->
-					<!-- svelte-ignore a11y_click_events_have_key_events -->
-					<div class="msg-content msg-content-companion prose" class:msg-streaming={streaming} onclick={handleProseClick}>
-						{@html html}
-					</div>
-				{/if}
-			{/if}
-			{#if attachments.length > 0}
-				<div class="msg-attachments">
-					{#each attachments as a (a.id)}
-						{#if a.isImage}
-							<!-- svelte-ignore a11y_no_static_element_interactions -->
-							<!-- svelte-ignore a11y_click_events_have_key_events -->
-							<span class="msg-img-link" onclick={() => openFile(a.url, a.name)}>
-								<img src={a.url} alt={a.name} class="msg-img" loading="lazy" />
-							</span>
-						{:else}
-							<!-- svelte-ignore a11y_no_static_element_interactions -->
-							<!-- svelte-ignore a11y_click_events_have_key_events -->
-							<span class="msg-file-link" onclick={() => openFile(a.url, a.name)}>
-								<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.2" class="w-3 h-3">
-									<path d="M4 1h5.5L13 4.5V14a1 1 0 01-1 1H4a1 1 0 01-1-1V2a1 1 0 011-1z" stroke-linejoin="round"/>
-									<path d="M9 1v4h4" stroke-linejoin="round"/>
-								</svg>
-								<span>{a.name}</span>
-							</span>
-						{/if}
-					{/each}
-				</div>
-			{/if}
-		</div>
-	{/if}
-	{#if isLastInGroup()}
-		<span class="msg-time" class:msg-time-right={!isUser}>
-			{time()}
-			{#if modelLabel && !isUser}
-				<span class="msg-model" class:msg-model-fast={modelLabel === "fast"}>{modelLabel}</span>
-			{/if}
-		</span>
-	{/if}
+<div class="msg" class:consecutive={isConsecutive()} data-mood={mood} data-active={active}>
+ <Message from={isUser ? 'user' : 'assistant'} class={isUser ? "max-w-full items-end gap-1" : "max-w-full gap-1"}>
+  {#if !isUser && !isConsecutive()}
+   <div class="author"><img src="/skins/moon/character.svg" width="22" height="22" alt="" /><span>Nolune</span></div>
+  {/if}
+  {#if textContent}
+   <MessageContent class={isUser ? 'max-w-[90%] rounded-xl border border-border bg-accent px-4 py-3 text-foreground' : 'max-w-full rounded-xl border border-border bg-card px-4 py-3 text-foreground'}>
+    {#if speaking && !isUser}
+     <div class="text voice" aria-label={textContent}>
+      {#each words as word, wi}
+       {#if word.trim()}{@const wordIdx = words.slice(0, wi + 1).filter(w => w.trim()).length}<span aria-hidden="true" class="voice-word" class:visible={wordIdx <= revealCount}>{word}</span>{:else}{word}{/if}
+      {/each}
+     </div>
+    {:else if isUser || streaming}
+     <div class="text plain" class:streaming>{textContent}</div>
+    {:else}
+     <!-- Delegates file links to the file viewer; regular links retain native behavior. -->
+     <!-- svelte-ignore a11y_no_static_element_interactions -->
+     <!-- svelte-ignore a11y_click_events_have_key_events -->
+     <div class="text prose" onclick={handleProseClick}>{@html html}</div>
+    {/if}
+   </MessageContent>
+  {/if}
+  {#if attachments.length}
+   <div class="attachments">
+    {#each attachments as attachment (attachment.id)}
+     <button type="button" onclick={() => openFile(attachment.url, attachment.name)} class:picture={attachment.isImage} aria-label={`Open ${attachment.name}`}>
+      {#if attachment.isImage}<img src={attachment.url} alt={attachment.name} loading="lazy" />{:else}<FileText size={16} /><span>{attachment.name}</span>{/if}
+     </button>
+    {/each}
+   </div>
+  {/if}
+  {#if isLastInGroup()}<span class="time">{time()}{#if modelLabel && !isUser}<span class="model">{modelLabel}</span>{/if}</span>{/if}
+ </Message>
 </div>
-
 <style>
-	.msg {
-		padding: 0.5rem 0;
-		animation: msg-enter 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
-		--msg-accent: oklch(0.6 0.1 190);
-		--msg-glass-bg: var(--surface-elevated);
-		--msg-glass-border: oklch(0.5 0.06 200 / 10%);
-	}
-
-	/* mood accents — teal-metallic spectrum */
-	.msg[data-mood="focused"] { --msg-accent: oklch(0.68 0.1 180); }
-	.msg[data-mood="playful"] { --msg-accent: oklch(0.72 0.12 160); }
-	.msg[data-mood="loving"] { --msg-accent: oklch(0.7 0.1 20); }
-	.msg[data-mood="warm"] { --msg-accent: oklch(0.72 0.1 65); }
-	.msg[data-mood="reflective"] { --msg-accent: oklch(0.6 0.08 280); }
-	.msg[data-mood="excited"] { --msg-accent: oklch(0.75 0.12 85); }
-	.msg[data-mood="curious"] { --msg-accent: oklch(0.7 0.1 200); }
-	.msg[data-mood="creative"] { --msg-accent: oklch(0.72 0.12 155); }
-	.msg[data-mood="melancholy"] { --msg-accent: oklch(0.5 0.06 250); }
-	.msg[data-mood="sad"] { --msg-accent: oklch(0.45 0.05 245); }
-	.msg[data-mood="anxious"] { --msg-accent: oklch(0.6 0.1 30); }
-	.msg[data-mood="energetic"] { --msg-accent: oklch(0.75 0.14 100); }
-	.msg[data-mood="peaceful"] { --msg-accent: oklch(0.65 0.08 170); }
-	.msg[data-mood="tired"] { --msg-accent: oklch(0.45 0.03 260); }
-
-	.msg-consecutive {
-		padding: 0.125rem 0;
-	}
-
-	@keyframes msg-enter {
-		from {
-			opacity: 0;
-			transform: translateY(10px) scale(0.97);
-			filter: blur(4px);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0) scale(1);
-			filter: blur(0);
-		}
-	}
-
-	/* --- Glass card base --- */
-
-	.msg-content {
-		font-size: 0.875rem;
-		line-height: 1.7;
-		letter-spacing: 0.005em;
-		max-width: 85%;
-		word-break: break-word;
-		overflow-wrap: anywhere;
-		overflow-x: hidden;
-	}
-
-	.msg-content-user {
-		white-space: pre-wrap;
-	}
-
-	/* User messages: right-aligned, subdued glass */
-	.msg-user {
-		display: flex;
-		flex-direction: column;
-		align-items: flex-end;
-		padding-right: 0.25rem;
-	}
-
-	.msg-content-user {
-		position: relative;
-		color: var(--text-muted);
-		font-family: var(--font-body);
-		font-size: 0.8125rem;
-		padding: 0.55rem 0.9rem;
-		background: linear-gradient(
-			160deg,
-			oklch(var(--ink) / 6%) 0%,
-			oklch(0.5 0.02 220 / 8%) 40%,
-			oklch(var(--ink) / 3%) 100%
-		);
-		backdrop-filter: blur(20px) saturate(150%) brightness(1.05);
-		-webkit-backdrop-filter: blur(20px) saturate(150%) brightness(1.05);
-		border: 1px solid oklch(var(--ink) / 8%);
-		border-top-color: oklch(var(--ink) / 15%);
-		border-radius: 14px 14px 4px 14px;
-		max-width: 65%;
-		box-shadow:
-			0 2px 8px oklch(var(--shade) / 12%),
-			inset 0 1px 0 oklch(var(--ink) / 8%),
-			inset 0 -1px 0 oklch(var(--shade) / 5%);
-		overflow: hidden;
-	}
-
-	/* Specular highlight sweep */
-	.msg-content-user::before {
-		content: "";
-		position: absolute;
-		top: 0;
-		left: 8%;
-		right: 8%;
-		height: 1px;
-		background: linear-gradient(90deg, transparent, oklch(var(--ink) / 25%), transparent);
-		pointer-events: none;
-	}
-
-	/* Companion wrap: left-aligned */
-	.msg-companion-wrap {
-		display: flex;
-		flex-direction: column;
-		gap: 0.28rem;
-		align-items: flex-start;
-	}
-
-	.msg-presence-line {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.38rem;
-		font-family: var(--font-mono);
-		font-size: 0.6rem;
-		letter-spacing: 0.1em;
-		text-transform: uppercase;
-		color: var(--text-faint);
-		padding-right: 0.5rem;
-	}
-
-	.msg-presence-dot {
-		width: 5px;
-		height: 5px;
-		border-radius: 999px;
-		background: var(--msg-accent);
-		box-shadow: 0 0 10px var(--msg-accent), 0 0 20px oklch(from var(--msg-accent) l c h / 25%);
-		animation: presence-beacon 3s ease-in-out infinite;
-	}
-
-	/* Companion liquid glass card */
-	.msg-content-companion {
-		position: relative;
-		color: var(--text-primary);
-		font-family: var(--font-body);
-		padding: 0.7rem 1rem;
-		background: linear-gradient(
-			145deg,
-			oklch(var(--ink) / 7%) 0%,
-			var(--msg-glass-bg) 35%,
-			oklch(var(--ink) / 4%) 70%,
-			oklch(0.5 0.03 200 / 10%) 100%
-		);
-		backdrop-filter: blur(24px) saturate(170%) brightness(1.08);
-		-webkit-backdrop-filter: blur(24px) saturate(170%) brightness(1.08);
-		border: 1px solid oklch(var(--ink) / 10%);
-		border-top-color: oklch(var(--ink) / 20%);
-		border-bottom-color: oklch(var(--shade) / 8%);
-		border-radius: 16px 16px 4px 16px;
-		max-width: 80%;
-		box-shadow:
-			0 2px 16px oklch(var(--shade) / 20%),
-			0 8px 32px oklch(var(--shade) / 8%),
-			inset 0 1px 0 oklch(var(--ink) / 10%),
-			inset 0 -1px 0 oklch(var(--shade) / 6%);
-		transition: border-color 0.4s ease, box-shadow 0.4s ease;
-		overflow: hidden;
-	}
-
-	/* Specular highlight — bright line along top edge */
-	.msg-content-companion::before {
-		content: "";
-		position: absolute;
-		top: 0;
-		left: 10%;
-		right: 10%;
-		height: 1px;
-		background: linear-gradient(90deg, transparent, oklch(var(--ink) / 35%), oklch(var(--ink) / 15%), transparent);
-		pointer-events: none;
-	}
-
-	/* Secondary inner refraction glow */
-	.msg-content-companion::after {
-		content: "";
-		position: absolute;
-		top: 0;
-		left: 0;
-		right: 0;
-		height: 50%;
-		background: linear-gradient(
-			180deg,
-			oklch(var(--ink) / 4%) 0%,
-			transparent 100%
-		);
-		pointer-events: none;
-		border-radius: 16px 16px 0 0;
-	}
-
-	.msg-active .msg-content-companion {
-		border-color: oklch(var(--ink) / 15%);
-		border-top-color: oklch(var(--ink) / 25%);
-		box-shadow:
-			0 4px 24px oklch(var(--shade) / 25%),
-			0 0 30px oklch(0.6 0.08 200 / 8%),
-			inset 0 1px 0 oklch(var(--ink) / 12%),
-			inset 0 -1px 0 oklch(var(--shade) / 6%);
-	}
-
-	/* --- Prose (markdown) --- */
-
-	.prose :global(p) {
-		margin: 0.25em 0;
-	}
-	.prose :global(p:first-child) {
-		margin-top: 0;
-	}
-	.prose :global(p:last-child) {
-		margin-bottom: 0;
-	}
-	.prose :global(h1),
-	.prose :global(h2),
-	.prose :global(h3),
-	.prose :global(h4) {
-		font-family: var(--font-display);
-		color: var(--text-primary);
-		margin: 0.75em 0 0.25em;
-		line-height: 1.3;
-		font-weight: 600;
-	}
-	.prose :global(h1) { font-size: 1.15em; }
-	.prose :global(h2) { font-size: 1.05em; }
-	.prose :global(h3) { font-size: 0.95em; }
-	.prose :global(strong) {
-		color: var(--text-primary);
-		font-weight: 600;
-	}
-	.prose :global(em) {
-		font-style: italic;
-		color: var(--text-secondary);
-	}
-	.prose :global(a) {
-		color: var(--text-link);
-		text-decoration: underline;
-		text-decoration-color: oklch(0.7 0.1 190 / 30%);
-		text-underline-offset: 2px;
-		transition: text-decoration-color 0.2s;
-	}
-	.prose :global(a:hover) {
-		text-decoration-color: oklch(0.7 0.1 190 / 70%);
-	}
-	.prose :global(code) {
-		font-family: var(--font-mono);
-		font-size: 0.8em;
-		background: oklch(var(--shade) / 8%);
-		padding: 0.15em 0.35em;
-		border-radius: 4px;
-		color: var(--text-link);
-		border: 1px solid oklch(0.5 0.04 200 / 10%);
-	}
-	.prose :global(pre) {
-		background: oklch(0.07 0.015 210 / 60%);
-		backdrop-filter: blur(8px);
-		-webkit-backdrop-filter: blur(8px);
-		border: 1px solid oklch(0.4 0.04 200 / 12%);
-		border-radius: 10px;
-		padding: 0.75em 1em;
-		margin: 0.5em 0;
-		overflow-x: auto;
-		max-width: 100%;
-	}
-	.prose :global(pre code) {
-		background: none;
-		padding: 0;
-		font-size: 0.78em;
-		color: var(--text-secondary);
-		line-height: 1.5;
-		border: none;
-	}
-	.prose :global(ul),
-	.prose :global(ol) {
-		margin: 0.35em 0;
-		padding-left: 1.4em;
-	}
-	.prose :global(li) {
-		margin: 0.15em 0;
-	}
-	.prose :global(li::marker) {
-		color: oklch(0.6 0.08 200 / 40%);
-	}
-	.prose :global(blockquote) {
-		border-left: 2px solid oklch(0.6 0.08 200 / 30%);
-		padding-left: 0.75em;
-		margin: 0.4em 0;
-		color: var(--text-secondary);
-		font-style: italic;
-	}
-	.prose :global(hr) {
-		border: none;
-		border-top: 1px solid oklch(0.5 0.06 200 / 12%);
-		margin: 0.75em 0;
-	}
-	.prose :global(table) {
-		border-collapse: collapse;
-		margin: 0.5em 0;
-		font-size: 0.82em;
-		width: 100%;
-	}
-	.prose :global(th),
-	.prose :global(td) {
-		border: 1px solid oklch(0.4 0.04 200 / 15%);
-		padding: 0.35em 0.6em;
-		text-align: left;
-	}
-	.prose :global(th) {
-		background: oklch(0.1 0.02 200 / 35%);
-		color: var(--text-primary);
-		font-weight: 600;
-	}
-
-
-	.prose :global(img) {
-		max-width: 100%;
-		border-radius: 8px;
-		margin: 0.4em 0;
-		border: 1px solid oklch(0.5 0.06 200 / 12%);
-	}
-
-	/* --- Timestamp --- */
-	.msg-time {
-		display: block;
-		font-size: 0.5625rem;
-		color: var(--text-timestamp);
-		margin-top: 0.2rem;
-		font-family: var(--font-mono);
-		letter-spacing: 0.04em;
-		transition: color 0.3s ease;
-	}
-	.msg:hover .msg-time {
-		color: var(--text-muted);
-	}
-	.msg-time-right {
-		text-align: left;
-	}
-
-	/* --- Attachments --- */
-	.msg-attachments {
-		display: flex;
-		flex-wrap: wrap;
-		gap: 0.375rem;
-		margin-top: 0.25rem;
-		max-width: 85%;
-	}
-	.msg-attachments-right {
-		justify-content: flex-start;
-	}
-
-	/* Markdown images in prose */
-	.prose :global(img) {
-		max-width: 320px;
-		max-height: 280px;
-		border-radius: 10px;
-		object-fit: cover;
-		border: 1px solid oklch(0.5 0.06 200 / 12%);
-		margin: 0.35em 0;
-		cursor: pointer;
-	}
-	.prose :global(img:hover) {
-		opacity: 0.85;
-	}
-
-	.msg-img-link {
-		display: block;
-		border-radius: 10px;
-		overflow: hidden;
-		transition: opacity 0.2s ease;
-	}
-	.msg-img-link:hover {
-		opacity: 0.85;
-	}
-
-	.msg-img {
-		max-width: 280px;
-		max-height: 200px;
-		border-radius: 10px;
-		object-fit: cover;
-		border: 1px solid oklch(0.5 0.06 200 / 12%);
-	}
-
-	.msg-file-link {
-		display: inline-flex;
-		align-items: center;
-		gap: 0.35rem;
-		padding: 0.3rem 0.6rem;
-		border-radius: 8px;
-		background: oklch(0.14 0.02 200 / 25%);
-		backdrop-filter: blur(12px);
-		-webkit-backdrop-filter: blur(12px);
-		border: 1px solid oklch(0.5 0.06 200 / 10%);
-		color: oklch(0.65 0.08 200 / 60%);
-		font-family: var(--font-mono);
-		font-size: 0.75rem;
-		text-decoration: none;
-		transition: all 0.2s ease;
-	}
-	.msg-file-link:hover {
-		background: oklch(0.14 0.02 200 / 40%);
-		color: oklch(0.75 0.1 200 / 85%);
-		border-color: oklch(0.5 0.06 200 / 18%);
-	}
-
-	.msg-model {
-		display: inline-block;
-		margin-left: 0.3rem;
-		padding: 0 0.25rem;
-		border-radius: 3px;
-		font-size: 0.5rem;
-		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		background: oklch(0.55 0.08 200 / 18%);
-		color: oklch(0.58 0.06 200 / 65%);
-		vertical-align: middle;
-	}
-	.msg-model-fast {
-		background: oklch(0.65 0.1 170 / 18%);
-		color: oklch(0.65 0.08 170 / 65%);
-	}
-	.msg:hover .msg-model {
-		color: oklch(0.60 0.08 200 / 80%);
-	}
-	.msg:hover .msg-model-fast {
-		color: oklch(0.68 0.1 170 / 80%);
-	}
-
-	/* --- Voice word reveal --- */
-	.msg-voice-reveal {
-		font-family: var(--font-body);
-		color: var(--text-primary);
-		padding: 0.7rem 1rem;
-		background: linear-gradient(135deg, var(--msg-glass-bg) 0%, oklch(0.1 0.018 220 / 20%) 100%);
-		backdrop-filter: blur(20px) saturate(140%);
-		-webkit-backdrop-filter: blur(20px) saturate(140%);
-		border: 1px solid var(--msg-glass-border);
-		border-radius: 16px 16px 4px 16px;
-		max-width: 80%;
-		box-shadow: 0 2px 12px oklch(var(--shade) / 18%), inset 0 1px 0 oklch(var(--ink) / 3%);
-	}
-
-	.voice-word {
-		opacity: 0.06;
-		transition: opacity 0.18s ease;
-	}
-
-	.voice-word-visible {
-		opacity: 1;
-	}
+ .msg{padding:12px 0;min-width:0}.consecutive{padding-top:0}.author{display:flex;align-items:center;gap:8px;margin:0 0 6px;font-size:12px;color:var(--text-secondary)}.text{font:400 15px/1.7 var(--font-body);overflow-wrap:anywhere;min-width:0;max-width:100%}.plain,.voice{white-space:pre-wrap}.time{font-size:11px;color:var(--text-timestamp);padding:4px 0}.model{margin-left:8px;color:var(--primary)}.attachments{display:flex;flex-wrap:wrap;gap:8px;max-width:100%}.attachments button{display:flex;align-items:center;gap:8px;min-height:44px;padding:8px 12px;border:1px solid var(--border);border-radius:8px;background:var(--card);color:var(--text-link);font-size:13px;max-width:100%;overflow-wrap:anywhere}.attachments .picture{padding:0;overflow:hidden}.attachments img{max-width:min(280px,100%);max-height:240px;object-fit:cover}.voice-word{opacity:.12;transition:opacity .18s ease}.voice-word.visible{opacity:1}
+ .prose :global(p){margin:.35em 0}.prose :global(p:first-child){margin-top:0}.prose :global(p:last-child){margin-bottom:0}.prose :global(h1),.prose :global(h2),.prose :global(h3){font:500 1.15em/1.4 var(--font-body);margin:1em 0 .4em}.prose :global(a){color:var(--text-link);text-decoration:underline;text-underline-offset:3px}.prose :global(code){font-family:var(--font-mono);font-size:.85em;background:var(--background);padding:.15em .3em;border-radius:4px}.prose :global(pre){background:var(--background);border:1px solid var(--border);border-radius:8px;padding:12px;overflow:auto;max-width:100%;margin:12px 0}.prose :global(pre code){padding:0;background:none}.prose :global(ul){list-style:disc;padding-left:24px}.prose :global(ol){list-style:decimal;padding-left:24px}.prose :global(blockquote){border-left:2px solid var(--primary);padding-left:12px;color:var(--text-secondary);margin:12px 0}.prose :global(table){display:block;overflow-x:auto;border-collapse:collapse;max-width:100%;margin:12px 0}.prose :global(th),.prose :global(td){border:1px solid var(--border);padding:8px;text-align:left}.prose :global(img){max-width:100%;max-height:320px;object-fit:contain;border-radius:8px;cursor:pointer}.prose :global(hr){border-top:1px solid var(--border);margin:16px 0}@media(prefers-reduced-motion:reduce){.voice-word{transition:none}}
 </style>

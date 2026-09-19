@@ -5,34 +5,12 @@
 
 	const slug = $derived($page.params.slug!);
 
-	import { SKINS, clipSrc } from "$lib/stores/skin.svelte.js";
+	import { SKINS } from "$lib/stores/skin.svelte.js";
 
-	let skinId = $state("orb");
+	let skinId = $state("moon");
 	let thinking = $state(false);
 	let recording = $state(false);
-	let videoEl: HTMLVideoElement | undefined = $state();
-
 	const skin = $derived(SKINS.find(s => s.id === skinId) ?? SKINS[0]);
-	const clips = $derived(skin.clips);
-	let thinkingIdx = $state(0);
-	const currentClip = $derived(thinking ? (clips.thinking[thinkingIdx] ?? clips.idle) : clips.idle);
-	const currentSrc = $derived(clipSrc(currentClip));
-	const isLooping = $derived(!thinking);
-
-	// Apply video source
-	$effect(() => {
-		if (!skin.avatar && videoEl && currentSrc) {
-			videoEl.src = currentSrc;
-			videoEl.loop = isLooping;
-			videoEl.play().catch(() => {});
-		}
-	});
-
-	function handleEnded() {
-		if (thinking) {
-			thinkingIdx = Math.floor(Math.random() * clips.thinking.length);
-		}
-	}
 
 	onMount(() => {
 		let mounted = true;
@@ -62,19 +40,7 @@
 
 <div class="overlay">
 	<div class="pip">
-		{#if skin.avatar}
-			<img class="pip-video" src={thinking ? skin.avatar.thinking : skin.avatar.idle} alt={thinking ? "Nolune is thinking" : "Nolune"} />
-		{:else}
-		<!-- svelte-ignore a11y_media_has_caption -->
-		<video
-			bind:this={videoEl}
-			class="pip-video"
-			muted
-			playsinline
-			autoplay
-			onended={handleEnded}
-		></video>
-		{/if}
+		<img class="pip-video" src={thinking ? skin.avatar.thinking : skin.avatar.idle} alt={thinking ? "Nolune is thinking" : "Nolune"} />
 		{#if recording}
 			<div class="pip-rec"></div>
 		{/if}
@@ -103,10 +69,9 @@
 		height: 56px;
 		border-radius: 50%;
 		overflow: hidden;
-		background: oklch(0.06 0.02 260 / 90%);
-		border: 2px solid oklch(0.78 0.12 75 / 30%);
-		box-shadow: 0 2px 16px oklch(0 0 0 / 60%),
-		            0 0 24px oklch(0.78 0.12 75 / 8%);
+		background: var(--card);
+		border: 2px solid var(--primary);
+		box-shadow:none;
 		animation: breathe 4s ease-in-out infinite;
 	}
 
@@ -128,10 +93,10 @@
 		width: 12px;
 		height: 12px;
 		border-radius: 50%;
-		background: oklch(0.62 0.25 25);
-		box-shadow: 0 0 8px oklch(0.62 0.25 25 / 80%);
+		background: var(--destructive);
+		box-shadow:none;
 		animation: rec-pulse 1.5s ease-in-out infinite;
-		border: 2px solid oklch(0.06 0.02 260);
+		border: 2px solid var(--card);
 	}
 
 	@keyframes rec-pulse {

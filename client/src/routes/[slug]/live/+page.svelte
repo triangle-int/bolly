@@ -8,6 +8,7 @@
 	let imgSrc = $state("");
 	let connected = $state(false);
 	let lastUpdate = $state("");
+	let loading = $state(true);
 
 	onMount(() => {
 		let active = true;
@@ -33,148 +34,50 @@
 				} catch {
 					connected = false;
 				}
+				loading = false;
 				await new Promise(r => setTimeout(r, 1000));
 			}
 		}
 
 		poll();
-		return () => { active = false; };
+		return () => { active = false; if (imgSrc) URL.revokeObjectURL(imgSrc); };
 	});
 </script>
 
 <div class="live-page">
 	<div class="live-header">
+		<h1>Live screen</h1>
 		<div class="live-indicator" class:live-active={connected && imgSrc}>
 			<div class="live-dot"></div>
-			<span class="live-label">{connected ? "LIVE" : "OFFLINE"}</span>
+			<span class="live-label">{loading ? "Connecting" : connected ? (imgSrc ? "Live" : "Waiting for screen") : "Offline"}</span>
 		</div>
 		{#if lastUpdate}
-			<span class="live-time">{lastUpdate}</span>
+			<span class="live-time">Last frame {lastUpdate}</span>
 		{/if}
 	</div>
 
 	<div class="live-feed">
-		{#if imgSrc}
+		{#if loading}
+			<p role="status">Connecting to your desktop…</p>
+		{:else if imgSrc}
 			<img class="live-img" src={imgSrc} alt="Live screen" />
 		{:else if connected}
 			<div class="live-waiting">
 				<div class="live-pulse"></div>
-				<p>waiting for first frame...</p>
+				<p>Waiting for the first frame…</p>
 			</div>
 		{:else}
 			<div class="live-offline">
-				<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" opacity="0.25">
+				<svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" aria-hidden="true">
 					<rect x="2" y="3" width="20" height="14" rx="2"/><path d="M8 21h8M12 17v4"/>
 				</svg>
-				<p>no desktop connected</p>
-				<p class="live-hint">open the desktop app and enable screen recording</p>
+				<p>No screen available</p>
+				<p class="live-hint">Check the connection, then open the desktop app and enable screen recording.</p>
 			</div>
 		{/if}
 	</div>
 </div>
 
 <style>
-	.live-page {
-		height: 100%;
-		display: flex;
-		flex-direction: column;
-		padding: 1.5rem;
-	}
-
-	.live-header {
-		display: flex;
-		align-items: center;
-		gap: 1rem;
-		margin-bottom: 1rem;
-	}
-
-	.live-indicator {
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-		padding: 0.25rem 0.6rem;
-		border-radius: 1rem;
-		background: oklch(var(--shade) / 6%);
-		border: 1px solid oklch(var(--shade) / 8%);
-	}
-
-	.live-dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: oklch(var(--ink) / 20%);
-	}
-
-	.live-active .live-dot {
-		background: oklch(0.65 0.22 25);
-		box-shadow: 0 0 6px oklch(0.65 0.22 25 / 60%);
-		animation: pulse 1.5s ease-in-out infinite;
-	}
-
-	@keyframes pulse {
-		0%, 100% { opacity: 1; }
-		50% { opacity: 0.4; }
-	}
-
-	.live-label {
-		font-family: var(--font-mono);
-		font-size: 0.62rem;
-		letter-spacing: 0.1em;
-		font-weight: 600;
-		color: oklch(var(--ink) / 40%);
-	}
-
-	.live-active .live-label {
-		color: oklch(0.65 0.22 25);
-	}
-
-	.live-time {
-		font-family: var(--font-mono);
-		font-size: 0.6rem;
-		color: oklch(var(--ink) / 20%);
-	}
-
-	.live-feed {
-		flex: 1;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		border-radius: 0.75rem;
-		overflow: hidden;
-		background: oklch(var(--shade) / 4%);
-		border: 1px solid oklch(var(--shade) / 6%);
-	}
-
-	.live-img {
-		width: 100%;
-		height: 100%;
-		object-fit: contain;
-	}
-
-	.live-waiting, .live-offline {
-		display: flex;
-		flex-direction: column;
-		align-items: center;
-		gap: 0.5rem;
-		color: oklch(var(--ink) / 25%);
-		font-size: 0.75rem;
-	}
-
-	.live-pulse {
-		width: 8px;
-		height: 8px;
-		border-radius: 50%;
-		background: oklch(var(--ink) / 15%);
-		animation: pulse 2s ease-in-out infinite;
-	}
-
-	.live-hint {
-		font-size: 0.65rem;
-		color: oklch(var(--ink) / 15%);
-		margin: 0;
-	}
-
-	.live-offline p {
-		margin: 0;
-	}
+.live-page{height:100%;display:flex;flex-direction:column;padding:32px;gap:24px;overflow:auto}.live-header{display:flex;align-items:center;gap:16px;flex-wrap:wrap}.live-header h1{font:500 28px/1.2 var(--font-body);color:var(--foreground);margin-right:auto}.live-indicator{display:flex;align-items:center;gap:8px;border:1px solid var(--border);padding:6px 12px;border-radius:8px;background:var(--card);font-size:13px;color:var(--text-muted)}.live-dot,.live-pulse{width:8px;height:8px;border-radius:50%;background:var(--text-muted)}.live-active .live-dot,.live-pulse{background:var(--primary)}.live-active{color:var(--primary)}.live-time{font-size:12px;color:var(--text-muted)}.live-feed{flex:1;min-height:240px;display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:16px;background:var(--card);overflow:hidden;color:var(--text-muted)}.live-img{width:100%;height:100%;object-fit:contain}.live-waiting,.live-offline{display:flex;flex-direction:column;align-items:center;gap:16px;padding:32px;text-align:center;font-size:16px}.live-hint{font-size:14px;max-width:380px;color:var(--text-muted)}@media(max-width:640px){.live-page{padding:20px}.live-header h1{width:100%}}
 </style>

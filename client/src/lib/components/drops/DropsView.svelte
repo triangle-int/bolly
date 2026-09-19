@@ -13,15 +13,18 @@
 
 	let drops = $state<Drop[]>([]);
 	let loading = $state(true);
+	let loadError = $state("");
 	let expandedId = $state<string | null>(null);
 
 	const ws = getWebSocket();
 
 	async function load() {
 		loading = true;
+		loadError = "";
 		try {
 			drops = await fetchDrops(slug);
 		} catch {
+			loadError = "Could not load drops. Please try again.";
 			toast.error("failed to load drops");
 		} finally {
 			loading = false;
@@ -88,13 +91,16 @@
 
 <div class="drops-container">
 	{#if loading}
+		<span class="sr-only" role="status">Loading drops…</span>
 		<div class="drops-loading">
 			<div class="drops-loading-dot"></div>
 		</div>
+	{:else if loadError}
+		<div class="load-error" role="alert"><p>{loadError}</p><button class="nl-button-secondary" onclick={load}>Try again</button></div>
 	{:else if drops.length === 0}
 		<div class="drops-empty">
-			<div class="drops-empty-icon">~</div>
-			<p class="drops-empty-text">no drops yet</p>
+			<img class="drops-empty-icon" src="/skins/moon/character.svg" alt="" width="64" height="64" />
+			<p class="drops-empty-text">No drops yet</p>
 			<p class="drops-empty-hint">
 				your companion creates drops autonomously — ideas, poems, observations, reflections.
 				they appear here as they come.
@@ -120,6 +126,7 @@
 </div>
 
 <style>
+	.load-error { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; min-height: 220px; padding: 24px; color: var(--text-secondary); text-align: center; }
 	.drops-container {
 		height: 100%;
 		overflow-y: auto;
@@ -138,7 +145,7 @@
 		height: 6px;
 		border-radius: 50%;
 		background: var(--text-muted);
-		animation: pulse-alive 2s ease-in-out infinite;
+		animation:none;
 	}
 
 	.drops-empty {
@@ -152,10 +159,10 @@
 	}
 
 	.drops-empty-icon {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 1.5rem;
 		color: var(--text-muted);
-		animation: pulse-alive 3s ease-in-out infinite;
+		animation:none;
 	}
 
 	.drops-empty-text {
@@ -176,8 +183,8 @@
 	}
 
 	.drops-count {
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-family: var(--font-body);
+		font-size: 0.75rem;
 		color: var(--text-muted);
 		letter-spacing: 0.05em;
 	}
@@ -196,4 +203,20 @@
 			padding: 1.5rem 1rem;
 		}
 	}
+
+/* Little Moon surfaces, controls, and readable content. */
+
+.drops-container { padding: 32px; }
+.drops-empty-text { font: 400 28px var(--font-display); color: var(--foreground); }
+.drops-empty-hint { font-size: 14px; max-width: 42ch; }
+.drops-count { font-size: 20px; color: var(--foreground); }
+@media (max-width: 640px) { .drops-container { padding: 20px; } }
+
+button { min-height: 44px; font-family: var(--font-body); }
+
+button:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+.drops-loading-dot { background: var(--primary); }
 </style>

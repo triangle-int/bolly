@@ -183,7 +183,7 @@ fn default_imap_port() -> u16 {
 /// Per-instance configuration stored at `instances/{slug}/instance.toml`.
 /// Holds settings that are specific to one user/instance, such as GitHub token.
 /// Takes precedence over global `config.toml` for the same fields.
-#[derive(Debug, Clone, Deserialize, Serialize, Default)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 pub struct InstanceConfig {
     #[serde(default)]
     pub github: GithubConfig,
@@ -193,7 +193,7 @@ pub struct InstanceConfig {
     /// Whether voice mode (TTS) is enabled. Default: false.
     #[serde(default)]
     pub voice_enabled: bool,
-    /// Visual skin for this instance (e.g. "orb", "mint"). Default: "orb".
+    /// Visual skin for this instance. Default: "moon" (Little Moon).
     #[serde(default = "default_skin")]
     pub skin: String,
     /// Whether to record the user's screen between heartbeats and analyze it.
@@ -203,7 +203,19 @@ pub struct InstanceConfig {
 }
 
 fn default_skin() -> String {
-    "orb".to_string()
+    "moon".to_string()
+}
+
+impl Default for InstanceConfig {
+    fn default() -> Self {
+        Self {
+            github: GithubConfig::default(),
+            elevenlabs_voice_id: String::new(),
+            voice_enabled: false,
+            skin: default_skin(),
+            screen_recording: false,
+        }
+    }
 }
 
 impl InstanceConfig {
@@ -993,6 +1005,13 @@ cheap = "custom-cheap"
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn new_instance_and_omitted_skin_use_little_moon() {
+        assert_eq!(super::InstanceConfig::default().skin, "moon");
+        let parsed: super::InstanceConfig = toml::from_str("").unwrap();
+        assert_eq!(parsed.skin, "moon");
+    }
+
     use super::InstanceConfig;
 
     #[test]

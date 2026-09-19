@@ -17,37 +17,36 @@
 	} = $props();
 
 	const moodColors: Record<string, string> = {
-		calm: "oklch(0.70 0.08 220)",
-		curious: "oklch(0.75 0.12 200)",
-		excited: "oklch(0.80 0.16 75)",
-		warm: "oklch(0.78 0.12 75)",
-		happy: "oklch(0.82 0.14 95)",
-		joyful: "oklch(0.85 0.16 85)",
-		reflective: "oklch(0.65 0.08 260)",
-		contemplative: "oklch(0.60 0.06 270)",
-		melancholy: "oklch(0.55 0.08 250)",
-		sad: "oklch(0.50 0.06 260)",
-		worried: "oklch(0.60 0.10 40)",
-		anxious: "oklch(0.65 0.12 30)",
-		playful: "oklch(0.78 0.15 140)",
-		mischievous: "oklch(0.75 0.14 150)",
-		focused: "oklch(0.70 0.10 230)",
-		tired: "oklch(0.55 0.04 260)",
-		peaceful: "oklch(0.72 0.06 180)",
-		loving: "oklch(0.72 0.14 0)",
-		tender: "oklch(0.70 0.10 350)",
-		creative: "oklch(0.78 0.16 310)",
-		energetic: "oklch(0.82 0.18 65)",
+		calm: "var(--primary)",
+		curious: "var(--primary)",
+		excited: "var(--primary)",
+		warm: "var(--primary)",
+		happy: "var(--primary)",
+		joyful: "var(--primary)",
+		reflective: "var(--primary)",
+		contemplative: "var(--primary)",
+		melancholy: "var(--primary)",
+		sad: "var(--primary)",
+		worried: "var(--primary)",
+		anxious: "var(--primary)",
+		playful: "var(--primary)",
+		mischievous: "var(--primary)",
+		focused: "var(--primary)",
+		tired: "var(--primary)",
+		peaceful: "var(--primary)",
+		loving: "var(--primary)",
+		tender: "var(--primary)",
+		creative: "var(--primary)",
+		energetic: "var(--primary)",
 	};
 
-	const accentColor = $derived(moodColors[drop.mood] ?? "oklch(0.78 0.12 75)");
+	const accentColor = $derived(moodColors[drop.mood] ?? "var(--primary)");
 </script>
 
-<button
+<article
 	class="drop-card"
 	class:drop-card-expanded={expanded}
-	style="--accent: {accentColor}"
-	onclick={onexpand}
+	style="--drop-accent: {accentColor}"
 >
 	<div class="drop-card-header">
 		<span class="drop-card-icon">{icon}</span>
@@ -55,7 +54,7 @@
 		<span class="drop-card-time">{time}</span>
 	</div>
 
-	<h3 class="drop-card-title">{drop.title}</h3>
+	<h3 class="drop-card-title"><button class="card-expand" aria-expanded={expanded} onclick={onexpand}>{drop.title}</button></h3>
 
 	{#if drop.image_url}
 		<img class="drop-card-image" src={drop.image_url} alt={drop.title} loading="lazy" />
@@ -73,17 +72,15 @@
 	{/if}
 
 	{#if expanded}
-		<span
-			role="button"
-			tabindex="0"
+		<button
+			type="button"
 			class="drop-card-delete"
 			onclick={(e) => { e.stopPropagation(); ondelete(); }}
-			onkeydown={(e) => { if (e.key === "Enter") { e.stopPropagation(); ondelete(); } }}
 		>
-			delete
-		</span>
+			Delete
+		</button>
 	{/if}
-</button>
+</article>
 
 <style>
 	.drop-card {
@@ -93,18 +90,18 @@
 		gap: 0.5rem;
 		padding: 1rem 1.125rem;
 		border-radius: 0.75rem;
-		background: oklch(var(--shade) / 8%);
-		border: 1px solid oklch(var(--shade) / 6%);
+		background: var(--card);
+		border: 1px solid var(--border);
 		cursor: pointer;
 		transition: all 0.3s cubic-bezier(0.16, 1, 0.3, 1);
 		text-align: left;
 		width: 100%;
-		animation: drop-emerge 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
+		animation: none;
 	}
 
 	@keyframes drop-emerge {
 		from {
-			opacity: 0;
+			opacity: 1;
 			transform: translateY(8px);
 		}
 		to {
@@ -114,14 +111,14 @@
 	}
 
 	.drop-card:hover {
-		background: oklch(var(--shade) / 12%);
-		border-color: color-mix(in oklch, var(--accent) 15%, transparent);
-		box-shadow: 0 0 20px color-mix(in oklch, var(--accent) 8%, transparent);
+		background: var(--card);
+		border-color: var(--border);
+		box-shadow: none;
 	}
 
 	.drop-card-expanded {
-		border-color: color-mix(in oklch, var(--accent) 20%, transparent);
-		box-shadow: 0 0 30px color-mix(in oklch, var(--accent) 10%, transparent);
+		border-color: var(--border);
+		box-shadow: none;
 	}
 
 	.drop-card-header {
@@ -131,24 +128,24 @@
 	}
 
 	.drop-card-icon {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.8rem;
-		color: var(--accent, oklch(0.78 0.12 75));
+		color: var(--text-secondary);
 		opacity: 0.7;
 	}
 
 	.drop-card-kind {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.75rem;
 		color: var(--text-muted);
 		letter-spacing: 0.06em;
-		text-transform: uppercase;
+		text-transform: none;
 	}
 
 	.drop-card-time {
 		margin-left: auto;
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-family: var(--font-body);
+		font-size: 0.75rem;
 		color: var(--text-muted);
 	}
 
@@ -196,8 +193,8 @@
 		display: flex;
 		align-items: center;
 		gap: 0.35rem;
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-family: var(--font-body);
+		font-size: 0.75rem;
 		color: var(--text-muted);
 		margin-top: 0.25rem;
 	}
@@ -211,9 +208,9 @@
 
 	.drop-card-delete {
 		align-self: flex-end;
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		color: oklch(0.60 0.18 25 / 60%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--destructive);
 		background: none;
 		border: none;
 		cursor: pointer;
@@ -223,7 +220,25 @@
 	}
 
 	.drop-card-delete:hover {
-		color: oklch(0.60 0.18 25 / 90%);
-		background: oklch(0.60 0.18 25 / 10%);
+		color: var(--destructive);
+		background: var(--card);
 	}
+
+/* Little Moon surfaces, controls, and readable content. */
+
+.drop-card { padding: 24px; border-radius: 16px; background: var(--card); border-color: var(--border); }
+.drop-card:hover, .drop-card-expanded { background: var(--card); border-color: var(--primary); box-shadow: none; }
+.drop-card-title { font: 500 18px var(--font-body); }
+.drop-card-content { font-size: 14px; line-height: 1.65; }
+.drop-card-icon, .drop-card-mood-dot, .drop-card-image { opacity: 1; }
+.drop-card-delete { min-height: 44px; display: inline-flex; align-items: center; padding: 8px 12px; color: var(--destructive); }
+.drop-card-delete:hover { color: var(--destructive); background: var(--accent); }
+
+button { min-height: 44px; font-family: var(--font-body); }
+
+button:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+.card-expand { color: var(--foreground); text-align: left; background: none; border: none; padding: 0; cursor: pointer; font: inherit; }
 </style>

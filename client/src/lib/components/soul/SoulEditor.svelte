@@ -97,27 +97,27 @@
 		{#if view === "templates"}
 			<button
 				onclick={() => (view = "editor")}
-				class="flex h-7 w-7 items-center justify-center rounded-md text-muted-foreground/60 transition-colors hover:bg-muted/50 hover:text-foreground"
+				class="flex h-11 w-11 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted/50 hover:text-foreground"
 				disabled={!soul?.exists}
 			>
 				<ChevronLeft class="h-4 w-4" />
 			</button>
 		{:else}
-			<div class="flex h-7 w-7 items-center justify-center rounded-lg bg-warm/10">
-				<Sparkles class="h-3.5 w-3.5 text-warm" />
+			<div class="flex h-11 w-11 items-center justify-center rounded-lg bg-accent">
+				<Sparkles class="h-3.5 w-3.5 text-primary" />
 			</div>
 		{/if}
 
 		<div class="flex-1">
 			<h2 class="font-display text-sm font-semibold tracking-tight">
-				{view === "templates" ? "choose a soul" : "soul"}
+				{view === "templates" ? "Choose a soul" : "Soul"}
 			</h2>
-			<p class="text-[11px] text-muted-foreground/50">
+			<p class="text-[13px] text-muted-foreground">
 				{view === "templates"
-					? "pick a personality template"
+					? "Pick a personality template"
 					: soul?.exists
-						? "defines who your companion is"
-						: "no soul yet"}
+						? "Defines who your companion is"
+						: "No soul yet"}
 			</p>
 		</div>
 
@@ -139,7 +139,7 @@
 				<button
 					onclick={save}
 					disabled={saving}
-					class="flex items-center gap-1.5 rounded-md bg-warm px-2.5 py-1.5 text-xs font-medium text-warm-foreground transition-colors hover:bg-warm/90 disabled:opacity-50"
+					class="flex items-center gap-1.5 min-h-11 rounded-lg bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90 disabled:opacity-50"
 				>
 					<Save class="h-3 w-3" />
 					{saving ? "saving..." : "save"}
@@ -147,7 +147,7 @@
 			{/if}
 
 			{#if saved && !dirty}
-				<span class="text-xs text-emerald-400/80">saved</span>
+				<span class="text-xs text-primary">saved</span>
 			{/if}
 
 			<button onclick={onclose} class="soul-header-btn ml-1" title="Close">
@@ -174,15 +174,15 @@
 					>
 						<div class="flex items-start gap-3">
 							<div
-								class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-warm/8"
+								class="mt-0.5 flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-accent"
 							>
-								<Sparkles class="h-4 w-4 text-warm/60" />
+								<Sparkles class="h-4 w-4 text-primary" />
 							</div>
 							<div class="text-left">
 								<p class="font-display text-sm font-medium text-foreground">
 									{template.name}
 								</p>
-								<p class="mt-0.5 text-xs text-muted-foreground/60">
+								<p class="mt-0.5 text-xs text-muted-foreground">
 									{template.description}
 								</p>
 							</div>
@@ -203,10 +203,10 @@
 			<div
 				class="flex items-center justify-between border-t border-border/40 px-4 py-2"
 			>
-				<span class="text-[11px] text-muted-foreground/40">
+				<span class="text-[13px] text-muted-foreground">
 					markdown &middot; {editContent.length} chars
 				</span>
-				<span class="text-[11px] text-muted-foreground/40">
+				<span class="text-[13px] text-muted-foreground">
 					{#if dirty}unsaved changes{:else}&nbsp;{/if}
 				</span>
 			</div>
@@ -235,16 +235,16 @@
 
 	.soul-header-btn {
 		display: flex;
-		height: 1.75rem;
-		width: 1.75rem;
+		height: 44px;
+		width: 44px;
 		align-items: center;
 		justify-content: center;
 		border-radius: 0.375rem;
-		color: oklch(var(--muted-foreground) / 0.6);
+		color: var(--text-secondary);
 		transition: all 0.15s ease;
 	}
 	.soul-header-btn:hover {
-		background: oklch(var(--muted) / 0.5);
+		background: var(--accent);
 		color: var(--foreground);
 	}
 
@@ -253,7 +253,7 @@
 		resize: none;
 		padding: 1.25rem;
 		font-family: ui-monospace, SFMono-Regular, "SF Mono", Menlo, monospace;
-		font-size: 0.8125rem;
+		font-size: 1rem;
 		line-height: 1.7;
 		color: var(--foreground);
 		background: transparent;
@@ -261,25 +261,32 @@
 		tab-size: 2;
 	}
 	.soul-textarea::placeholder {
-		color: oklch(var(--muted-foreground) / 0.2);
+		color: var(--text-muted);
 	}
 
 	.soul-template-card {
 		width: 100%;
 		border-radius: 0.75rem;
-		border: 1px solid oklch(0.78 0.12 75 / 10%);
-		background: oklch(0.78 0.12 75 / 3%);
+		border: 1px solid var(--border);
+		background: var(--card);
 		padding: 0.875rem 1rem;
 		cursor: pointer;
 		transition: all 0.2s ease;
 	}
 	.soul-template-card:hover {
-		border-color: oklch(0.78 0.12 75 / 35%);
-		background: oklch(0.78 0.12 75 / 7%);
-		box-shadow: 0 0 20px -5px oklch(0.78 0.12 75 / 8%);
+		border-color: var(--primary);
+		background: var(--accent);
+		box-shadow: none;
 	}
 	.soul-template-card:disabled {
 		opacity: 0.5;
 		cursor: wait;
 	}
+
+    .soul-panel { background: var(--card); min-width: 0; }
+    .soul-panel > div:first-child { flex-wrap: wrap; gap: 8px; }
+    .soul-textarea { background: var(--background); min-height: 160px; }
+    .soul-textarea:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
+    .soul-textarea::placeholder { opacity: 1; }
+    .soul-template-card { padding: 16px; border-radius: 12px; }
 </style>

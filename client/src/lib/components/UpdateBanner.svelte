@@ -2,7 +2,7 @@
 	import { onDestroy } from "svelte";
 	import { checkUpdate, applyUpdate, getUpdateChannel, setUpdateChannel, type UpdateCheck } from "$lib/api/client.js";
 	import { play } from "$lib/sounds.js";
-	import { getSkinStore, clipSrc } from "$lib/stores/skin.svelte.js";
+	import { getSkinStore } from "$lib/stores/skin.svelte.js";
 
 	let updateInfo = $state<UpdateCheck | null>(null);
 	let updating = $state(false);
@@ -85,153 +85,25 @@
 	<div class="update-bar">
 		<button class="update-pill" onclick={doUpdate}>
 			<span class="update-dot"></span>
-			<span class="update-label">update available</span>
+			<span class="update-label">Update available</span>
 		</button>
 	</div>
 {:else if updating}
 	<div class="update-bar">
 		<div class="update-pill update-pill-active">
 			<span class="update-spinner"></span>
-			<span class="update-label">updating...</span>
+			<span class="update-label">Updating…</span>
 		</div>
 	</div>
 {/if}
 
 {#if showReborn}
 	<div class="reborn-overlay">
-		{#if skinStore.skin.avatar}
-			<img class="reborn-video" src={skinStore.skin.avatar.idle} alt="Nolune is ready" />
-		{:else}
-			<video class="reborn-video" src={clipSrc(skinStore.skin.clips.reborn)} autoplay muted playsinline></video>
-		{/if}
-		<div class="reborn-text">meet the new me</div>
+		<img class="reborn-video" src={skinStore.skin.avatar.idle} alt="Nolune is ready" />
+		<div class="reborn-text">A little more possibility.</div>
 	</div>
 {/if}
 
 <style>
-	.update-bar {
-		display: flex;
-		justify-content: center;
-		padding: 0.4rem 0;
-		background: oklch(0.65 0.15 145 / 4%);
-		border-bottom: 1px solid oklch(0.65 0.15 145 / 10%);
-		animation: bar-in 0.4s ease both;
-	}
-
-	@keyframes bar-in {
-		from { opacity: 0; transform: translateY(-100%); }
-		to { opacity: 1; transform: translateY(0); }
-	}
-
-	.update-pill {
-		display: flex;
-		align-items: center;
-		gap: 0.4rem;
-		padding: 0.3rem 0.75rem;
-		border-radius: 999px;
-		border: 1px solid oklch(0.65 0.15 145 / 25%);
-		background: oklch(0.65 0.15 145 / 8%);
-		cursor: pointer;
-		transition: all 0.25s ease;
-		flex-shrink: 0;
-	}
-
-	.update-pill:hover {
-		background: oklch(0.65 0.15 145 / 15%);
-		border-color: oklch(0.65 0.15 145 / 40%);
-	}
-
-	.update-pill-active {
-		cursor: default;
-		border-color: oklch(0.6 0.08 240 / 20%);
-		background: oklch(0.6 0.08 240 / 6%);
-	}
-
-	.update-dot {
-		width: 6px;
-		height: 6px;
-		border-radius: 50%;
-		background: oklch(0.65 0.15 145);
-		animation: pulse-dot 2s ease-in-out infinite;
-	}
-
-	@keyframes pulse-dot {
-		0%, 100% { opacity: 1; transform: scale(1); }
-		50% { opacity: 0.5; transform: scale(0.8); }
-	}
-
-	.update-spinner {
-		width: 10px;
-		height: 10px;
-		border-radius: 50%;
-		border: 1.5px solid oklch(0.6 0.08 240 / 20%);
-		border-top-color: oklch(0.6 0.08 240 / 60%);
-		animation: spin 0.8s linear infinite;
-	}
-
-	@keyframes spin {
-		to { transform: rotate(360deg); }
-	}
-
-	.update-label {
-		font-family: var(--font-mono);
-		font-size: 0.68rem;
-		letter-spacing: 0.03em;
-		color: oklch(0.75 0.04 240 / 60%);
-	}
-
-	/* Reborn overlay */
-	.reborn-overlay {
-		position: fixed;
-		inset: 0;
-		z-index: 9999;
-		background: black;
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		animation: reborn-fade-in 0.6s ease both;
-	}
-
-	@keyframes reborn-fade-in {
-		from { opacity: 0; }
-		to { opacity: 1; }
-	}
-
-	.reborn-video {
-		position: absolute;
-		width: min(80vw, 80vh);
-		height: min(80vw, 80vh);
-		object-fit: contain;
-		opacity: 0.5;
-		animation: reborn-video-in 1.5s ease both;
-	}
-
-	@keyframes reborn-video-in {
-		from { opacity: 0; transform: scale(0.8); }
-		to { opacity: 0.5; transform: scale(1); }
-	}
-
-	.reborn-text {
-		position: relative;
-		font-family: var(--font-display, 'Georgia', serif);
-		font-size: clamp(2rem, 6vw, 4.5rem);
-		font-weight: 300;
-		letter-spacing: 0.08em;
-		color: oklch(0.85 0.08 75);
-		text-align: center;
-		animation: reborn-text-in 1.2s cubic-bezier(0.16, 1, 0.3, 1) 0.6s both;
-	}
-
-	@keyframes reborn-text-in {
-		from {
-			opacity: 0;
-			transform: translateY(30px) scale(0.92);
-			filter: blur(8px);
-		}
-		to {
-			opacity: 1;
-			transform: translateY(0) scale(1);
-			filter: blur(0);
-		}
-	}
+.update-bar{display:flex;justify-content:center;padding:8px;background:var(--card);border-bottom:1px solid var(--border)}.update-pill{display:flex;align-items:center;gap:8px;min-height:44px;padding:8px 16px;border-radius:8px;background:var(--primary);color:var(--primary-foreground);cursor:pointer}.update-pill:hover{filter:brightness(1.08)}.update-pill-active{background:var(--accent);color:var(--foreground);cursor:default}.update-dot{width:6px;height:6px;border-radius:50%;background:currentColor}.update-spinner{width:16px;height:16px;border:2px solid var(--border);border-top-color:var(--primary);border-radius:50%;animation:spin .8s linear infinite}.update-label{font:500 14px var(--font-body)}@keyframes spin{to{transform:rotate(360deg)}}.reborn-overlay{position:fixed;inset:0;z-index:9999;background:var(--background);display:flex;flex-direction:column;gap:32px;align-items:center;justify-content:center}.reborn-video{width:min(48vw,320px);height:min(48vw,320px);object-fit:contain}.reborn-text{font:400 clamp(28px,6vw,48px)/1.15 var(--font-display);color:var(--foreground);text-align:center}
 </style>

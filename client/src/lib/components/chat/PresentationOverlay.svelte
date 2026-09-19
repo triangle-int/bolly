@@ -190,8 +190,8 @@
 		width: 8px;
 		height: 8px;
 		border-radius: 50%;
-		background: oklch(0.6 0.08 200 / 50%);
-		box-shadow: 0 0 12px oklch(0.6 0.08 200 / 25%);
+		background: var(--card);
+		box-shadow: none;
 		animation: pt-bounce 1.4s ease-in-out infinite;
 	}
 
@@ -229,14 +229,11 @@
 		margin: 0 auto;
 		overflow: hidden;
 		border-radius: 20px;
-		background: oklch(0.05 0.02 210 / 88%);
-		backdrop-filter: blur(40px) saturate(160%);
-		-webkit-backdrop-filter: blur(40px) saturate(160%);
-		border: 1px solid oklch(0.5 0.06 200 / 12%);
-		box-shadow:
-			0 8px 40px oklch(var(--shade) / 30%),
-			0 0 1px oklch(0.6 0.08 200 / 20%),
-			inset 0 1px 0 oklch(var(--ink) / 4%);
+		background: var(--card);
+
+
+		border: 1px solid var(--border);
+		box-shadow: none;
 	}
 
 	.present-bar-glow {
@@ -247,7 +244,7 @@
 		width: 60%;
 		height: 40px;
 		border-radius: 50%;
-		background: radial-gradient(ellipse, oklch(0.5 0.08 200 / 15%) 0%, transparent 70%);
+		background: var(--card);
 		animation: bar-glow-pulse 3s ease-in-out infinite;
 		pointer-events: none;
 	}
@@ -264,17 +261,25 @@
 		font-family: var(--font-body);
 		font-size: clamp(1.2rem, 2.2vw, 1.6rem);
 		line-height: 1.5;
-		color: oklch(0.95 0.02 75);
+		color: var(--text-secondary);
 		background: transparent;
 		border: none;
 		outline: none;
 		resize: none;
-		caret-color: oklch(0.7 0.1 190);
+		caret-color: var(--primary);
 	}
 
 	.present-textarea::placeholder {
-		color: oklch(0.45 0.04 200 / 30%);
-		font-style: italic;
+		color: var(--text-secondary);
+		font-style: normal;
 		font-family: var(--font-display);
 	}
+
+ .pt-dot {background:var(--primary)}
+ .present-bar-glow {display:none}
+ .present-bar-glass {border-radius:12px}
+ .present-bar-glass:focus-within {border-color:var(--ring);outline:2px solid var(--ring);outline-offset:2px}
+ .present-textarea {color:var(--foreground);caret-color:var(--primary)}
+ .present-textarea::placeholder {color:var(--text-muted);opacity:1;font-family:var(--font-body)}
+
 </style>

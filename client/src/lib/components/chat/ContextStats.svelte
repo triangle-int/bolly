@@ -47,7 +47,7 @@
 	<!-- svelte-ignore a11y_no_static_element_interactions -->
 	<div class="panel" onclick={(e) => e.stopPropagation()}>
 		<div class="header">
-			<span class="title">context breakdown</span>
+			<span class="title">Context breakdown</span>
 			<button class="close-btn" aria-label="Close" onclick={onclose}>
 				<svg viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" class="w-2.5 h-2.5">
 					<path d="M2 2l8 8M10 2l-8 8" stroke-linecap="round" />
@@ -56,7 +56,7 @@
 		</div>
 
 		{#if loading}
-			<div class="loading">loading...</div>
+			<div class="loading">Loading context…</div>
 		{:else if error}
 			<div class="error-msg">{error}</div>
 		{:else if stats}
@@ -136,8 +136,8 @@
 		display: flex;
 		align-items: center;
 		justify-content: center;
-		background: oklch(var(--shade) / 50%);
-		backdrop-filter: blur(6px);
+		background: var(--card);
+
 		animation: fade-in 0.15s ease;
 	}
 	@keyframes fade-in {
@@ -150,8 +150,8 @@
 		overflow-y: auto;
 		padding: 1.5rem;
 		border-radius: 1rem;
-		background: oklch(0.06 0.015 280);
-		border: 1px solid oklch(0.18 0.02 280);
+		background: var(--card);
+		border: 1px solid var(--border);
 		animation: panel-enter 0.2s cubic-bezier(0.16, 1, 0.3, 1);
 	}
 	@keyframes panel-enter {
@@ -165,11 +165,11 @@
 		margin-bottom: 1.25rem;
 	}
 	.title {
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-family: var(--font-body);
+		font-size: 0.8125rem;
 		letter-spacing: 0.08em;
-		text-transform: uppercase;
-		color: oklch(0.78 0.12 75 / 70%);
+		text-transform: none;
+		color: var(--text-secondary);
 	}
 	.close-btn {
 		display: flex;
@@ -178,23 +178,23 @@
 		width: 1.5rem;
 		height: 1.5rem;
 		border-radius: 50%;
-		color: oklch(0.5 0.02 280);
+		color: var(--text-secondary);
 		cursor: pointer;
 		transition: all 0.15s;
 	}
 	.close-btn:hover {
-		color: oklch(0.8 0.02 280);
-		background: oklch(0.15 0.02 280);
+		color: var(--text-secondary);
+		background: var(--card);
 	}
 
 	.loading, .error-msg {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.75rem;
-		color: oklch(0.5 0.02 280);
+		color: var(--text-secondary);
 		text-align: center;
 		padding: 2rem 0;
 	}
-	.error-msg { color: oklch(0.7 0.15 25); }
+	.error-msg { color: var(--text-secondary); }
 
 	.total-row {
 		display: flex;
@@ -202,19 +202,19 @@
 		align-items: center;
 		padding: 0.625rem 0.75rem;
 		border-radius: 0.5rem;
-		background: oklch(0.1 0.02 280);
+		background: var(--card);
 		margin-bottom: 1.25rem;
 	}
 	.total-label {
-		font-family: var(--font-mono);
-		font-size: 0.68rem;
+		font-family: var(--font-body);
+		font-size: 0.8125rem;
 		letter-spacing: 0.04em;
-		color: oklch(0.6 0.02 280);
+		color: var(--text-secondary);
 	}
 	.total-value {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.8rem;
-		color: oklch(0.9 0.02 280);
+		color: var(--text-secondary);
 		font-weight: 500;
 	}
 
@@ -224,15 +224,15 @@
 		align-items: baseline;
 		margin-top: 1rem;
 		margin-bottom: 0.5rem;
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.75rem;
 		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		color: oklch(0.55 0.02 280);
+		text-transform: none;
+		color: var(--text-secondary);
 	}
 	.section-total {
-		color: oklch(0.7 0.02 280);
-		font-size: 0.7rem;
+		color: var(--text-secondary);
+		font-size: 0.8125rem;
 	}
 
 	.bars {
@@ -247,9 +247,9 @@
 		gap: 0.5rem;
 	}
 	.bar-label {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.75rem;
-		color: oklch(0.6 0.02 280);
+		color: var(--text-secondary);
 		text-align: right;
 		overflow: hidden;
 		text-overflow: ellipsis;
@@ -258,26 +258,26 @@
 	.bar-track {
 		height: 0.375rem;
 		border-radius: 0.2rem;
-		background: oklch(0.12 0.015 280);
+		background: var(--card);
 		overflow: hidden;
 	}
 	.bar-fill {
 		height: 100%;
 		border-radius: 0.2rem;
-		background: oklch(0.78 0.12 75 / 50%);
+		background: var(--card);
 		transition: width 0.3s ease;
 	}
 	.bar-value {
-		font-family: var(--font-mono);
-		font-size: 0.72rem;
-		color: oklch(0.5 0.02 280);
+		font-family: var(--font-body);
+		font-size: 0.8125rem;
+		color: var(--text-secondary);
 		text-align: right;
 	}
 
 	.history-detail {
-		font-family: var(--font-mono);
-		font-size: 0.68rem;
-		color: oklch(0.5 0.02 280);
+		font-family: var(--font-body);
+		font-size: 0.8125rem;
+		color: var(--text-secondary);
 		padding-left: 0.25rem;
 	}
 
@@ -285,11 +285,11 @@
 		margin-top: 1rem;
 	}
 	.comp-label {
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-family: var(--font-body);
+		font-size: 0.8125rem;
 		letter-spacing: 0.06em;
-		text-transform: uppercase;
-		color: oklch(0.45 0.02 280);
+		text-transform: none;
+		color: var(--text-secondary);
 		margin-bottom: 0.375rem;
 	}
 	.comp-bar {
@@ -297,16 +297,16 @@
 		height: 0.5rem;
 		border-radius: 0.25rem;
 		overflow: hidden;
-		background: oklch(0.12 0.015 280);
+		background: var(--card);
 		gap: 1px;
 	}
 	.comp-fill {
 		height: 100%;
 		transition: width 0.3s ease;
 	}
-	.comp-sys { background: oklch(0.78 0.12 75 / 60%); }
-	.comp-tools { background: oklch(0.65 0.12 150 / 60%); }
-	.comp-hist { background: oklch(0.6 0.15 250 / 60%); }
+	.comp-sys { background: var(--card); }
+	.comp-tools { background: var(--card); }
+	.comp-hist { background: var(--card); }
 
 	.comp-legend {
 		display: flex;
@@ -317,18 +317,18 @@
 		display: flex;
 		align-items: center;
 		gap: 0.3rem;
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		color: oklch(0.5 0.02 280);
+		font-family: var(--font-body);
+		font-size: 0.8125rem;
+		color: var(--text-secondary);
 	}
 	.dot {
 		width: 6px;
 		height: 6px;
 		border-radius: 50%;
 	}
-	.dot-sys { background: oklch(0.78 0.12 75 / 60%); }
-	.dot-tools { background: oklch(0.65 0.12 150 / 60%); }
-	.dot-hist { background: oklch(0.6 0.15 250 / 60%); }
+	.dot-sys { background: var(--card); }
+	.dot-tools { background: var(--card); }
+	.dot-hist { background: var(--card); }
 
 	.tools-grid {
 		display: flex;
@@ -337,14 +337,28 @@
 		margin-top: 0.25rem;
 	}
 	.tool-tag {
-		font-family: var(--font-mono);
-		font-size: 0.68rem;
+		font-family: var(--font-body);
+		font-size: 0.8125rem;
 		letter-spacing: 0.03em;
 		padding: 0.15rem 0.4rem;
 		border-radius: 0.25rem;
 		white-space: nowrap;
-		background: oklch(0.78 0.12 75 / 8%);
-		color: oklch(0.78 0.12 75 / 70%);
-		border: 1px solid oklch(0.78 0.12 75 / 15%);
+		background: var(--card);
+		color: var(--text-secondary);
+		border: 1px solid var(--border);
 	}
+
+ .overlay {background:color-mix(in srgb,var(--background) 75%,transparent)}
+ .panel {background:var(--popover)}
+ .title {font-size:18px;color:var(--foreground);letter-spacing:0}
+ .close-btn {width:44px;height:44px;border-radius:8px}
+ .total-row,.bar-track,.comp-bar {background:var(--secondary)}
+ .bar-fill,.comp-sys,.dot-sys {background:var(--primary)}
+ .comp-tools,.dot-tools {background:var(--text-secondary)}
+ .comp-hist,.dot-hist {background:var(--input)}
+ .tool-tag {background:var(--accent);color:var(--accent-foreground);white-space:normal;overflow-wrap:anywhere}
+ .error-msg {color:var(--destructive)}
+ .comp-legend {flex-wrap:wrap}
+ .total-value,.bar-value,.tool-tag {font-family:var(--font-mono)}
+
 </style>

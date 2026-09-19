@@ -109,24 +109,14 @@
 	.pbubble-glass {
 		position: relative;
 		padding: 1rem 1.5rem;
-		background: linear-gradient(
-			150deg,
-			oklch(0.06 0.02 210 / 85%) 0%,
-			oklch(0.04 0.015 210 / 90%) 40%,
-			oklch(0.06 0.02 200 / 85%) 70%,
-			oklch(0.04 0.015 200 / 88%) 100%
-		);
-		backdrop-filter: blur(40px) saturate(180%) brightness(1.05);
-		-webkit-backdrop-filter: blur(40px) saturate(180%) brightness(1.05);
-		border: 1px solid oklch(var(--ink) / 12%);
-		border-top-color: oklch(var(--ink) / 22%);
-		border-bottom-color: oklch(var(--shade) / 8%);
+		background: var(--card);
+
+
+		border: 1px solid var(--border);
+		border-top-color: var(--border);
+		border-bottom-color: var(--border);
 		border-radius: 20px;
-		box-shadow:
-			0 4px 24px oklch(var(--shade) / 25%),
-			0 12px 48px oklch(var(--shade) / 10%),
-			inset 0 1px 0 oklch(var(--ink) / 12%),
-			inset 0 -1px 0 oklch(var(--shade) / 6%);
+		box-shadow: none;
 		overflow: hidden;
 	}
 
@@ -138,7 +128,7 @@
 		left: 10%;
 		right: 10%;
 		height: 1px;
-		background: linear-gradient(90deg, transparent, oklch(var(--ink) / 40%), oklch(var(--ink) / 15%), transparent);
+		background: var(--card);
 		pointer-events: none;
 	}
 
@@ -150,19 +140,14 @@
 		left: 0;
 		right: 0;
 		height: 45%;
-		background: linear-gradient(180deg, oklch(var(--ink) / 5%) 0%, transparent 100%);
+		background: var(--card);
 		pointer-events: none;
 		border-radius: 20px 20px 0 0;
 	}
 
 	.pbubble-left .pbubble-glass {
 		border-radius: 20px 20px 20px 4px;
-		background: linear-gradient(
-			160deg,
-			oklch(var(--ink) / 5%) 0%,
-			oklch(0.5 0.02 220 / 8%) 50%,
-			oklch(var(--ink) / 3%) 100%
-		);
+		background: var(--card);
 	}
 
 	.pbubble-right .pbubble-glass {
@@ -170,11 +155,7 @@
 	}
 
 	.pbubble-streaming .pbubble-glass {
-		box-shadow:
-			0 4px 24px oklch(var(--shade) / 25%),
-			0 0 30px oklch(0.55 0.08 200 / 10%),
-			inset 0 1px 0 oklch(var(--ink) / 14%),
-			inset 0 -1px 0 oklch(var(--shade) / 6%);
+		box-shadow: none;
 	}
 
 	.pbubble-text {
@@ -182,12 +163,12 @@
 		font-size: clamp(1.3rem, 2.5vw, 2rem);
 		line-height: 1.55;
 		letter-spacing: 0.01em;
-		color: oklch(0.95 0.02 75);
+		color: var(--text-secondary);
 		word-break: break-word;
 	}
 
 	.pbubble-left .pbubble-text {
-		color: oklch(0.7 0.02 220 / 65%);
+		color: var(--text-secondary);
 		font-size: clamp(1rem, 2vw, 1.4rem);
 	}
 
@@ -195,14 +176,24 @@
 	.pbubble-prose :global(p) { margin: 0.3em 0; }
 	.pbubble-prose :global(p:first-child) { margin-top: 0; }
 	.pbubble-prose :global(p:last-child) { margin-bottom: 0; }
-	.pbubble-prose :global(strong) { color: oklch(0.98 0.03 75); }
-	.pbubble-prose :global(em) { font-style: italic; }
+	.pbubble-prose :global(strong) { color: var(--text-secondary); }
+	.pbubble-prose :global(em) { font-style: normal; }
 	.pbubble-prose :global(code) {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.85em;
-		background: oklch(0.1 0.015 200 / 50%);
+		background: var(--card);
 		padding: 0.1em 0.3em;
 		border-radius: 6px;
 	}
-	.pbubble-prose :global(a) { color: oklch(0.75 0.1 190); }
+	.pbubble-prose :global(a) { color: var(--text-secondary); }
+
+ .pbubble-glass {background:var(--card);border:1px solid var(--border);border-radius:16px}
+ .pbubble-glass::before,.pbubble-glass::after {display:none}
+ .pbubble-left .pbubble-glass {background:var(--accent);border-radius:16px}
+ .pbubble-right .pbubble-glass {border-radius:16px}
+ .pbubble-text,.pbubble-prose :global(strong) {color:var(--foreground)}
+ .pbubble-prose :global(code) {font-family:var(--font-mono);background:var(--background)}
+ .pbubble-prose :global(em) {font-style:italic}
+ .pbubble-prose :global(a) {color:var(--primary);text-decoration:underline}
+
 </style>

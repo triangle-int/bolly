@@ -8,7 +8,7 @@
 		{@render children()}
 	</div>
 	{#if ondismiss}
-		<button class="creature-bubble-dismiss" onclick={ondismiss}>ok</button>
+		<button class="creature-bubble-dismiss" onclick={ondismiss}>OK</button>
 	{/if}
 </div>
 
@@ -17,10 +17,10 @@
 		margin: 0 0 0.5rem;
 		padding: 0.5rem 0.75rem;
 		border-radius: 0.625rem;
-		background: oklch(0.08 0.015 280 / 80%);
-		border: 1px solid oklch(0.78 0.12 75 / 12%);
+		background: var(--card);
+		border: 1px solid var(--border);
 		font-family: var(--font-body);
-		font-size: 0.7rem;
+		font-size: 0.8125rem;
 		color: var(--foreground);
 		line-height: 1.5;
 		display: flex;
@@ -40,17 +40,17 @@
 	}
 
 	.creature-bubble :global(a) {
-		color: oklch(0.78 0.12 75 / 70%);
+		color: var(--text-secondary);
 		text-decoration: underline;
 	}
 
 	.creature-bubble-dismiss {
 		flex-shrink: 0;
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.75rem;
-		color: oklch(0.78 0.12 75 / 30%);
+		color: var(--text-secondary);
 		background: none;
-		border: 1px solid oklch(0.78 0.12 75 / 15%);
+		border: 1px solid var(--border);
 		border-radius: 0.25rem;
 		padding: 0.1rem 0.4rem;
 		cursor: pointer;
@@ -58,7 +58,12 @@
 	}
 
 	.creature-bubble-dismiss:hover {
-		color: oklch(0.78 0.12 75 / 60%);
-		border-color: oklch(0.78 0.12 75 / 30%);
+		color: var(--text-secondary);
+		border-color: var(--border);
 	}
+
+ .creature-bubble {padding:16px;border-radius:12px;font-size:14px}
+ .creature-bubble :global(a) {color:var(--primary)}
+ .creature-bubble-dismiss {min-width:44px;min-height:44px;border-radius:8px;background:var(--secondary);color:var(--foreground)}
+
 </style>

@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { CircleAlert, CircleCheck, Info } from "@lucide/svelte";
 	import { getToasts } from "$lib/stores/toast.svelte.js";
 
 	const toasts = getToasts();
@@ -9,7 +10,7 @@
 		{#each toasts.list as toast (toast.id)}
 			<div class="toast toast-{toast.kind}" role="alert">
 				<span class="toast-icon">
-					{#if toast.kind === "error"}!{:else if toast.kind === "success"}~{:else}·{/if}
+					{#if toast.kind === "error"}<CircleAlert size={18} />{:else if toast.kind === "success"}<CircleCheck size={18} />{:else}<Info size={18} />{/if}
 				</span>
 				<span class="toast-msg">{toast.message}</span>
 				<button class="toast-close" onclick={() => toasts.dismiss(toast.id)} aria-label="Dismiss">
@@ -23,109 +24,7 @@
 {/if}
 
 <style>
-	.toast-container {
-		position: fixed;
-		bottom: calc(1rem + env(safe-area-inset-bottom, 0px));
-		left: 50%;
-		transform: translateX(-50%);
-		display: flex;
-		flex-direction: column;
-		gap: 0.5rem;
-		z-index: 200;
-		pointer-events: none;
-		max-width: calc(100vw - 2rem);
-	}
-
-	.toast {
-		position: relative;
-		pointer-events: auto;
-		display: flex;
-		align-items: center;
-		gap: 0.5rem;
-		padding: 0.5rem 0.75rem;
-		border-radius: 1rem;
-		background: linear-gradient(
-			155deg,
-			oklch(var(--ink) / 6%) 0%,
-			oklch(0.5 0.02 250 / 10%) 40%,
-			oklch(var(--ink) / 4%) 100%
-		);
-		backdrop-filter: blur(24px) saturate(160%) brightness(1.06);
-		-webkit-backdrop-filter: blur(24px) saturate(160%) brightness(1.06);
-		border: 1px solid oklch(var(--ink) / 10%);
-		border-top-color: oklch(var(--ink) / 18%);
-		box-shadow:
-			0 4px 20px oklch(var(--shade) / 20%),
-			inset 0 1px 0 oklch(var(--ink) / 8%),
-			inset 0 -1px 0 oklch(var(--shade) / 4%);
-		font-family: var(--font-body);
-		font-size: 0.75rem;
-		color: var(--foreground);
-		animation: toast-enter 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
-		white-space: nowrap;
-		overflow: hidden;
-	}
-
-	/* Specular highlight */
-	.toast::before {
-		content: "";
-		position: absolute;
-		top: 0;
-		left: 15%;
-		right: 15%;
-		height: 1px;
-		background: linear-gradient(90deg, transparent, oklch(var(--ink) / 25%), transparent);
-		pointer-events: none;
-	}
-
-	.toast-error {
-		border-color: oklch(0.65 0.12 25 / 15%);
-		border-top-color: oklch(0.65 0.12 25 / 25%);
-		color: oklch(0.85 0.08 25 / 90%);
-	}
-
-	.toast-success {
-		border-color: oklch(0.65 0.10 160 / 15%);
-		border-top-color: oklch(0.65 0.10 160 / 25%);
-		color: oklch(0.80 0.08 160 / 90%);
-	}
-
-	.toast-icon {
-		font-family: var(--font-mono);
-		font-size: 0.8rem;
-		opacity: 0.6;
-		flex-shrink: 0;
-	}
-
-	.toast-msg {
-		overflow: hidden;
-		text-overflow: ellipsis;
-	}
-
-	.toast-close {
-		display: flex;
-		align-items: center;
-		justify-content: center;
-		width: 1.25rem;
-		height: 1.25rem;
-		border-radius: 50%;
-		flex-shrink: 0;
-		opacity: 0.3;
-		transition: opacity 0.2s;
-		cursor: pointer;
-	}
-	.toast-close:hover {
-		opacity: 0.7;
-	}
-
-	@keyframes toast-enter {
-		from { opacity: 0; transform: translateY(8px); }
-		to { opacity: 1; transform: translateY(0); }
-	}
-
-	@media (max-width: 720px) {
-		.toast-container {
-			bottom: calc(4rem + env(safe-area-inset-bottom, 0px));
-		}
-	}
+.toast-container{position:fixed;bottom:calc(24px + env(safe-area-inset-bottom,0px));left:50%;transform:translateX(-50%);display:flex;flex-direction:column;gap:8px;z-index:200;pointer-events:none;width:max-content;max-width:calc(100vw - 32px)}
+.toast{pointer-events:auto;display:flex;align-items:center;gap:12px;padding:8px 8px 8px 16px;border-radius:12px;background:var(--popover);border:1px solid var(--border);font:14px/1.5 var(--font-body);color:var(--foreground)}
+.toast-error .toast-icon{color:var(--destructive)}.toast-icon{color:var(--primary);flex-shrink:0}.toast-msg{overflow-wrap:anywhere}.toast-close{display:grid;place-items:center;width:44px;height:44px;border-radius:8px;flex-shrink:0;color:var(--text-muted);cursor:pointer}.toast-close:hover{background:var(--accent);color:var(--foreground)}
 </style>

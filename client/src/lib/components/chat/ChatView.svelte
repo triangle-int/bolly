@@ -1,4 +1,6 @@
 <script lang="ts">
+	import Conversation from "$lib/components/ai-elements/conversation/conversation.svelte";
+	import ConversationContent from "$lib/components/ai-elements/conversation/conversation-content.svelte";
 	import { untrack } from "svelte";
 	import { goto } from "$app/navigation";
 	import { clearContext, fetchChats, fetchCompanionName, fetchGoogleAccounts, fetchMessages, fetchMood, sendMessage, stopAgent, uploadFile } from "$lib/api/client.js";
@@ -46,12 +48,14 @@ import McpAppViewer from "./McpAppViewer.svelte";
 	let messages = $state<ChatMessage[]>([]);
 	let stream = $state<StreamItem[]>([]);
 	let loading = $state(true);
+	let historyError = $state("");
+	let historyRequest = 0;
 	let sending = $state(false);
 	let agentRunning = $state(false);
 	let needsGoogleReconnect = $state(false);
 	const savedMood = typeof localStorage !== "undefined" ? localStorage.getItem("mood:" + untrack(() => slug)) : null;
 	let mood = $state(savedMood || "calm");
-	let scrollContainer: HTMLDivElement | undefined = $state();
+	let scrollContainer: HTMLDivElement | null = $state(null);
 	let isConnected = $state(false);
 	let showChatList = $state(false);
 	let clearDialogOpen = $state(false);
@@ -131,6 +135,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 			// Reconnected — re-fetch to pick up messages we missed
 			fetchMessages(slug, chatId)
 				.then((res) => {
+					historyError = "";
 					messages = res.messages.filter((m) => !isToolActivity(m));
 					stream = messagesToStream(res.messages);
 					agentRunning = res.agent_running;
@@ -219,6 +224,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 
 	/** Reconcile local state with a server snapshot — game-style sync. */
 	function reconcileSnapshot(serverMessages: ChatMessage[], serverAgentRunning: boolean) {
+		historyError = "";
 		const serverStream = messagesToStream(serverMessages);
 
 		// Detect new assistant messages not in local stream (by content, not ID —
@@ -354,6 +360,28 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		refreshChatList();
 	}
 
+	async function loadHistory(currentSlug = slug, currentChat = chatId) {
+		const request = ++historyRequest;
+		loading = true;
+		historyError = "";
+		try {
+			const res = await fetchMessages(currentSlug, currentChat);
+			if (request !== historyRequest || currentSlug !== slug || currentChat !== chatId) return;
+			messages = res.messages.filter((m) => !isToolActivity(m));
+			stream = messagesToStream(res.messages);
+			agentRunning = res.agent_running;
+			if (agentRunning) pushActivity("state", "thinking...");
+			scrollToBottom();
+		} catch (error) {
+			if (request !== historyRequest || currentSlug !== slug || currentChat !== chatId) return;
+			historyError = error instanceof Error && error.message === "unauthorized"
+				? "Sign in again to load this conversation."
+				: "We couldn’t load this conversation. Check your connection and model provider settings, then try again.";
+		} finally {
+			if (request === historyRequest && currentSlug === slug && currentChat === chatId) loading = false;
+		}
+	}
+
 	$effect(() => {
 		const currentSlug = slug;
 		const currentChat = chatId;
@@ -366,21 +394,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 
 			refreshChatList();
 
-			fetchMessages(currentSlug, currentChat)
-				.then((res) => {
-					messages = res.messages.filter((m) => !isToolActivity(m));
-					stream = messagesToStream(res.messages);
-					agentRunning = res.agent_running;
-					if (agentRunning) pushActivity("state", "thinking...");
-					scrollToBottom(); // always scroll on initial load
-				})
-				.catch((e) => {
-					messages = [];
-					if (!(e instanceof Error && e.message === "unauthorized")) {
-						toast.error("failed to load messages");
-					}
-				})
-				.finally(() => { loading = false; });
+			void loadHistory(currentSlug, currentChat);
 
 			fetchMood(currentSlug)
 				.then((res) => { if (res.mood) { mood = res.mood; localStorage.setItem("mood:" + currentSlug, res.mood); } })
@@ -605,10 +619,12 @@ import McpAppViewer from "./McpAppViewer.svelte";
 			turnMessageIds = [];
 			const res = await sendMessage(slug, finalContent, activeChatId, voice.enabled);
 			for (const msg of res.messages) addMessage(msg);
+			return true;
 		} catch (e) {
 			play("error");
 			hapticError();
 			sending = false;
+			uploadProgress = null;
 			const msg = e instanceof Error ? e.message : "failed to send";
 			if (msg.includes("rate limit")) {
 				try {
@@ -621,6 +637,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 				toast.error(msg);
 			}
 		}
+		return false;
 	}
 
 	async function handleStop() {
@@ -740,31 +757,31 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		<div class="bar-right">
 			<button onclick={() => { voice.toggle(); if (voice.enabled) warmUpAudio(); if (!voice.enabled && voice.speaking) stopTts(voice); }} onmousedown={(e) => e.preventDefault()} class="bar-btn" class:bar-btn-active={voice.enabled} title={voice.enabled ? "Mute voice" : "Enable voice"}>
 				{#if voice.enabled}
-					<Volume2 size={13} />
+					<Volume2 size={18} />
 				{:else}
-					<VolumeOff size={13} />
+					<VolumeOff size={18} />
 				{/if}
 			</button>
 			<button onclick={() => { showToolActivity = !showToolActivity; localStorage.setItem("nolune:showToolActivity", String(showToolActivity)); }} onmousedown={(e) => e.preventDefault()} class="bar-btn" class:bar-btn-active={showToolActivity} title="Toggle tool activity">
-				<TerminalSquare size={12} />
+				<TerminalSquare size={18} />
 			</button>
 			<button onclick={() => showContextStats = true} onmousedown={(e) => e.preventDefault()} class="bar-btn" title="Context stats">
-				<BarChart3 size={13} />
+				<BarChart3 size={18} />
 			</button>
 			<AlertDialog.Root bind:open={clearDialogOpen}>
 				<AlertDialog.Trigger class="bar-btn" title="Clear context">
-					<Eraser size={13} />
+					<Eraser size={18} />
 				</AlertDialog.Trigger>
 					<AlertDialog.Content class="clear-dialog">
 						<AlertDialog.Header>
-							<AlertDialog.Title class="clear-dialog-title">clear context</AlertDialog.Title>
+							<AlertDialog.Title class="clear-dialog-title">Clear context</AlertDialog.Title>
 							<AlertDialog.Description class="clear-dialog-desc">
-								this will erase all messages in this conversation. this cannot be undone.
+								This will erase all messages in this conversation. This cannot be undone.
 							</AlertDialog.Description>
 						</AlertDialog.Header>
 						<AlertDialog.Footer class="clear-dialog-footer">
-							<AlertDialog.Cancel class="clear-dialog-btn clear-dialog-cancel">cancel</AlertDialog.Cancel>
-							<AlertDialog.Action class="clear-dialog-btn clear-dialog-confirm" onclick={handleClear}>clear</AlertDialog.Action>
+							<AlertDialog.Cancel class="clear-dialog-btn clear-dialog-cancel">Cancel</AlertDialog.Cancel>
+							<AlertDialog.Action class="clear-dialog-btn clear-dialog-confirm" onclick={handleClear}>Clear messages</AlertDialog.Action>
 						</AlertDialog.Footer>
 					</AlertDialog.Content>
 			</AlertDialog.Root>
@@ -793,12 +810,21 @@ import McpAppViewer from "./McpAppViewer.svelte";
 
 	<div class="chat-columns">
 		<div class="chat-main">
-			<div class="chat-stream" bind:this={scrollContainer} onscroll={handleScroll}>
-				<div class="stream-inner">
+			<Conversation class="chat-stream flex-1 overflow-y-auto" bind:ref={scrollContainer} onscroll={handleScroll} aria-label="Conversation">
+				<ConversationContent autoScroll={false} class="mx-auto w-full max-w-[688px] gap-1 px-4 py-5 md:px-6">
+					{#if historyError}
+						<div class="history-error" role="alert">
+							<p>{historyError}</p>
+							<div class="history-error-actions">
+								<button class="nl-button-secondary" disabled={loading || sending || agentRunning} onclick={() => loadHistory()}>Retry conversation</button>
+								<a class="nl-button-secondary" href={`/${slug}/settings`}>Open settings</a>
+							</div>
+						</div>
+					{/if}
 					{#if loading}
-						<div class="chat-loading"><div class="loading-dot"></div></div>
-					{:else if stream.length === 0}
-						<div class="chat-empty"><p>say something.</p></div>
+						<div class="chat-loading" role="status"><div class="loading-dot" aria-hidden="true"></div><span>Loading conversation…</span></div>
+					{:else if stream.length === 0 && !historyError}
+						<div class="chat-empty"><p>What’s on your mind?</p></div>
 					{:else}
 						{#each stream as item, i (streamKey(item))}
 							{#if item.type === "message"}
@@ -812,7 +838,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 								/>
 							{:else if item.type === "compaction"}
 								<div class="compaction-notice">
-									<Minimize2 size={13} class="compaction-icon" />
+									<Minimize2 size={18} class="compaction-icon" />
 									<span class="compaction-text">context compacted</span>
 									<span class="compaction-time">{item.timestamp}</span>
 								</div>
@@ -823,14 +849,14 @@ import McpAppViewer from "./McpAppViewer.svelte";
 					{/if}
 
 					{#if sending || agentRunning}
-						<div class="chat-thinking">
+						<div class="chat-thinking" role="status" aria-label="Nolune is thinking">
 							<div class="think-dot" style="animation-delay: 0ms"></div>
 							<div class="think-dot" style="animation-delay: 200ms"></div>
 							<div class="think-dot" style="animation-delay: 400ms"></div>
 						</div>
 					{/if}
-				</div>
-			</div>
+				</ConversationContent>
+			</Conversation>
 
 			<ChatInput onSend={handleSend} onStop={handleStop} disabled={sending || agentRunning} {agentRunning} {uploadProgress} />
 		</div>
@@ -904,9 +930,9 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		font-family: var(--font-display);
 		font-size: clamp(1.5rem, 4vw, 2.5rem);
 		font-weight: 300;
-		font-style: italic;
+		font-style: normal;
 		letter-spacing: 0.06em;
-		color: oklch(var(--ink) / 45%);
+		color: var(--text-secondary);
 		white-space: nowrap;
 		animation: intro-name-in 1s cubic-bezier(0.16, 1, 0.3, 1) both;
 	}
@@ -921,17 +947,17 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		pointer-events: auto;
 		padding: 0.4rem 1rem;
 		border-radius: 2rem;
-		background: oklch(var(--ink) / 5%);
-		backdrop-filter: blur(12px);
-		border: 1px solid oklch(var(--ink) / 10%);
-		color: oklch(var(--ink) / 35%);
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		background: var(--card);
+
+		border: 1px solid var(--border);
+		color: var(--text-secondary);
+		font-family: var(--font-body);
+		font-size: 0.8125rem;
 		letter-spacing: 0.08em;
 		cursor: pointer;
 		transition: all 0.3s ease;
 	}
-	.intro-skip:hover { background: oklch(var(--ink) / 10%); color: oklch(var(--ink) / 60%); }
+	.intro-skip:hover { background: var(--card); color: var(--text-secondary); }
 
 	/* --- Perimeter ambient glow (Siri-style) --- */
 	.chat-space::before {
@@ -941,9 +967,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		pointer-events: none;
 		z-index: 50;
 		opacity: 0;
-		box-shadow:
-			inset 0 0 80px oklch(0.5 0.08 200 / 3%),
-			inset 0 0 160px oklch(0.45 0.06 220 / 1.5%);
+		box-shadow: none;
 		transition: opacity 0.8s ease;
 	}
 
@@ -963,8 +987,8 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		padding: 0.5rem 1.25rem;
 		flex-shrink: 0;
 		background: var(--surface-tab);
-		backdrop-filter: var(--glass-blur);
-		-webkit-backdrop-filter: var(--glass-blur);
+
+
 		border-bottom: 1px solid var(--glass-border);
 	}
 
@@ -972,8 +996,8 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		display: flex;
 		align-items: center;
 		gap: 0.5rem;
-		font-family: var(--font-mono);
-		font-size: 0.72rem;
+		font-family: var(--font-body);
+		font-size: 0.8125rem;
 		letter-spacing: 0.03em;
 	}
 
@@ -987,13 +1011,13 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		width: 5px;
 		height: 5px;
 		border-radius: 50%;
-		background: oklch(0.3 0.02 200 / 30%);
+		background: var(--card);
 		transition: all 0.4s ease;
 	}
 
 	.bar-led-on {
-		background: oklch(0.65 0.12 180 / 80%);
-		box-shadow: 0 0 8px oklch(0.65 0.12 180 / 25%);
+		background: var(--card);
+		box-shadow: none;
 	}
 
 	.bar-name {
@@ -1001,35 +1025,35 @@ import McpAppViewer from "./McpAppViewer.svelte";
 	}
 
 	.bar-mood {
-		font-family: var(--font-mono);
-		font-size: 0.62rem;
+		font-family: var(--font-body);
+		font-size: 0.8125rem;
 		letter-spacing: 0.06em;
 		color: var(--text-muted);
 		transition: color 0.5s ease;
 	}
-	.bar-mood[data-mood="focused"] { color: oklch(0.65 0.1 180 / 72%); }
-	.bar-mood[data-mood="playful"] { color: oklch(0.7 0.12 160 / 72%); }
-	.bar-mood[data-mood="loving"] { color: oklch(0.7 0.1 20 / 72%); }
-	.bar-mood[data-mood="warm"] { color: oklch(0.7 0.1 65 / 72%); }
-	.bar-mood[data-mood="reflective"] { color: oklch(0.6 0.08 280 / 72%); }
-	.bar-mood[data-mood="excited"] { color: oklch(0.75 0.12 85 / 72%); }
-	.bar-mood[data-mood="curious"] { color: oklch(0.65 0.1 200 / 72%); }
-	.bar-mood[data-mood="melancholy"] { color: oklch(0.55 0.06 250 / 72%); }
-	.bar-mood[data-mood="sad"] { color: oklch(0.50 0.05 245 / 72%); }
-	.bar-mood[data-mood="anxious"] { color: oklch(0.6 0.1 30 / 72%); }
-	.bar-mood[data-mood="creative"] { color: oklch(0.7 0.12 155 / 72%); }
-	.bar-mood[data-mood="energetic"] { color: oklch(0.75 0.14 100 / 72%); }
-	.bar-mood[data-mood="tired"] { color: oklch(0.45 0.03 250 / 72%); }
-	.bar-mood[data-mood="peaceful"] { color: oklch(0.6 0.08 170 / 72%); }
+	.bar-mood[data-mood="focused"] { color: var(--text-secondary); }
+	.bar-mood[data-mood="playful"] { color: var(--text-secondary); }
+	.bar-mood[data-mood="loving"] { color: var(--text-secondary); }
+	.bar-mood[data-mood="warm"] { color: var(--text-secondary); }
+	.bar-mood[data-mood="reflective"] { color: var(--text-secondary); }
+	.bar-mood[data-mood="excited"] { color: var(--text-secondary); }
+	.bar-mood[data-mood="curious"] { color: var(--text-secondary); }
+	.bar-mood[data-mood="melancholy"] { color: var(--text-secondary); }
+	.bar-mood[data-mood="sad"] { color: var(--text-secondary); }
+	.bar-mood[data-mood="anxious"] { color: var(--text-secondary); }
+	.bar-mood[data-mood="creative"] { color: var(--text-secondary); }
+	.bar-mood[data-mood="energetic"] { color: var(--text-secondary); }
+	.bar-mood[data-mood="tired"] { color: var(--text-secondary); }
+	.bar-mood[data-mood="peaceful"] { color: var(--text-secondary); }
 
 	.bar-activity {
 		display: flex;
 		align-items: center;
 		gap: 0.35rem;
-		font-family: var(--font-mono);
-		font-size: 0.68rem;
+		font-family: var(--font-body);
+		font-size: 0.8125rem;
 		letter-spacing: 0.06em;
-		color: oklch(0.60 0.06 200 / 70%);
+		color: var(--text-secondary);
 		animation: fade-up 0.3s ease both;
 	}
 
@@ -1037,7 +1061,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		width: 4px;
 		height: 4px;
 		border-radius: 50%;
-		background: oklch(0.65 0.1 190 / 80%);
+		background: var(--card);
 		animation: pulse-alive 2.5s ease-in-out infinite;
 	}
 
@@ -1058,7 +1082,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 
 	.bar-btn:hover {
 		color: var(--text-primary);
-		background: oklch(var(--ink) / 8%);
+		background: var(--card);
 	}
 
 	/* --- columns --- */
@@ -1078,7 +1102,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		flex-direction: column;
 		min-height: 0;
 		min-width: 0;
-		border-right: 1px solid oklch(0.5 0.06 200 / 5%);
+		border-right: 1px solid var(--border);
 	}
 
 	.chat-sidebar {
@@ -1105,7 +1129,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 
 	/* --- stream --- */
 
-	.chat-stream {
+	:global(.chat-stream) {
 		flex: 1;
 		min-height: 0;
 		min-width: 0;
@@ -1113,18 +1137,11 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		overflow-x: hidden;
 	}
 
-	.stream-inner {
-		max-width: 640px;
-		width: 100%;
-		margin: 0 auto;
-		padding: 1rem 1.5rem 2.5rem;
-		display: flex;
-		flex-direction: column;
-		gap: 0.2rem;
-		box-sizing: border-box;
-	}
 
 	.chat-loading {
+		gap: 12px;
+		color: var(--text-muted);
+		font-size: 14px;
 		display: flex;
 		align-items: center;
 		justify-content: center;
@@ -1135,8 +1152,8 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		width: 5px;
 		height: 5px;
 		border-radius: 50%;
-		background: oklch(0.55 0.08 200 / 40%);
-		box-shadow: 0 0 10px oklch(0.55 0.08 200 / 20%);
+		background: var(--card);
+		box-shadow: none;
 		animation: pulse 2s ease-in-out infinite;
 	}
 
@@ -1156,8 +1173,8 @@ import McpAppViewer from "./McpAppViewer.svelte";
 	.chat-empty p {
 		font-family: var(--font-display);
 		font-size: 0.9rem;
-		font-style: italic;
-		color: oklch(0.5 0.05 200 / 30%);
+		font-style: normal;
+		color: var(--text-secondary);
 		margin: 0;
 	}
 
@@ -1179,8 +1196,8 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		width: 4px;
 		height: 4px;
 		border-radius: 50%;
-		background: oklch(0.55 0.08 200 / 40%);
-		box-shadow: 0 0 6px oklch(0.55 0.08 200 / 20%);
+		background: var(--card);
+		box-shadow: none;
 		animation: bounce 1.4s ease-in-out infinite;
 	}
 
@@ -1199,25 +1216,25 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		margin: 0.5rem 0;
 		margin-left: auto;
 		border-radius: 10px;
-		background: oklch(0.12 0.02 200 / 20%);
-		backdrop-filter: blur(12px);
-		-webkit-backdrop-filter: blur(12px);
-		border: 1px dashed oklch(0.5 0.06 200 / 12%);
+		background: var(--card);
+
+
+		border: 1px dashed var(--border);
 		animation: act-in 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
 	}
 
 	.compaction-text {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.75rem;
 		letter-spacing: 0.03em;
-		color: oklch(0.5 0.05 200 / 45%);
+		color: var(--text-secondary);
 		flex: 1;
 	}
 
 	.compaction-time {
-		font-family: var(--font-mono);
-		font-size: 0.68rem;
-		color: oklch(0.45 0.03 200 / 30%);
+		font-family: var(--font-body);
+		font-size: 0.8125rem;
+		color: var(--text-secondary);
 		white-space: nowrap;
 	}
 
@@ -1236,9 +1253,6 @@ import McpAppViewer from "./McpAppViewer.svelte";
 	}
 
 	@media (max-width: 720px) {
-		.stream-inner {
-			padding-inline: 0.75rem;
-		}
 		header.chat-bar {
 			padding: 0.5rem 0.75rem;
 		}
@@ -1250,20 +1264,20 @@ import McpAppViewer from "./McpAppViewer.svelte";
 	/* --- clear context dialog (glass) --- */
 
 	:global(.clear-dialog) {
-		background: oklch(0.1 0.02 210 / 70%) !important;
-		backdrop-filter: blur(24px) saturate(140%) !important;
-		-webkit-backdrop-filter: blur(24px) saturate(140%) !important;
-		border: 1px solid oklch(0.5 0.06 200 / 12%) !important;
+		background: var(--card) !important;
+
+
+		border: 1px solid var(--border) !important;
 		border-radius: 16px !important;
 		padding: 1.5rem !important;
-		box-shadow: 0 20px 80px oklch(var(--shade) / 55%), inset 0 1px 0 oklch(var(--ink) / 3%) !important;
+		box-shadow: none;
 	}
 
 	:global(.clear-dialog-title) {
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		font-size: 0.8rem;
 		letter-spacing: 0.04em;
-		color: oklch(0.88 0.03 200 / 90%);
+		color: var(--text-secondary);
 		margin: 0;
 	}
 
@@ -1271,7 +1285,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		font-family: var(--font-body);
 		font-size: 0.75rem;
 		line-height: 1.5;
-		color: oklch(0.6 0.04 200 / 55%);
+		color: var(--text-secondary);
 		margin-top: 0.5rem;
 	}
 
@@ -1283,8 +1297,8 @@ import McpAppViewer from "./McpAppViewer.svelte";
 	}
 
 	:global(.clear-dialog-btn) {
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
+		font-family: var(--font-body);
+		font-size: 0.8125rem;
 		letter-spacing: 0.04em;
 		padding: 0.4rem 1rem;
 		border-radius: 8px;
@@ -1293,23 +1307,50 @@ import McpAppViewer from "./McpAppViewer.svelte";
 	}
 
 	:global(.clear-dialog-cancel) {
-		color: oklch(0.6 0.04 200 / 55%);
-		background: oklch(0.5 0.04 200 / 6%);
-		border: 1px solid oklch(0.5 0.04 200 / 10%);
+		color: var(--text-secondary);
+		background: var(--card);
+		border: 1px solid var(--border);
 	}
 
 	:global(.clear-dialog-cancel:hover) {
-		background: oklch(0.5 0.04 200 / 12%);
-		color: oklch(0.75 0.04 200 / 75%);
+		background: var(--card);
+		color: var(--text-secondary);
 	}
 
 	:global(.clear-dialog-confirm) {
-		color: oklch(0.85 0.08 25 / 90%);
-		background: oklch(0.6 0.12 25 / 15%);
-		border: 1px solid oklch(0.6 0.12 25 / 22%);
+		color: var(--text-secondary);
+		background: var(--card);
+		border: 1px solid var(--border);
 	}
 
 	:global(.clear-dialog-confirm:hover) {
-		background: oklch(0.6 0.12 25 / 25%);
+		background: var(--card);
 	}
+
+:global(.dark) .chat-space::before{display:none}:global(.dark) header.chat-bar{padding:12px 20px;background:var(--surface-tab);border-bottom:1px solid var(--border)}:global(.dark) .bar-left{font:400 13px var(--font-body);color:var(--text-secondary)}
+
+
+ .intro-name {font-style:normal;letter-spacing:-.025em;color:var(--foreground)}
+ .intro-skip {min-height:44px;background:var(--card);color:var(--foreground);border-radius:8px;font-size:14px}
+ .bar-led {background:var(--text-muted);width:6px;height:6px}
+ .bar-led-on,.bar-activity-dot,.loading-dot,.think-dot {background:var(--primary)}
+ .bar-mood[data-mood],.bar-activity {color:var(--text-muted);font-size:12px;letter-spacing:0}
+ .bar-btn {width:44px;height:44px;border-radius:8px;flex-shrink:0}
+ .bar-btn-active {color:var(--primary);background:var(--accent)}
+ .bar-btn:hover {background:var(--accent)}
+ .chat-empty p {font:400 18px var(--font-body);line-height:1.6}
+ .chat-empty {padding:48px 24px;text-align:center}
+ .sidebar-banners {max-width:320px}
+ .compaction-notice {background:var(--card);border:1px solid var(--border);border-radius:12px}
+ :global(.clear-dialog-title) {font-size:18px;color:var(--foreground);letter-spacing:0}
+ :global(.clear-dialog-desc) {font-size:14px;color:var(--text-secondary)}
+ :global(.clear-dialog-btn) {min-height:44px;font-size:14px;letter-spacing:0}
+ :global(.clear-dialog-confirm) {background:var(--destructive);color:var(--primary-foreground);border-color:var(--destructive)}
+ :global(.clear-dialog-confirm:hover) {background:var(--destructive);filter:brightness(.95)}
+ @media(max-width:480px){header.chat-bar{flex-wrap:wrap;gap:8px}.bar-right{max-width:none}.bar-left{flex-wrap:wrap}}
+
+
+ .history-error {padding:20px;margin:8px 0;border:1px solid var(--border);border-radius:12px;background:var(--card);color:var(--text-secondary);font-size:14px;line-height:1.6}
+ .history-error p {margin:0 0 16px}
+ .history-error-actions {display:flex;flex-wrap:wrap;gap:8px}
 </style>

@@ -9,29 +9,32 @@
 
 	let thoughts = $state<Thought[]>([]);
 	let loading = $state(true);
+	let loadError = $state("");
 	let expandedIds = $state<Set<string>>(new Set());
 
 	const ws = getWebSocket();
 
 	const moodColors: Record<string, string> = {
-		calm: "oklch(0.70 0.08 220)", curious: "oklch(0.75 0.12 200)",
-		excited: "oklch(0.80 0.16 75)", warm: "oklch(0.78 0.12 75)",
-		happy: "oklch(0.82 0.14 95)", joyful: "oklch(0.85 0.16 85)",
-		reflective: "oklch(0.65 0.08 260)", contemplative: "oklch(0.60 0.06 270)",
-		melancholy: "oklch(0.55 0.08 250)", sad: "oklch(0.50 0.06 260)",
-		worried: "oklch(0.60 0.10 40)", anxious: "oklch(0.65 0.12 30)",
-		playful: "oklch(0.78 0.15 140)", mischievous: "oklch(0.75 0.14 150)",
-		focused: "oklch(0.70 0.10 230)", tired: "oklch(0.55 0.04 260)",
-		peaceful: "oklch(0.72 0.06 180)", loving: "oklch(0.72 0.14 0)",
-		tender: "oklch(0.70 0.10 350)", creative: "oklch(0.78 0.16 310)",
-		energetic: "oklch(0.82 0.18 65)",
+		calm: "var(--primary)", curious: "var(--primary)",
+		excited: "var(--primary)", warm: "var(--primary)",
+		happy: "var(--primary)", joyful: "var(--primary)",
+		reflective: "var(--primary)", contemplative: "var(--primary)",
+		melancholy: "var(--primary)", sad: "var(--primary)",
+		worried: "var(--primary)", anxious: "var(--primary)",
+		playful: "var(--primary)", mischievous: "var(--primary)",
+		focused: "var(--primary)", tired: "var(--primary)",
+		peaceful: "var(--primary)", loving: "var(--primary)",
+		tender: "var(--primary)", creative: "var(--primary)",
+		energetic: "var(--primary)",
 	};
 
 	async function load() {
 		loading = true;
+		loadError = "";
 		try {
 			thoughts = await fetchThoughts(slug);
 		} catch {
+			loadError = "Could not load thoughts. Please try again.";
 			toast.error("failed to load thoughts");
 		} finally {
 			loading = false;
@@ -107,19 +110,22 @@
 
 <div class="thoughts-page">
 	{#if loading}
+		<span class="sr-only" role="status">Loading thoughts…</span>
 		<div class="thoughts-center">
 			<div class="pulse-dot"></div>
 		</div>
+	{:else if loadError}
+		<div class="load-error" role="alert"><p>{loadError}</p><button class="nl-button-secondary" onclick={load}>Try again</button></div>
 	{:else if thoughts.length === 0}
 		<div class="thoughts-center">
-			<p class="empty-text">no thoughts yet</p>
-			<p class="empty-sub">thoughts appear when your companion reflects on their own</p>
+			<p class="empty-text">No thoughts yet</p>
+			<p class="empty-sub">Thoughts appear when your companion reflects on their own.</p>
 		</div>
 	{:else}
 		<div class="thoughts-flow">
 			{#each visibleThoughts as thought, i (thought.id)}
 				{@const mood = thought.actions.find(a => a.startsWith("mood:"))?.substring(5).trim() ?? thought.mood}
-				{@const color = moodColors[mood] ?? "oklch(0.78 0.12 75)"}
+				{@const color = moodColors[mood] ?? "var(--primary)"}
 				{@const kind = primaryKind(thought)}
 				{@const raw = cleanRaw(thought.raw)}
 				{@const isExpanded = expandedIds.has(thought.id)}
@@ -145,13 +151,13 @@
 					{#each thought.actions as action}
 						{@const p = parseAction(action)}
 						{#if p.kind === "reach_out"}
-							<span class="thought-action thought-action-reach">reached out</span>
+							<span class="thought-action thought-action-reach">Reached out</span>
 						{:else if p.kind === "drop"}
-							<span class="thought-action thought-action-drop">created a drop</span>
+							<span class="thought-action thought-action-drop">Created a drop</span>
 						{:else if p.kind.startsWith("wake")}
-							<span class="thought-action thought-action-wake">woke up</span>
+							<span class="thought-action thought-action-wake">Woke up</span>
 						{:else if p.kind === "mood"}
-							<span class="thought-action thought-action-mood">mood shift</span>
+							<span class="thought-action thought-action-mood">Mood shift</span>
 						{/if}
 					{/each}
 
@@ -162,13 +168,12 @@
 						<div
 							class="thought-body"
 							class:thought-body-collapsed={isLong && !isExpanded}
-							onclick={() => isLong && toggleExpand(thought.id)}
 						>
 							{raw}
 						</div>
 						{#if isLong}
-							<button class="thought-more" onclick={() => toggleExpand(thought.id)}>
-								{isExpanded ? "less" : "more"}
+							<button aria-expanded={isExpanded} class="thought-more" onclick={() => toggleExpand(thought.id)}>
+								{isExpanded ? "Show less" : "Read more"}
 							</button>
 						{/if}
 					{/if}
@@ -180,6 +185,7 @@
 </div>
 
 <style>
+	.load-error { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; min-height: 220px; padding: 24px; color: var(--text-secondary); text-align: center; }
 	.thoughts-page {
 		height: 100%;
 		overflow-y: auto;
@@ -197,20 +203,20 @@
 
 	.pulse-dot {
 		width: 6px; height: 6px; border-radius: 50%;
-		background: oklch(0.78 0.12 75 / 40%);
-		animation: pulse 2s ease-in-out infinite;
+		background: var(--card);
+		animation:none;
 	}
 	@keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.3; transform: scale(0.7); } }
 
 	.empty-text {
 		font-family: var(--font-display);
-		font-style: italic;
+		font-style: normal;
 		font-size: 0.9rem;
-		color: oklch(var(--ink) / 30%);
+		color: var(--text-secondary);
 	}
 	.empty-sub {
-		font-size: 0.72rem;
-		color: oklch(var(--ink) / 18%);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		max-width: 26ch;
 		text-align: center;
 		line-height: 1.5;
@@ -229,13 +235,13 @@
 	.thought {
 		position: relative;
 		padding: 0.875rem 1rem;
-		opacity: 0;
-		animation: thought-in 0.6s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+		opacity: 1;
+		animation: none;
 		animation-delay: calc(var(--i) * 50ms);
 	}
 
 	@keyframes thought-in {
-		from { opacity: 0; transform: translateY(12px); filter: blur(2px); }
+		from { opacity: 1; transform: translateY(12px); filter: blur(2px); }
 		to { opacity: 1; transform: translateY(0); filter: blur(0); }
 	}
 
@@ -267,41 +273,41 @@
 
 	.thought-mood {
 		font-family: var(--font-display);
-		font-style: italic;
-		font-size: 0.72rem;
+		font-style: normal;
+		font-size: 0.75rem;
 		opacity: 0.7;
 	}
 
 	.thought-time {
-		font-family: var(--font-mono);
-		font-size: 0.6rem;
-		color: oklch(var(--ink) / 18%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		letter-spacing: 0.04em;
 	}
 
 	/* Action labels */
 	.thought-action {
 		display: inline-block;
-		font-family: var(--font-mono);
-		font-size: 0.6rem;
+		font-family: var(--font-body);
+		font-size: 0.75rem;
 		letter-spacing: 0.04em;
 		margin-bottom: 0.375rem;
 		padding: 0.125rem 0.4rem;
 		border-radius: 0.75rem;
-		background: oklch(var(--ink) / 3%);
-		color: oklch(var(--ink) / 35%);
+		background: var(--card);
+		color: var(--text-secondary);
 	}
-	.thought-action-reach { color: oklch(0.78 0.12 75 / 65%); background: oklch(0.78 0.12 75 / 5%); }
-	.thought-action-drop { color: oklch(0.78 0.16 310 / 65%); background: oklch(0.78 0.16 310 / 5%); }
-	.thought-action-wake { color: oklch(0.75 0.12 200 / 65%); background: oklch(0.75 0.12 200 / 5%); }
-	.thought-action-mood { color: oklch(0.78 0.15 140 / 65%); background: oklch(0.78 0.15 140 / 5%); }
+	.thought-action-reach { color: var(--text-secondary); background: var(--card); }
+	.thought-action-drop { color: var(--text-secondary); background: var(--card); }
+	.thought-action-wake { color: var(--text-secondary); background: var(--card); }
+	.thought-action-mood { color: var(--text-secondary); background: var(--card); }
 
 	/* Body text */
 	.thought-body {
 		font-family: var(--font-body);
 		font-size: 0.78rem;
 		line-height: 1.7;
-		color: oklch(var(--ink) / 42%);
+		color: var(--text-secondary);
 		white-space: pre-line;
 		cursor: default;
 	}
@@ -315,9 +321,9 @@
 	}
 
 	.thought-more {
-		font-family: var(--font-mono);
-		font-size: 0.58rem;
-		color: oklch(var(--ink) / 22%);
+		font-family: var(--font-body);
+		font-size: 0.75rem;
+		color: var(--text-secondary);
 		background: none;
 		border: none;
 		padding: 0;
@@ -326,9 +332,31 @@
 		letter-spacing: 0.05em;
 		transition: color 0.2s ease;
 	}
-	.thought-more:hover { color: oklch(var(--ink) / 45%); }
+	.thought-more:hover { color: var(--text-secondary); }
 
 	@media (max-width: 640px) {
 		.thoughts-page { padding: 1.5rem 1rem; }
 	}
+
+/* Little Moon surfaces, controls, and readable content. */
+
+.thoughts-page { padding: 32px; }
+.thoughts-flow { max-width: 720px; gap: 16px; }
+.thought { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 24px; }
+.thought-glow { display: none; }
+.thought-mood { font: 500 14px var(--font-body); opacity: 1; }
+.thought-body { font-size: 16px; line-height: 1.7; color: var(--foreground); }
+.thought-action { color: var(--primary); background: var(--accent); padding: 4px 8px; margin-right: 4px; }
+.thought-more { min-height: 44px; font-size: 14px; color: var(--primary); padding: 8px 0; }
+.empty-text { font: 400 28px var(--font-display); color: var(--foreground); }
+.empty-sub { font-size: 14px; max-width: 42ch; }
+@media (max-width: 640px) { .thoughts-page { padding: 20px; } }
+
+button { min-height: 44px; font-family: var(--font-body); }
+
+button:focus-visible { outline: 2px solid var(--ring); outline-offset: 3px; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
+
+.pulse-dot { background: var(--primary); }
 </style>

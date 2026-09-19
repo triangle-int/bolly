@@ -1,4 +1,8 @@
 <script lang="ts">
+	import Maximize2 from "@lucide/svelte/icons/maximize-2";
+	import ChevronDown from "@lucide/svelte/icons/chevron-down";
+	import ChevronUp from "@lucide/svelte/icons/chevron-up";
+	import X from "@lucide/svelte/icons/x";
 	import { AppBridge, PostMessageTransport } from "@modelcontextprotocol/ext-apps/app-bridge";
 
 	let {
@@ -171,16 +175,16 @@
 		<span class="mcp-app-label">{toolName}</span>
 		<div class="mcp-app-controls">
 			{#if !collapsed}
-				<button class="mcp-app-btn" onclick={enterFullscreen} title="Fullscreen">⊞</button>
+				<button class="mcp-app-btn" onclick={enterFullscreen} aria-label="Fullscreen" title="Fullscreen"><Maximize2 size={18} /></button>
 			{/if}
 			<button class="mcp-app-btn" onclick={() => collapsed = !collapsed} title={collapsed ? "Expand" : "Collapse"}>
-				{collapsed ? "+" : "−"}
+				{#if collapsed}<ChevronDown size={18} />{:else}<ChevronUp size={18} />{/if}
 			</button>
 		</div>
 	</div>
 	{#if !collapsed}
 		{#if fullscreen}
-			<button class="mcp-fs-close" onclick={exitFullscreen}>✕ close</button>
+			<button class="mcp-fs-close" onclick={exitFullscreen}><X size={18} /> Close fullscreen</button>
 		{/if}
 		<iframe
 			bind:this={iframe}
@@ -199,9 +203,10 @@
 			position: fixed;
 			inset: 0;
 			z-index: 99998;
-			background: rgba(0,0,0,0.7);
+			background: color-mix(in srgb, var(--background) 75%, transparent);
 		}
-	</style>`}
+
+</style>`}
 </svelte:head>
 
 <style>
@@ -225,11 +230,11 @@
 	}
 
 	.mcp-app-label {
-		font-family: var(--font-mono);
-		font-size: 0.7rem;
-		color: oklch(0.78 0.12 75 / 40%);
+		font-family: var(--font-body);
+		font-size: 0.8125rem;
+		color: var(--text-secondary);
 		letter-spacing: 0.06em;
-		text-transform: lowercase;
+		text-transform: none;
 	}
 
 	.mcp-app-controls {
@@ -239,27 +244,27 @@
 
 	.mcp-app-btn {
 		background: none;
-		border: 1px solid oklch(0.78 0.12 75 / 15%);
+		border: 1px solid var(--border);
 		border-radius: 4px;
-		color: oklch(0.6 0 0);
+		color: var(--text-secondary);
 		font-size: 0.75rem;
 		cursor: pointer;
 		padding: 0 0.35rem;
 		line-height: 1.4;
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 	}
 
 	.mcp-app-btn:hover {
-		color: oklch(0.85 0 0);
-		border-color: oklch(0.78 0.12 75 / 30%);
+		color: var(--text-secondary);
+		border-color: var(--border);
 	}
 
 	.mcp-app-frame {
 		width: 100%;
 		height: 480px;
-		border: 1px solid oklch(0.78 0.12 75 / 10%);
+		border: 1px solid var(--border);
 		border-radius: 8px;
-		background: oklch(0.10 0.01 280);
+		background: var(--card);
 		opacity: 0;
 		transition: opacity 0.3s ease;
 		display: block;
@@ -287,12 +292,12 @@
 		right: 0;
 		z-index: 100000;
 		height: 2.5rem;
-		background: #1a1a1a;
+		background: var(--popover);
 		border: none;
-		border-bottom: 1px solid #333;
-		color: #eee;
+		border-bottom: 1px solid var(--border);
+		color: var(--foreground);
 		font-size: 0.85rem;
-		font-family: var(--font-mono);
+		font-family: var(--font-body);
 		cursor: pointer;
 		display: flex;
 		align-items: center;
@@ -301,11 +306,19 @@
 	}
 
 	.mcp-fs-close:hover {
-		background: #c44;
-		color: #fff;
+		background: var(--accent);
+		color: var(--foreground);
 	}
 
 	.collapsed .mcp-app-header {
 		margin-bottom: 0;
 	}
+
+ .mcp-app-btn {min-height:44px;min-width:44px;border-radius:8px;padding:8px 12px;background:var(--card);color:var(--foreground)}
+ .mcp-app-btn:hover {background:var(--accent)}
+ .mcp-app-label {font-size:13px;letter-spacing:0;color:var(--text-secondary)}
+ .mcp-fs-close {height:44px;background:var(--popover);border-color:var(--border);color:var(--foreground);font-family:var(--font-body)}
+ .mcp-fs-close:hover {background:var(--accent);color:var(--foreground)}
+ .mcp-app-frame.fs {inset:44px 0 0;height:calc(100dvh - 44px)}
+
 </style>
