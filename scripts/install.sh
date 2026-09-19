@@ -241,7 +241,6 @@ model_mode = "auto"
 
 [llm.tokens]
 ANTHROPIC = ""       # Required — get key at https://console.anthropic.com
-GOOGLE_AI = ""       # Optional — embeddings + media analysis
 ELEVENLABS = ""      # Optional — text-to-speech
 CONF
     log "created $NOLUNE_DIR/config.toml"

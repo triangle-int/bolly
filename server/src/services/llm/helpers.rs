@@ -551,7 +551,7 @@ pub fn build_multimodal_prompt(
                 }
             }
         } else if meta.mime_type.starts_with("video/") || meta.mime_type.starts_with("audio/") {
-            // Preserve attachment metadata; video analysis is available via watch_video.
+            // Preserve attachment metadata. Video and audio stay ordinary files (#91).
             let kind = if meta.mime_type.starts_with("video/") {
                 "video"
             } else {
@@ -559,15 +559,7 @@ pub fn build_multimodal_prompt(
             };
             let size_mb = meta.size as f64 / (1024.0 * 1024.0);
             let mime = &meta.mime_type;
-            let mut description = format!("[{kind}: {name} — {mime}, {size_mb:.1} MB]");
-            if kind == "video" {
-                description.push_str(
-                    "\nto analyze this video, call watch_video for the attached upload.\n\
-                    IMPORTANT: in the prompt field, include ALL context you know about this file — \
-                    filename, what the user said about it, where it's from, etc. \
-                    this context helps the model give a much better analysis.",
-                );
-            }
+            let description = format!("[{kind}: {name} — {mime}, {size_mb:.1} MB]");
             contents.push(ContentBlock::text(description));
             log::info!(
                 "attached {kind}: {name} ({}, {size_mb:.1} MB)",
@@ -717,7 +709,10 @@ mod tests {
             assert!(text.contains(&format!("[{kind}: {name} — {mime},")));
             assert!(!text.contains("local path:"));
             assert!(!text.contains("listen_music"));
-            assert_eq!(text.contains("call watch_video"), kind == "video");
+            assert!(
+                !text.contains("watch_video"),
+                "attachments must not advertise the retired video tool"
+            );
             let ContentBlock::Text { text } = content.last().unwrap() else {
                 panic!("expected user text")
             };

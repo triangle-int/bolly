@@ -113,13 +113,11 @@ async fn main() {
 
     // Start heartbeat — companion's autonomous inner life
     {
-        let google_ai_key = state.config.read().await.llm.tokens.google_ai.clone();
         services::heartbeat::start(
             &state.workspace_dir,
             state.llm.clone(),
             state.events.clone(),
             state.vector_store.clone(),
-            google_ai_key.clone(),
             state.machine_registry.clone(),
             state.resources.clone(),
         );

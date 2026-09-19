@@ -514,9 +514,12 @@ pub struct LlmTokens {
     pub open_router: String,
     #[serde(default, rename = "ELEVENLABS", alias = "elevenlabs")]
     pub elevenlabs: String,
-    #[serde(default, rename = "GOOGLE_AI", alias = "google_ai", alias = "gemini")]
-    pub google_ai: String,
 }
+
+/// Token keys that no longer exist. They are dropped from saved config and
+/// reported at load time. `GOOGLE_AI`/`gemini` powered built-in video
+/// analysis, retired in #91.
+pub const RETIRED_TOKEN_KEYS: [&str; 3] = ["GOOGLE_AI", "google_ai", "gemini"];
 
 fn default_host() -> String {
     "0.0.0.0".into()
@@ -663,7 +666,6 @@ impl Default for LlmTokens {
             brave_search: String::new(),
             open_router: String::new(),
             elevenlabs: String::new(),
-            google_ai: String::new(),
         }
     }
 }
@@ -724,6 +726,15 @@ pub fn load_config() -> anyhow::Result<Config> {
     {
         obsolete.push("config.llm.heavy_multiplier".to_string());
     }
+    if let Some(tokens) = document.get("llm").and_then(|value| value.get("tokens")) {
+        for key in RETIRED_TOKEN_KEYS {
+            if tokens.get(key).is_some() {
+                obsolete.push(format!(
+                    "config.llm.tokens.{key} (built-in video analysis was retired)"
+                ));
+            }
+        }
+    }
     for key in ["LANDING_URL", "FLY_APP_NAME", "FLY_MACHINE_ID"] {
         if env::var_os(key).is_some() {
             obsolete.push(format!("env.{key}"));
@@ -780,11 +791,6 @@ pub fn load_config() -> anyhow::Result<Config> {
     if let Ok(key) = env::var("ELEVENLABS_API_KEY") {
         if !key.is_empty() {
             config.llm.tokens.elevenlabs = key;
-        }
-    }
-    if let Ok(key) = env::var("GOOGLE_AI_API_KEY") {
-        if !key.is_empty() {
-            config.llm.tokens.google_ai = key;
         }
     }
     // GitHub token override
@@ -848,10 +854,11 @@ pub fn serialize_config_preserving_keys(config: &Config, original: &str) -> anyh
             "open_router",
             "openrouter",
             "elevenlabs",
-            "google_ai",
-            "gemini",
         ] {
             tokens.remove(alias);
+        }
+        for retired in RETIRED_TOKEN_KEYS {
+            tokens.remove(retired);
         }
     }
     if let Some(llm) = document.get_mut("llm").and_then(toml::Value::as_table_mut) {
@@ -1037,6 +1044,21 @@ heavy_multiplier = 2.5
         assert!(json.get("landing_url").is_none());
         assert!(json.get("plan").is_none());
         assert!(json["llm"].get("heavy_multiplier").is_none());
+    }
+
+    #[test]
+    fn retired_google_ai_token_is_ignored_and_removed_on_save() {
+        let original = "[llm]\nprovider='api'\n[llm.tokens]\nopenai='o'\nGOOGLE_AI='g'\ngemini='g2'\ngoogle_ai='g3'";
+        let config: Config = toml::from_str(original).unwrap();
+        let serialized = super::serialize_config_preserving_keys(&config, original).unwrap();
+        let value: toml::Value = toml::from_str(&serialized).unwrap();
+        let tokens = &value["llm"]["tokens"];
+        for key in ["GOOGLE_AI", "google_ai", "gemini"] {
+            assert!(tokens.get(key).is_none(), "retired token {key} was kept");
+        }
+        assert_eq!(tokens["OPEN_AI"].as_str(), Some("o"));
+        let json = serde_json::to_value(config).unwrap();
+        assert!(json["llm"]["tokens"].get("GOOGLE_AI").is_none());
     }
 
     #[test]

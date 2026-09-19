@@ -283,7 +283,6 @@ pub async fn run_single_agent(
     llm: &LlmBackend,
     events: &broadcast::Sender<ServerEvent>,
     vector_store: &Arc<crate::services::vector::VectorStore>,
-    google_ai_key: &str,
     agent: &ChildAgentConfig,
     task_override: Option<&str>,
     trigger: &str,
@@ -441,7 +440,6 @@ pub async fn run_single_agent(
             slug,
             events.clone(),
             vector_store.clone(),
-            google_ai_key,
             machine_registry,
             &agent.tool_groups,
             resources,
@@ -503,7 +501,6 @@ fn build_agent_tools_for(
     slug: &str,
     events: broadcast::Sender<ServerEvent>,
     vector_store: Arc<crate::services::vector::VectorStore>,
-    google_ai_key: &str,
     machine_registry: Option<&crate::services::machine_registry::MachineRegistry>,
     tool_groups: &[String],
     resources: &crate::services::resource_access::ResourceAccess,
@@ -633,19 +630,6 @@ fn build_agent_tools_for(
                 resources,
             )));
             raw_tools.push(Box::new(tools::RemoteBashTool::new(registry.clone())));
-        }
-    }
-
-    // media
-    if has("media") {
-        if !google_ai_key.is_empty() {
-            raw_tools.push(Box::new(tools::WatchVideoTool::new(
-                google_ai_key,
-                workspace_dir,
-                slug,
-                &public_url,
-                resources,
-            )));
         }
     }
 
