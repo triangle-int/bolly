@@ -512,7 +512,7 @@ pub async fn run_single_turn(
 
     let sent_files = tools::SentFiles::default();
     let mcp_snapshot = mcp_registry.snapshot_app_tools().await;
-    let mcp_tools = mcp_registry.tools_as_dyn().await;
+    let mcp_tools = mcp_registry.active_tools_as_dyn().await;
     // Prefer instance-level github token; fall back to global config
     let github_token = {
         let global_token = chat_config

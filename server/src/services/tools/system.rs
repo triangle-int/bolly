@@ -1050,10 +1050,6 @@ pub struct UpdateConfigArgs {
     pub anthropic_key: Option<String>,
     /// Brave Search API key. Leave null to keep current.
     pub brave_search_key: Option<String>,
-    /// Add an MCP server. Provide as {"name": "...", "url": "..."}. Leave null to skip.
-    pub add_mcp_server: Option<McpServerArg>,
-    /// Remove an MCP server by name. Leave null to skip.
-    pub remove_mcp_server: Option<String>,
     /// Set the user's timezone (IANA format, e.g. "Asia/Bishkek", "Europe/Moscow"). Leave null to keep current.
     pub timezone: Option<String>,
     /// Set the companion's display name. Leave null to keep current.
@@ -1091,14 +1087,6 @@ fn default_587() -> u16 {
 }
 fn default_993() -> u16 {
     993
-}
-
-#[derive(Deserialize, JsonSchema)]
-pub struct McpServerArg {
-    /// Human-readable name for the MCP server (e.g. "excalidraw").
-    pub name: String,
-    /// HTTP URL of the MCP server (e.g. "https://mcp.excalidraw.com/mcp").
-    pub url: String,
 }
 
 impl Tool for UpdateConfigTool {
@@ -1166,37 +1154,6 @@ impl Tool for UpdateConfigTool {
             } else {
                 "brave search key updated".into()
             });
-        }
-
-        if let Some(server) = &args.add_mcp_server {
-            let name = server.name.trim().to_string();
-            let url = server.url.trim().to_string();
-            if name.is_empty() || url.is_empty() {
-                return Err(ToolExecError(
-                    "MCP server name and url cannot be empty".into(),
-                ));
-            }
-            if config.mcp_servers.iter().any(|s| s.name == name) {
-                return Err(ToolExecError(format!("MCP server '{name}' already exists")));
-            }
-            config.mcp_servers.push(crate::config::McpServerConfig {
-                name: name.clone(),
-                url: Some(url),
-                command: None,
-                args: Default::default(),
-                headers: Default::default(),
-            });
-            changes.push(format!("added MCP server '{name}'"));
-        }
-
-        if let Some(name) = &args.remove_mcp_server {
-            let name = name.trim().to_string();
-            let before = config.mcp_servers.len();
-            config.mcp_servers.retain(|s| s.name != name);
-            if config.mcp_servers.len() == before {
-                return Err(ToolExecError(format!("MCP server '{name}' not found")));
-            }
-            changes.push(format!("removed MCP server '{name}'"));
         }
 
         // --- Instance-specific settings (project_state.json) ---
@@ -1306,8 +1263,6 @@ impl Tool for UpdateConfigTool {
             || args.openai_key.is_some()
             || args.anthropic_key.is_some()
             || args.brave_search_key.is_some()
-            || args.add_mcp_server.is_some()
-            || args.remove_mcp_server.is_some()
         {
             let output = toml::to_string_pretty(&config)
                 .map_err(|e| ToolExecError(format!("failed to serialize config: {e}")))?;
