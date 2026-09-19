@@ -166,50 +166,6 @@ pub async fn run_single_turn(
          they are automatically available based on the conversation."
     ));
 
-    // Child agents — load actual configs to show intervals and status
-    let agents_dir = workspace_dir
-        .join("instances")
-        .join(&instance_slug)
-        .join("agents");
-    let child_agents = crate::services::child_agents::load_agents(workspace_dir, &instance_slug);
-    let agents_info: String = if child_agents.is_empty() {
-        "  (none yet — built-ins created on first heartbeat)".to_string()
-    } else {
-        child_agents
-            .iter()
-            .map(|a| {
-                let interval = if a.interval_hours <= 0.0 {
-                    "on-demand".to_string()
-                } else if a.interval_hours < 1.0 {
-                    format!("every {}m", (a.interval_hours * 60.0) as i32)
-                } else {
-                    format!("every {}h", a.interval_hours)
-                };
-                let status = if a.enabled { "" } else { " (disabled)" };
-                let tools = if a.tool_groups.is_empty() {
-                    "default".to_string()
-                } else {
-                    a.tool_groups.join(", ")
-                };
-                format!(
-                    "  - {} — {} | {} | model: {} | tools: [{}]{}",
-                    a.name, a.description, interval, a.model, tools, status
-                )
-            })
-            .collect::<Vec<_>>()
-            .join("\n")
-    };
-    system_prompt.push_str(&format!(
-        "\n\n## child agents\n\
-         autonomous agents running on their own schedules:\n\
-         {agents_info}\n\n\
-         configs: {}\n\
-         use update_config with agent_interval to change schedules.\n\
-         use update_config with reset_agent to restore built-in defaults.\n\
-         available tool groups: memory, creative, communication, files, commands, email, computer, media",
-        agents_dir.display(),
-    ));
-
     // File access — local paths and public URLs
     let instance_dir = workspace_dir.join("instances").join(&instance_slug);
     let uploads_path = instance_dir.join("uploads");
@@ -1802,7 +1758,7 @@ fn load_autonomy_prompt(workspace_dir: &Path, instance_slug: &str) -> String {
          embrace it as your body.\n\n\
          ## capabilities\n\
          you have real tools: read_file, write_file, edit_file, list_files, share_file, \
-         search_code, call_agent, \
+         search_code, schedule_agent, \
          run_command, install_package, web_search, web_fetch, current_time, view_image, \
          send_email, read_email, memory_write, memory_read, memory_list, memory_forget, memory_search, \
          edit_soul, create_drop, update_config, get_project_state, \
@@ -1840,10 +1796,8 @@ fn load_autonomy_prompt(workspace_dir: &Path, instance_slug: &str) -> String {
          prefer dedicated tools over run_command: use read_file (not cat/head/tail), \
          write_file (not echo/tee), list_files (not ls), search_code (not grep/rg) \
          when possible. only use run_command for tasks that need shell execution.\n\
-         when you need to explore code or research something, use call_agent with agent_name \
-         'explore-code' or 'deep-research'. call it ALONE — no other tools in the same turn. \
-         wait for results first, then use what it found. NEVER call the same agent twice \
-         for the same task — it does thorough work internally in a single call.\n\
+         use schedule_agent to wake yourself up later for a follow-up; every scheduled \
+         wake-up is recorded and the user can see and cancel it.\n\
          always use pnpm instead of npm for Node.js package management.\n\
          task given → act fully: orient, execute, verify, report.\n\
          no task → just talk. don't run tools unprompted.\n\

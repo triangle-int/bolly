@@ -27,12 +27,10 @@ fn api_router(state: &AppState) -> Router<AppState> {
         .merge(routes::thoughts::router())
         .merge(routes::uploads::router())
         .merge(routes::skills::router())
-        .merge(routes::heartbeat::router())
         .merge(routes::ws::router())
         .merge(routes::update::router())
         .merge(routes::tts::router())
         .merge(routes::memory_import::router())
-        .merge(routes::agents::router())
         .merge(routes::machine_agents::router())
         .merge(routes::session::router())
         // Removed or unknown API paths answer 404 JSON instead of the SPA shell.

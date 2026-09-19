@@ -8,13 +8,12 @@ fn every_proactive_trigger_routes_through_the_companion_loop() {
     let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let mut violations = Vec::new();
     for (file, must_contain) in [
-        ("server/src/services/heartbeat.rs", "proactive"),
+        ("server/src/services/heartbeat.rs", "Routine::CheckIn"),
         ("server/src/services/scheduler.rs", "Trigger::Schedule"),
         (
             "server/src/routes/machine_agents.rs",
             "Trigger::MachineConnected",
         ),
-        ("server/src/routes/agents.rs", "Trigger::Manual"),
         ("server/src/main.rs", "recover_on_restart"),
     ] {
         let source = fs::read_to_string(repo.join(file)).unwrap();

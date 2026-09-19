@@ -60,6 +60,9 @@ asked for that time) but still cannot message the user during quiet hours.
 | `daily_reach_out_budget` | 6 | spontaneous messages per rolling 24 hours (the attention budget) |
 | `retention_max` | 200 | finished records kept |
 | `retention_days` | 30 | finished records older than this are removed |
+| `check_in_interval_hours` | 1 | hours between check-ins (0.25 to 720) |
+| `reflection_enabled` | `false` | opt in to the reflection routine |
+| `reflection_interval_hours` | 72 | hours between reflections when enabled |
 
 ## API
 
@@ -71,10 +74,31 @@ asked for that time) but still cannot message the user during quiet hours.
 | `POST /api/instances/companion/activity/{id}/retry` | new attempt of a retryable failure or a cancelled run; `409` otherwise |
 | `GET/PUT /api/instances/companion/proactive` | policy |
 
+## Routines
+
+The companion has two routines (#93). There is no configurable agent set, no
+agent TOML, no tool groups, and no `call_agent` tool.
+
+| Routine | Trigger `agent` | Default interval | Tools |
+| --- | --- | --- | --- |
+| Check-in | `companion` | `check_in_interval_hours` = 1 | `reach_out`, `create_drop`, `memory_write`, `memory_read`, `memory_list`, `memory_search`, `read_email` (only with a configured account) |
+| Reflection (opt-in) | `reflection` | `reflection_interval_hours` = 72 | `memory_write`, `memory_read`, `memory_list`, `memory_search`, `memory_connect` |
+
+Neither routine can run commands, touch files or connected computers, send
+email, or call `memory_forget`; bulk memory rewriting by a background job is
+gone with the retired night-maintenance agent. Reflection is off until
+`reflection_enabled` is set, and it can add or connect memories but never
+delete them. A user-written `instances/companion/heartbeat.md` is appended to
+the check-in prompt as guidance.
+
+The next run of a routine is derived from its last finished activity record,
+so schedules survive restarts without marker files. A machine-connect event
+runs the check-in once with a connection task.
+
+Retired child-agent state (`agents/`, `agent_runs/`) is removed from the
+companion directory once at startup; it is never executed.
+
 ## Migration hooks
 
-The child-agent framework still executes inside the loop for now: each
-heartbeat routine, manual trigger, and machine-connect notification is one
-run. #93 removes the framework and keeps only the companion check-in; #94
-replaces raw Thoughts with these receipts; #85 and #82 add the commitment and
-handoff triggers.
+#94 replaces raw Thoughts with these receipts; #85 and #82 add the commitment
+and handoff triggers.

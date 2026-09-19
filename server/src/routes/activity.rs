@@ -123,6 +123,20 @@ async fn set_policy(
     {
         return Err((StatusCode::BAD_REQUEST, "quiet hours must be 0-23".into()));
     }
+    for (label, hours) in [
+        ("check_in_interval_hours", policy.check_in_interval_hours),
+        (
+            "reflection_interval_hours",
+            policy.reflection_interval_hours,
+        ),
+    ] {
+        if !hours.is_finite() || !(0.25..=24.0 * 30.0).contains(&hours) {
+            return Err((
+                StatusCode::BAD_REQUEST,
+                format!("{label} must be between 0.25 and 720 hours"),
+            ));
+        }
+    }
     if policy.retention_max == 0 || policy.retention_days == 0 {
         return Err((
             StatusCode::BAD_REQUEST,

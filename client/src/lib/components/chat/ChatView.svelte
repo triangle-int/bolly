@@ -13,7 +13,6 @@
 	import CreatureBubble from "./CreatureBubble.svelte";
 	import StreamActivity from "./StreamActivity.svelte";
 	import ContextStats from "./ContextStats.svelte";
-	import HeartbeatUpdateBanner from "./HeartbeatUpdateBanner.svelte";
 import McpAppViewer from "./McpAppViewer.svelte";
 	import { play, playImmediate, preload } from "$lib/sounds.js";
 	import { hapticMedium, hapticDouble, hapticError } from "$lib/haptics.js";
@@ -854,7 +853,6 @@ import McpAppViewer from "./McpAppViewer.svelte";
 
 		<aside class="chat-sidebar">
 			<div class="sidebar-banners">
-				<HeartbeatUpdateBanner {slug} />
 
 			</div>
 		</aside>

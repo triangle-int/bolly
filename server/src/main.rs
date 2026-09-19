@@ -69,8 +69,8 @@ async fn main() {
     // Remove unpublished passive-capture state before any agents start, using
     // the persistent workspace capability opened by the media store.
     let media_store = state.vector_store.media_store();
-    if let Err(error) = media_store.cleanup_legacy_observers() {
-        log::warn!("legacy observer cleanup was incomplete: {error}");
+    if let Err(error) = media_store.cleanup_legacy_child_agents() {
+        log::warn!("legacy child-agent cleanup was incomplete: {error}");
     }
     if let Err(error) = media_store.cleanup_legacy_screen_capture() {
         log::warn!("legacy passive screen-capture cleanup was incomplete: {error}");
@@ -140,7 +140,6 @@ async fn main() {
             state.llm.clone(),
             state.events.clone(),
             state.vector_store.clone(),
-            state.machine_registry.clone(),
             state.resources.clone(),
             state.proactive.clone(),
         );

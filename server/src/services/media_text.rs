@@ -556,52 +556,23 @@ impl MediaStore {
         remove_one_if_present(handle, Path::new(name))
     }
 
-    /// Remove retired observer state through the same persistent workspace
-    /// capability used by media cleanup. Runtime agent loading remains separate.
-    pub fn cleanup_legacy_observers(&self) -> io::Result<()> {
+    /// Remove the retired child-agent framework state (`agents/` configs,
+    /// markers, and histories; `agent_runs/` traces) from the canonical
+    /// companion through the persistent workspace capability (#93). Bounded,
+    /// idempotent, and never touches obsolete siblings.
+    pub fn cleanup_legacy_child_agents(&self) -> io::Result<()> {
         let Some(instances) = open_real_child_dir(&self.root, "instances")? else {
             return Ok(());
         };
+        let Some(companion) =
+            open_real_child_dir(&instances, crate::domain::companion::CANONICAL_SLUG)?
+        else {
+            return Ok(());
+        };
         let mut errors = Vec::new();
-        for entry in instances.read_dir(".")? {
-            let entry = match entry {
-                Ok(entry) => entry,
-                Err(error) => {
-                    errors.push(format!("instance entry: {error}"));
-                    continue;
-                }
-            };
-            let slug = entry.file_name().to_string_lossy().into_owned();
-            let file_type = match entry.file_type() {
-                Ok(file_type) => file_type,
-                Err(error) => {
-                    errors.push(format!("{slug}: {error}"));
-                    continue;
-                }
-            };
-            if file_type.is_symlink() || !file_type.is_dir() {
-                continue;
-            }
-            let instance = match open_real_child_dir(&instances, &slug) {
-                Ok(Some(instance)) => instance,
-                Ok(None) => continue,
-                Err(error) => {
-                    errors.push(format!("{slug}: {error}"));
-                    continue;
-                }
-            };
-            let agents = match open_real_child_dir(&instance, "agents") {
-                Ok(Some(agents)) => agents,
-                Ok(None) => continue,
-                Err(error) => {
-                    errors.push(format!("{slug}/agents: {error}"));
-                    continue;
-                }
-            };
-            for name in ["observer.toml", ".last_run_observer"] {
-                if let Err(error) = self.remove_legacy_file(&slug, "agents", &agents, name) {
-                    errors.push(format!("{slug}/agents/{name}: {error}"));
-                }
+        for name in ["agents", "agent_runs"] {
+            if let Err(error) = remove_legacy_dir(&companion, name) {
+                errors.push(format!("{name}: {error}"));
             }
         }
         finish_aggregated(errors)
@@ -1420,6 +1391,46 @@ pub fn read(memory_dir: &Path, path: &str) -> Result<String, String> {
         return Err("media text representation is empty".into());
     }
     Ok(content.to_owned())
+}
+
+/// Remove a retired directory of regular files. Symlinks and nested
+/// directories are left in place and reported so nothing outside the
+/// workspace can be affected.
+fn remove_legacy_dir(parent: &Dir, name: &str) -> io::Result<()> {
+    let Some(dir) = open_real_child_dir(parent, name)? else {
+        return Ok(());
+    };
+    let mut errors = Vec::new();
+    let mut names = Vec::new();
+    for (index, entry) in dir.read_dir(".")?.enumerate() {
+        if index >= MAX_LEGACY_CLEANUP_ENTRIES {
+            errors.push("entry limit exceeded".to_owned());
+            break;
+        }
+        match entry {
+            Ok(entry) => names.push(entry.file_name()),
+            Err(error) => errors.push(format!("entry: {error}")),
+        }
+    }
+    for entry_name in names {
+        let label = entry_name.to_string_lossy().into_owned();
+        let is_regular = dir
+            .symlink_metadata(&entry_name)
+            .map(|metadata| metadata.is_file())
+            .unwrap_or(false);
+        if !is_regular {
+            errors.push(format!("{label}: unexpected entry left in place"));
+            continue;
+        }
+        if let Err(error) = dir.remove_file(&entry_name) {
+            errors.push(format!("{label}: {error}"));
+        }
+    }
+    drop(dir);
+    if errors.is_empty() {
+        parent.remove_dir(name)?;
+    }
+    finish_aggregated(errors)
 }
 
 fn remove_one_if_present(root: &Dir, path: &Path) -> io::Result<()> {
@@ -2618,63 +2629,74 @@ mod tests {
     }
 
     #[test]
-    fn observer_cleanup_removes_only_retired_files_via_store_capability() {
+    fn child_agent_cleanup_removes_retired_state_from_the_companion_only() {
         let workspace = tempfile::tempdir().unwrap();
-        let agents = workspace.path().join("instances/one/agents");
+        let companion = workspace
+            .path()
+            .join("instances")
+            .join(crate::domain::companion::CANONICAL_SLUG);
+        let agents = companion.join("agents");
+        let runs = companion.join("agent_runs");
         std::fs::create_dir_all(&agents).unwrap();
-        std::fs::write(agents.join("observer.toml"), b"legacy").unwrap();
-        std::fs::write(agents.join(".last_run_observer"), b"1").unwrap();
-        std::fs::write(agents.join("custom.toml"), b"keep").unwrap();
+        std::fs::create_dir_all(&runs).unwrap();
+        std::fs::write(agents.join("companion.toml"), b"legacy").unwrap();
+        std::fs::write(agents.join(".last_run_companion"), b"1").unwrap();
+        std::fs::write(agents.join("companion_history.json"), b"[]").unwrap();
+        std::fs::write(runs.join("run_1.json"), b"{}").unwrap();
+        std::fs::write(companion.join("soul.md"), b"keep").unwrap();
+        let obsolete = workspace.path().join("instances/alice/agents");
+        std::fs::create_dir_all(&obsolete).unwrap();
+        std::fs::write(obsolete.join("custom.toml"), b"keep").unwrap();
 
         let store = MediaStore::open(workspace.path()).unwrap();
-        store.cleanup_legacy_observers().unwrap();
-        assert!(!agents.join("observer.toml").exists());
-        assert!(!agents.join(".last_run_observer").exists());
-        assert!(agents.join("custom.toml").exists());
-        store.cleanup_legacy_observers().unwrap();
+        store.cleanup_legacy_child_agents().unwrap();
+        assert!(!agents.exists());
+        assert!(!runs.exists());
+        assert_eq!(std::fs::read(companion.join("soul.md")).unwrap(), b"keep");
+        assert_eq!(
+            std::fs::read(obsolete.join("custom.toml")).unwrap(),
+            b"keep"
+        );
+        store.cleanup_legacy_child_agents().unwrap();
     }
 
     #[cfg(unix)]
     #[test]
-    fn observer_cleanup_preserves_preexisting_agents_symlink_target() {
+    fn child_agent_cleanup_preserves_preexisting_agents_symlink_target() {
         use std::os::unix::fs::symlink;
 
         let workspace = tempfile::tempdir().unwrap();
         let outside = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(workspace.path().join("instances/one")).unwrap();
-        std::fs::write(outside.path().join("observer.toml"), b"outside sentinel").unwrap();
-        std::fs::write(outside.path().join(".last_run_observer"), b"outside marker").unwrap();
-        symlink(
-            outside.path(),
-            workspace.path().join("instances/one/agents"),
-        )
-        .unwrap();
+        let companion = workspace
+            .path()
+            .join("instances")
+            .join(crate::domain::companion::CANONICAL_SLUG);
+        std::fs::create_dir_all(&companion).unwrap();
+        std::fs::write(outside.path().join("companion.toml"), b"outside sentinel").unwrap();
+        symlink(outside.path(), companion.join("agents")).unwrap();
 
         let store = MediaStore::open(workspace.path()).unwrap();
-        store.cleanup_legacy_observers().unwrap();
+        store.cleanup_legacy_child_agents().unwrap();
         assert_eq!(
-            std::fs::read(outside.path().join("observer.toml")).unwrap(),
+            std::fs::read(outside.path().join("companion.toml")).unwrap(),
             b"outside sentinel"
-        );
-        assert_eq!(
-            std::fs::read(outside.path().join(".last_run_observer")).unwrap(),
-            b"outside marker"
         );
     }
 
     #[cfg(unix)]
     #[test]
-    fn observer_cleanup_does_not_follow_swapped_instances_parent() {
+    fn child_agent_cleanup_does_not_follow_swapped_instances_parent() {
         use std::os::unix::fs::symlink;
 
         let parent = tempfile::tempdir().unwrap();
         let workspace = parent.path().join("workspace");
         let parked_instances = parent.path().join("parked-instances");
         let outside = tempfile::tempdir().unwrap();
-        std::fs::create_dir_all(workspace.join("instances/one/agents")).unwrap();
-        std::fs::create_dir_all(outside.path().join("one/agents")).unwrap();
+        let slug = crate::domain::companion::CANONICAL_SLUG;
+        std::fs::create_dir_all(workspace.join("instances").join(slug).join("agents")).unwrap();
+        std::fs::create_dir_all(outside.path().join(slug).join("agents")).unwrap();
         std::fs::write(
-            outside.path().join("one/agents/observer.toml"),
+            outside.path().join(slug).join("agents/companion.toml"),
             b"outside sentinel",
         )
         .unwrap();
@@ -2682,9 +2704,9 @@ mod tests {
         std::fs::rename(workspace.join("instances"), &parked_instances).unwrap();
         symlink(outside.path(), workspace.join("instances")).unwrap();
 
-        store.cleanup_legacy_observers().unwrap();
+        store.cleanup_legacy_child_agents().unwrap();
         assert_eq!(
-            std::fs::read(outside.path().join("one/agents/observer.toml")).unwrap(),
+            std::fs::read(outside.path().join(slug).join("agents/companion.toml")).unwrap(),
             b"outside sentinel"
         );
     }

@@ -98,9 +98,8 @@ pub use memory_tools::{
 pub use project::{TaskItem, TaskStatus};
 pub use skills::{ActivateSkillTool, ListSkillsTool, ReadSkillReferenceTool};
 pub use system::{
-    CallAgentTool, ClearContextTool, CreateDropTool, ExportProfileTool, GetSettingsTool,
-    GetTimeTool, ImportProfileTool, InteractiveSessionTool, RequestSecretTool, RunCommandTool,
-    UpdateConfigTool,
+    ClearContextTool, CreateDropTool, ExportProfileTool, GetSettingsTool, GetTimeTool,
+    ImportProfileTool, InteractiveSessionTool, RequestSecretTool, RunCommandTool, UpdateConfigTool,
 };
 // ---------------------------------------------------------------------------
 // Cached tool definitions snapshot (populated by build_tools, read by stats)
@@ -807,23 +806,17 @@ pub fn build_tools(
     // ── Web ──
     // web_search and web_fetch are native Anthropic server tools (added in llm.rs)
     tools.push(wrap(Box::new(ViewImageTool)));
-    // ── Agents ──
-    tools.push(wrap(Box::new(CallAgentTool::new(
-        workspace_dir,
-        instance_slug,
-        llm.clone(),
-        events.clone(),
-        vector_store.clone(),
-        resources,
-    ))));
-
     // ── Creative ──
     tools.push(wrap(Box::new(CreateDropTool::new(
         workspace_dir,
         instance_slug,
         events.clone(),
     ))));
-    // schedule_agent merged into call_agent (delay_seconds param)
+    // Explicit schedules run through the proactive loop (#92, #93).
+    tools.push(wrap(Box::new(communication::ScheduleAgentTool::new(
+        workspace_dir,
+        instance_slug,
+    ))));
 
     // ── Data ──
     tools.push(wrap(Box::new(ExportProfileTool::new(
