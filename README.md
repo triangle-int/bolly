@@ -123,7 +123,7 @@ Download the desktop app from [GitHub Releases](https://github.com/triangle-int/
 
 Connect it to your self-hosted Nolune server to use the companion interface and enable computer use on that machine.
 
-The release workflow runs on `v*` tags; manual runs must select a `v*` tag. It publishes server binaries and macOS, Windows, and Linux desktop artifacts. Nothing in this workflow provisions or updates running servers.
+The release workflow runs on `v*` tags; manual runs must select a `v*` tag. It publishes server binaries and macOS, Windows, and Linux desktop artifacts. Nothing in this workflow provisions or updates running servers. To exercise the pipeline from any branch without creating a release, run it manually with `dry_run` enabled; the binaries are attached to the workflow run as artifacts instead.
 
 <br>
 

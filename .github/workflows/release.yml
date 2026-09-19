@@ -5,6 +5,11 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Build every release binary and upload them as workflow artifacts instead of creating a GitHub release. Works from any branch.'
+        type: boolean
+        default: false
 
 permissions:
   contents: write
@@ -12,8 +17,8 @@ permissions:
 jobs:
   # ── Create empty draft release first (fast) ──
   create-release:
-    # Manual runs must select a release tag, never a branch.
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Manual runs must select a release tag, never a branch. A dry run never creates a release.
+    if: startsWith(github.ref, 'refs/tags/v') && inputs.dry_run != true
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -39,6 +44,8 @@ jobs:
   # ── Server binaries (parallel with desktop) ──
   server:
     needs: create-release
+    # Run after a real release is created, or on a dry run where create-release is skipped.
+    if: ${{ !cancelled() && (inputs.dry_run == true || needs.create-release.result == 'success') }}
     strategy:
       fail-fast: false
       matrix:
@@ -114,18 +121,31 @@ jobs:
         env:
           GIT_HASH: ${{ github.sha }}
 
-      - name: Upload to release
+      - name: Stage artifact
         shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           cp target/${{ matrix.target }}/release/nolune${{ matrix.ext }} ${{ matrix.artifact }}
           chmod +x ${{ matrix.artifact }} 2>/dev/null || true
-          gh release upload "${{ github.ref_name }}" ${{ matrix.artifact }} --clobber
+
+      - name: Upload to release
+        if: inputs.dry_run != true
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" ${{ matrix.artifact }} --clobber
+
+      - name: Upload as workflow artifact (dry run)
+        if: inputs.dry_run == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
 
   # ── Desktop apps (parallel with server) ──
   desktop:
     needs: create-release
+    if: ${{ !cancelled() && (inputs.dry_run == true || needs.create-release.result == 'success') }}
     strategy:
       fail-fast: false
       matrix:
@@ -191,7 +211,7 @@ jobs:
           APPLE_CERT: ${{ secrets.APPLE_CERTIFICATE }}
 
       - name: Build and upload to release (signed)
-        if: matrix.platform == 'macos-latest' && steps.apple-signing.outputs.enabled == 'true'
+        if: inputs.dry_run != true && matrix.platform == 'macos-latest' && steps.apple-signing.outputs.enabled == 'true'
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -213,7 +233,7 @@ jobs:
           args: ${{ matrix.args }}
 
       - name: Build and upload to release (unsigned)
-        if: matrix.platform != 'macos-latest' || steps.apple-signing.outputs.enabled != 'true'
+        if: inputs.dry_run != true && (matrix.platform != 'macos-latest' || steps.apple-signing.outputs.enabled != 'true')
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -228,9 +248,29 @@ jobs:
           prerelease: false
           args: ${{ matrix.args }}
 
+      - name: Build only (dry run)
+        if: inputs.dry_run == true
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          projectPath: desktop
+          args: ${{ matrix.args }}
+
+      - name: Upload as workflow artifact (dry run)
+        if: inputs.dry_run == true
+        uses: actions/upload-artifact@v4
+        with:
+          name: nolune-desktop-${{ matrix.platform }}
+          path: desktop/src-tauri/target/**/release/bundle/**
+          if-no-files-found: error
+
   # Publish only after every native artifact has been uploaded.
   publish:
     needs: [server, desktop]
+    if: inputs.dry_run != true
     runs-on: ubuntu-latest
     permissions:
       contents: write
