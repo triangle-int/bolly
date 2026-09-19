@@ -9,6 +9,7 @@ pub mod instances;
 pub mod machine_agents;
 pub mod memory_import;
 pub mod meta;
+pub mod session;
 pub mod skills;
 pub mod soul;
 pub mod thoughts;

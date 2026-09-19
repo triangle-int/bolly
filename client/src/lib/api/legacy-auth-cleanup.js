@@ -1,4 +1,4 @@
-const LEGACY_LOCAL_STORAGE_KEYS = ["bolly_auth_token", "bolly_token"];
+const LEGACY_LOCAL_STORAGE_KEYS = ["nolune_auth_token", "bolly_auth_token", "bolly_token"];
 const LEGACY_COOKIE_NAMES = ["nolune_token", "bolly_token", "bolly_auth_token"];
 
 /**
@@ -7,8 +7,9 @@ const LEGACY_COOKIE_NAMES = ["nolune_token", "bolly_token", "bolly_auth_token"];
  * Browser JavaScript cannot clear arbitrary Domain/Path cookie variants or
  * HttpOnly cookies. The historical cookies were host-only, Path=/ and
  * non-HttpOnly, so these expirations cover the variants Nolune created. The
- * server also rejects cookie authentication, which keeps unknown variants
- * fail-closed. Keep nolune_auth_token in localStorage until issue #112.
+ * server only honours its own HttpOnly session cookie, which keeps unknown
+ * variants fail-closed. Since issue #112 browsers pair for a session instead
+ * of storing the API token, so nolune_auth_token is legacy too.
  *
  * @param {Pick<Storage, "removeItem"> | undefined} storage
  * @param {{ cookie: string } | undefined} cookieDocument

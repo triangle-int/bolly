@@ -25,6 +25,7 @@ fn api_router(state: &AppState) -> Router<AppState> {
         .merge(routes::memory_import::router())
         .merge(routes::agents::router())
         .merge(routes::machine_agents::router())
+        .merge(routes::session::router())
         .layer(middleware::from_fn_with_state(
             state.clone(),
             auth_middleware,
@@ -39,11 +40,13 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
     let health = routes::health::router();
     let public_files = routes::uploads::public_router();
     let public_memory = routes::instances::public_memory_router();
+    let pairing = routes::session::public_router();
 
     let app = Router::new()
         .merge(health)
         .merge(public_files)
         .merge(public_memory)
+        .merge(pairing)
         .merge(api)
         .with_state(state);
 
@@ -61,3 +64,7 @@ pub fn build_router(state: AppState, static_dir: Option<PathBuf>) -> Router {
 #[cfg(test)]
 #[path = "../../test-support/router_security.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "../../test-support/session_security.rs"]
+mod session_tests;

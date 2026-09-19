@@ -509,6 +509,10 @@ if curl -sf "$NOLUNE_URL/healthz" >/dev/null 2>&1; then
     echo ""
     echo -e "  ${CYAN}${NOLUNE_URL}${NC}"
     echo ""
+    echo -e "  Browsers must be paired before they can open Nolune. Run"
+    echo -e "    ${BOLD}$BIN pair${NC}"
+    echo -e "  and enter the one-time code it prints in the browser."
+    echo ""
 else
     fail "nolune service did not become healthy — check $NOLUNE_DIR/nolune.log"
 fi

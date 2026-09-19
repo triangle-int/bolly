@@ -460,7 +460,21 @@ async fn update_server(
             }
         }
         if let Some(token) = &request.auth_token {
-            config.auth_token = token.trim().to_string();
+            let token = token.trim().to_string();
+            if config.auth_token != token {
+                // Rotating or clearing the API token is independent of paired
+                // browsers: their sessions keep working until revoked.
+                log::info!(
+                    "[config] API token {}; {} paired browser session(s) unaffected",
+                    if token.is_empty() {
+                        "cleared"
+                    } else {
+                        "rotated"
+                    },
+                    state.browser_sessions.list().len()
+                );
+            }
+            config.auth_token = token;
         }
         save_config(&config)?;
     }

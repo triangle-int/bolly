@@ -59,6 +59,11 @@ async fn main() {
 
     let state = app::state::AppState::new(config).await;
 
+    // Paired browsers survive restarts; the file holds only hashes.
+    state
+        .browser_sessions
+        .attach_storage(config::workspace_root().join("browser_sessions.json"));
+
     // Remove unpublished passive-capture state before any agents start, using
     // the persistent workspace capability opened by the media store.
     let media_store = state.vector_store.media_store();

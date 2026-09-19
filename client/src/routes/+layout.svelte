@@ -56,6 +56,9 @@
 		if (isDesignSystem) return;
 		init();
 
+		const unsubAuth = ws.onAuthLost(() => {
+			needsAuth = true;
+		});
 		const unsub = ws.subscribe((event: ServerEvent) => {
 			if (event.type === "instance_discovered") {
 				instances.upsert(event.instance);
@@ -71,12 +74,13 @@
 
 		return () => {
 			unsub();
+			unsubAuth();
 			ws.disconnect();
 		};
 	});
 
 	function handleAuth() {
-		// Re-init with new token
+		// The browser now holds a session cookie; reconnect with it.
 		ws.disconnect();
 		init();
 	}

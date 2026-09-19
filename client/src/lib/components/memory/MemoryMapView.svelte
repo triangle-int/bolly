@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { fetchMemory, fetchMemoryContent, searchMemory, deleteMemoryFile, fetchVectors, fetchMemoryGraph, getAuthToken, type MemorySearchResult, type VectorEntry } from "$lib/api/client.js";
+	import { fetchMemory, fetchMemoryContent, searchMemory, deleteMemoryFile, fetchVectors, fetchMemoryGraph, type MemorySearchResult, type VectorEntry } from "$lib/api/client.js";
 	import { Play, Music, FileText } from "@lucide/svelte";
 	import type { MemoryEntry, MemoryGraph } from "$lib/api/types.js";
 	import { getToasts } from "$lib/stores/toast.svelte.js";
@@ -531,8 +531,8 @@
 	}
 
 	function mediaUrl(path: string): string {
-		const token = getAuthToken() ?? '';
-		return `/api/instances/${encodeURIComponent(slug)}/memory/${path}${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+		// Same-origin: the session cookie authenticates media requests.
+		return `/api/instances/${encodeURIComponent(slug)}/memory/${path}`;
 	}
 
 	async function openDocument(entry: MemoryEntry) {

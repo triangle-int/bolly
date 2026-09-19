@@ -23,10 +23,13 @@ import { clearLegacyBrowserAuth } from "./legacy-auth-cleanup.js";
 const BASE = "";
 
 // ---------------------------------------------------------------------------
-// Auth token management
+// Authentication
+//
+// Browsers authenticate with a paired-session cookie (HttpOnly, set by the
+// server after `POST /api/session/pair`). The client never holds a credential:
+// same-origin fetches and WebSockets carry the cookie automatically. The
+// server API token stays with automation, the CLI and the desktop relay.
 // ---------------------------------------------------------------------------
-
-const TOKEN_KEY = "nolune_auth_token";
 
 function clearLegacyAuth() {
 	clearLegacyBrowserAuth(
@@ -39,40 +42,101 @@ export function isDesktopRelay(): boolean {
 	return typeof window !== "undefined" && "__NOLUNE_DESKTOP_RELAY__" in window;
 }
 
-export function getAuthToken(): string | null {
-	clearLegacyAuth();
-	// Desktop authenticates in the native exact-origin relay, never in browser URLs.
-	if (isDesktopRelay()) return null;
-	if (typeof localStorage === "undefined") return null;
-	return localStorage.getItem(TOKEN_KEY);
-}
-
-/** Build a public URL for media (video/image) that includes auth token in query string.
- *  Use this for <video src> and <img src> since they can't send Authorization headers. */
+/** Same-origin URL for an uploaded file, authenticated by the session cookie. */
 export function mediaUrl(slug: string, uploadId: string): string {
-	const token = getAuthToken();
-	const q = token ? `?token=${encodeURIComponent(token)}` : "";
-	return `${BASE}/public/files/${encodeURIComponent(slug)}/${encodeURIComponent(uploadId)}${q}`;
+	return uploadFileUrl(slug, uploadId);
 }
 
-export function setAuthToken(token: string) {
-	if (isDesktopRelay()) throw new Error("Reconnect from the desktop dashboard.");
-	if (typeof localStorage !== "undefined") {
-		localStorage.setItem(TOKEN_KEY, token);
+export type AuthKind = "disabled" | "token" | "session";
+
+export interface PairedDevice {
+	id: string;
+	label: string;
+	paired_via: string;
+	host: string;
+	created_at: number;
+	last_seen_at: number;
+	expires_at: number;
+	current: boolean;
+}
+
+export interface PairingCode {
+	id: string;
+	code: string;
+	expires_at: number;
+	expires_in_secs: number;
+	bound_host?: string;
+}
+
+export class PairingError extends Error {
+	constructor(
+		public readonly reason: "invalid_code" | "rate_limited" | "cross_origin" | "auth_disabled" | "unknown",
+		public readonly status: number,
+	) {
+		super(reason);
+		this.name = "PairingError";
 	}
-	clearLegacyAuth();
 }
 
-export function clearAuthToken() {
-	if (typeof localStorage !== "undefined") {
-		localStorage.removeItem(TOKEN_KEY);
+/** Redeem a one-time pairing code; the server answers with the session cookie. */
+export async function pairBrowser(code: string): Promise<PairedDevice> {
+	clearLegacyAuth();
+	const res = await fetch(`${BASE}/api/session/pair`, {
+		method: "POST",
+		headers: { "Content-Type": "application/json" },
+		body: JSON.stringify({ code }),
+	});
+	if (!res.ok) {
+		let reason: PairingError["reason"] = "unknown";
+		try {
+			const body = await res.json();
+			if (
+				body?.error === "invalid_code" ||
+				body?.error === "rate_limited" ||
+				body?.error === "cross_origin" ||
+				body?.error === "auth_disabled"
+			) {
+				reason = body.error;
+			}
+		} catch {
+			// no JSON body
+		}
+		throw new PairingError(reason, res.status);
 	}
-	clearLegacyAuth();
+	const body = await res.json();
+	return { ...body.session, current: true };
 }
 
-function authHeaders(): Record<string, string> {
-	const token = getAuthToken();
-	return token ? { Authorization: `Bearer ${token}` } : {};
+/** Whether this browser is currently authenticated, and how. Never throws on 401. */
+export async function fetchSession(): Promise<{ auth: AuthKind; session: PairedDevice | null } | null> {
+	const res = await fetch(`${BASE}/api/session`);
+	if (res.status === 401) return null;
+	if (!res.ok) throw new Error(await res.text().catch(() => res.statusText));
+	return res.json();
+}
+
+export function createPairingCode(): Promise<PairingCode> {
+	return json("/api/session/pairing", { method: "POST" });
+}
+
+export function fetchPairedDevices(): Promise<{ auth: AuthKind; devices: PairedDevice[] }> {
+	return json("/api/session/devices");
+}
+
+export async function revokePairedDevice(id: string): Promise<void> {
+	const res = await authedFetch(`/api/session/devices/${encodeURIComponent(id)}`, { method: "DELETE" });
+	if (res.status === 401) throw new AuthError();
+	if (!res.ok && res.status !== 404) throw new Error(await res.text().catch(() => res.statusText));
+}
+
+export async function revokeAllPairedDevices(): Promise<number> {
+	const body = await json<{ revoked: number }>("/api/session/devices", { method: "DELETE" });
+	return body.revoked;
+}
+
+export async function logoutSession(): Promise<void> {
+	const res = await authedFetch("/api/session/logout", { method: "POST" });
+	if (!res.ok && res.status !== 401) throw new Error(await res.text().catch(() => res.statusText));
 }
 
 // ---------------------------------------------------------------------------
@@ -87,11 +151,7 @@ export class AuthError extends Error {
 }
 
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
-	const headers = {
-		...authHeaders(),
-		...(init?.headers as Record<string, string> | undefined),
-	};
-	const res = await fetch(`${BASE}${url}`, { ...init, headers });
+	const res = await fetch(`${BASE}${url}`, init);
 	if (res.status === 401) {
 		throw new AuthError();
 	}
@@ -103,11 +163,7 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 async function authedFetch(url: string, init?: RequestInit): Promise<Response> {
-	const headers = {
-		...authHeaders(),
-		...(init?.headers as Record<string, string> | undefined),
-	};
-	return fetch(`${BASE}${url}`, { ...init, headers });
+	return fetch(`${BASE}${url}`, init);
 }
 
 // ---------------------------------------------------------------------------
@@ -552,9 +608,6 @@ export async function uploadFile(
 		const xhr = new XMLHttpRequest();
 		xhr.open("POST", `${BASE}/api/instances/${encodeURIComponent(slug)}/uploads`);
 
-		const token = getAuthToken();
-		if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-
 		if (onProgress) {
 			xhr.upload.onprogress = (e) => {
 				if (e.lengthComputable) onProgress(e.loaded, e.total);
@@ -591,9 +644,7 @@ export async function deleteUpload(slug: string, uploadId: string): Promise<void
 }
 
 export function uploadFileUrl(slug: string, uploadId: string): string {
-	const base = `/api/instances/${encodeURIComponent(slug)}/uploads/${encodeURIComponent(uploadId)}/file`;
-	const token = getAuthToken();
-	return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+	return `${BASE}/api/instances/${encodeURIComponent(slug)}/uploads/${encodeURIComponent(uploadId)}/file`;
 }
 
 // ---------------------------------------------------------------------------
@@ -728,9 +779,7 @@ export function setUpdateChannel(channel: string): Promise<{ ok: boolean; channe
 // ---------------------------------------------------------------------------
 
 export function exportInstanceUrl(slug: string): string {
-	const base = `${BASE}/api/instances/${encodeURIComponent(slug)}/export`;
-	const token = getAuthToken();
-	return token ? `${base}?token=${encodeURIComponent(token)}` : base;
+	return `${BASE}/api/instances/${encodeURIComponent(slug)}/export`;
 }
 
 /** Stream-download the export archive, reporting bytes received via callback. */
@@ -762,7 +811,7 @@ export async function importInstance(slug: string, file: File): Promise<{ ok: bo
 	form.append("file", file);
 	const res = await fetch(
 		`${BASE}/api/instances/${encodeURIComponent(slug)}/import`,
-		{ method: "POST", body: form, headers: authHeaders() },
+		{ method: "POST", body: form },
 	);
 	if (!res.ok) {
 		const text = await res.text();
@@ -796,8 +845,7 @@ export async function submitComputerUseResult(
 // ---------------------------------------------------------------------------
 
 export function createWebSocket(): WebSocket {
+	// Same-origin: the browser attaches the session cookie to the upgrade.
 	const proto = location.protocol === "https:" ? "wss:" : "ws:";
-	const token = getAuthToken();
-	const query = token ? `?token=${encodeURIComponent(token)}` : "";
-	return new WebSocket(`${proto}//${location.host}/api/ws${query}`);
+	return new WebSocket(`${proto}//${location.host}/api/ws`);
 }

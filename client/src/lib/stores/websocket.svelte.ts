@@ -1,4 +1,4 @@
-import { createWebSocket } from "$lib/api/client.js";
+import { createWebSocket, fetchSession } from "$lib/api/client.js";
 import type { ServerEvent } from "$lib/api/types.js";
 
 type EventHandler = (event: ServerEvent) => void;
@@ -10,6 +10,10 @@ let retryCount = $state(0);
 let intentionalClose = false;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 const handlers = new Set<EventHandler>();
+const authLostHandlers = new Set<() => void>();
+
+/** Server close code for a revoked browser session (see server ws.rs). */
+const CLOSE_SESSION_REVOKED = 4401;
 
 const MAX_RETRY_DELAY = 30_000;
 
@@ -46,12 +50,22 @@ export function getWebSocket() {
 				retryCount = 0;
 			});
 
-			socket.addEventListener("close", () => {
+			socket.addEventListener("close", (ev) => {
 				connected = false;
 				socket = null;
-				if (!intentionalClose) {
-					scheduleReconnect();
+				if (intentionalClose) return;
+				if (ev.code === CLOSE_SESSION_REVOKED) {
+					notifyAuthLost();
+					return;
 				}
+				// A failed upgrade does not expose its HTTP status; ask the
+				// server whether this browser is still paired before retrying.
+				void fetchSession()
+					.then((session) => {
+						if (session === null) notifyAuthLost();
+						else scheduleReconnect();
+					})
+					.catch(() => scheduleReconnect());
 			});
 
 			socket.addEventListener("error", () => {
@@ -73,6 +87,11 @@ export function getWebSocket() {
 			handlers.add(handler);
 			return () => handlers.delete(handler);
 		},
+		/** Called when the server no longer accepts this browser's session. */
+		onAuthLost(handler: () => void): () => void {
+			authLostHandlers.add(handler);
+			return () => authLostHandlers.delete(handler);
+		},
 		disconnect() {
 			intentionalClose = true;
 			if (retryTimer) {
@@ -86,6 +105,12 @@ export function getWebSocket() {
 			retryCount = 0;
 		},
 	};
+}
+
+function notifyAuthLost() {
+	reconnecting = false;
+	retryCount = 0;
+	for (const handler of authLostHandlers) handler();
 }
 
 function scheduleReconnect() {
