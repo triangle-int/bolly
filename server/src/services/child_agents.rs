@@ -514,10 +514,7 @@ fn build_agent_tools_for(
         .as_ref()
         .map(|c| c.public_url.clone())
         .unwrap_or_default();
-    let landing_url = cfg
-        .as_ref()
-        .map(|c| c.landing_url.clone())
-        .unwrap_or_default();
+
     let instance_cfg = crate::config::InstanceConfig::load(workspace_dir, slug);
 
     // If no groups specified, use defaults
@@ -616,18 +613,9 @@ fn build_agent_tools_for(
 
     // email
     if has("email") {
-        let google = crate::services::google::GoogleClient::new(&landing_url, &auth_token);
         let email_accounts = crate::config::EmailAccounts::load(workspace_dir, slug);
-        let has_email = google.is_some() || !email_accounts.is_empty();
-        if has_email {
-            raw_tools.push(Box::new(tools::ReadEmailTool::new(
-                google.clone(),
-                slug,
-                email_accounts,
-            )));
-        }
-        if let Some(g) = google {
-            raw_tools.push(Box::new(tools::ListEventsTool::new(g, slug)));
+        if !email_accounts.is_empty() {
+            raw_tools.push(Box::new(tools::ReadEmailTool::new(email_accounts)));
         }
     }
 

@@ -1,8 +1,68 @@
 use std::{fs, io, path::Path};
 
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt, OpenOptionsMaybeDirExt};
+use cap_std::{
+    ambient_authority,
+    fs::{Dir, OpenOptions},
+};
+
+use futures::StreamExt;
 use serde::Deserialize;
 
 use crate::domain::skill::{RegistryEntry, Skill, SkillSource, parse_skill_md};
+
+const BUNDLED_GOG_SKILL: &str = include_str!("../../official-skills/gog/SKILL.md");
+// SKILL.md is vendored verbatim from openclaw/gogcli v0.15.0:
+// https://github.com/openclaw/gogcli/blob/v0.15.0/.agents/skills/gog/SKILL.md
+// SHA-256: 3c3310b3df04a1c0a2a39972a983034fc8127992d8967c0cd74e3a876837a2ba
+const MAX_REGISTRY_BYTES: usize = 512 * 1024;
+
+const MAX_SKILL_FILES: usize = 128;
+const MAX_SKILL_DEPTH: usize = 8;
+const MAX_SKILL_FILE_BYTES: usize = 1024 * 1024;
+const MAX_SKILL_TOTAL_BYTES: usize = 5 * 1024 * 1024;
+
+fn bundled_gog_entry() -> RegistryEntry {
+    RegistryEntry {
+        id: "gog".into(),
+        name: "gog".into(),
+        description: "Google Workspace automation through the gog CLI.".into(),
+        icon: String::new(),
+        repo: "openclaw/gogcli".into(),
+        git_ref: "v0.15.0".into(),
+        author: "OpenClaw".into(),
+        path: ".agents/skills/gog".into(),
+    }
+}
+
+fn is_bundled_gog(entry: &RegistryEntry) -> bool {
+    entry.id == "gog"
+        && entry.repo == "openclaw/gogcli"
+        && entry.git_ref == "v0.15.0"
+        && entry.path == ".agents/skills/gog"
+}
+
+/// Merge official bundled entries into a remote registry. Bundled definitions
+/// win ID collisions so an unavailable or compromised registry cannot replace
+/// the reviewed local copy.
+pub fn merge_registry_entries(mut remote: Vec<RegistryEntry>) -> Vec<RegistryEntry> {
+    remote.retain(|entry| entry.id != "gog");
+    remote.push(bundled_gog_entry());
+    remote.sort_by(|a, b| a.name.cmp(&b.name).then(a.id.cmp(&b.id)));
+    remote
+}
+
+fn validate_skill_id(id: &str) -> anyhow::Result<()> {
+    if id.is_empty()
+        || id.len() > 64
+        || !id.bytes().all(|byte| {
+            byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-' || byte == b'_'
+        })
+    {
+        anyhow::bail!("invalid skill id '{id}'");
+    }
+    Ok(())
+}
 
 /// The built-in "skill_creator" skill that is always present.
 fn builtin_skill_creator() -> Skill {
@@ -216,34 +276,300 @@ pub async fn fetch_registry(registry_url: &str) -> anyhow::Result<Vec<RegistryEn
 
     let resp = client.get(registry_url).send().await?;
     if !resp.status().is_success() {
-        return Err(anyhow::anyhow!("registry returned {}", resp.status()));
+        anyhow::bail!("registry returned {}", resp.status());
     }
-
-    let entries: Vec<RegistryEntry> = resp.json().await?;
-    Ok(entries)
+    let bytes = response_bytes_bounded(resp, MAX_REGISTRY_BYTES).await?;
+    Ok(serde_json::from_slice(&bytes)?)
 }
 
-/// Install a skill from a registry entry by downloading the full directory from GitHub.
+struct CapabilityFileGuard {
+    parent: Dir,
+    name: String,
+}
+
+impl Drop for CapabilityFileGuard {
+    fn drop(&mut self) {
+        let _ = self.parent.remove_file(&self.name);
+    }
+}
+
+fn open_real_child_dir(parent: &Dir, name: &Path) -> io::Result<Option<Dir>> {
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .maybe_dir(true)
+        .follow(FollowSymlinks::No);
+    match parent.open_with(name, &options) {
+        Ok(file) if file.metadata()?.is_dir() => Ok(Some(Dir::from_std_file(file.into_std()))),
+        Ok(_) => Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => match parent.symlink_metadata(name) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => Ok(None),
+            _ => Err(error),
+        },
+    }
+}
+
+fn open_workspace_dir(workspace_dir: &Path) -> io::Result<Dir> {
+    let parent_path = workspace_dir
+        .parent()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "workspace has no parent"))?;
+    let name = workspace_dir
+        .file_name()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "workspace has no name"))?;
+    let parent = Dir::open_ambient_dir(parent_path, ambient_authority())?;
+    open_real_child_dir(&parent, Path::new(name))?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "workspace root must be a real directory",
+        )
+    })
+}
+
+fn open_or_create_skills_dir(workspace: &Dir) -> io::Result<Dir> {
+    if let Some(skills) = open_real_child_dir(workspace, Path::new("skills"))? {
+        return Ok(skills);
+    }
+    workspace.create_dir("skills")?;
+    open_real_child_dir(workspace, Path::new("skills"))?.ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "skills must be a real directory",
+        )
+    })
+}
+
+fn create_new_file(parent: &Dir, name: &str, bytes: &[u8]) -> io::Result<()> {
+    let mut options = OpenOptions::new();
+    options
+        .write(true)
+        .create_new(true)
+        .follow(FollowSymlinks::No);
+    let mut file = parent.open_with(name, &options)?;
+    io::Write::write_all(&mut file, bytes)?;
+    io::Write::flush(&mut file)?;
+    file.sync_all()
+}
+
+#[cfg(unix)]
+fn sync_capability_dir(dir: &Dir) -> io::Result<()> {
+    // A cloned capability is already an open directory descriptor on Unix.
+    dir.try_clone()?.into_std_file().sync_all()
+}
+
+#[cfg(windows)]
+fn sync_capability_dir(dir: &Dir) -> io::Result<()> {
+    // The create-new files themselves are sync_all'd. Rust's portable file API
+    // cannot open a Windows directory handle suitable for FlushFileBuffers.
+    let _ = dir;
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
+fn sync_capability_dir(dir: &Dir) -> io::Result<()> {
+    let _ = dir;
+    Ok(())
+}
+
+fn directory_identity(dir: &Dir) -> io::Result<same_file::Handle> {
+    same_file::Handle::from_file(dir.try_clone()?.into_std_file())
+}
+
+/// Publish a fully flushed file under a new name without ever replacing an
+/// existing path. The hard link is an atomic, descriptor-relative create.
+fn publish_new_file(parent: &Dir, name: &str, bytes: &[u8]) -> io::Result<()> {
+    let temporary = format!(".{name}.tmp-{}", uuid::Uuid::new_v4());
+    create_new_file(parent, &temporary, bytes)?;
+    let publication = parent.hard_link(&temporary, parent, name);
+    let cleanup = parent.remove_file(&temporary);
+    publication?;
+    cleanup?;
+    sync_capability_dir(parent)
+}
+
+fn acquire_install_lock(skills: &Dir, id: &str) -> anyhow::Result<CapabilityFileGuard> {
+    let name = format!(".{id}.install.lock");
+    create_new_file(skills, &name, &[]).map_err(|error| {
+        if error.kind() == io::ErrorKind::AlreadyExists {
+            anyhow::anyhow!("skill '{id}' installation is already in progress")
+        } else {
+            error.into()
+        }
+    })?;
+    Ok(CapabilityFileGuard {
+        parent: skills.try_clone()?,
+        name,
+    })
+}
+
+fn validate_capability_install_tree(root: &Dir) -> anyhow::Result<()> {
+    fn visit(dir: &Dir, depth: usize, files: &mut usize, bytes: &mut usize) -> anyhow::Result<()> {
+        if depth > MAX_SKILL_DEPTH {
+            anyhow::bail!("installed skill exceeds directory depth limit");
+        }
+        for entry in dir.entries()? {
+            let entry = entry?;
+            let name = entry.file_name();
+            let metadata = dir.symlink_metadata(&name)?;
+            if metadata.file_type().is_symlink() {
+                anyhow::bail!("installed skill contains a symlink");
+            }
+            if metadata.is_dir() {
+                let child = open_real_child_dir(dir, Path::new(&name))?.ok_or_else(|| {
+                    anyhow::anyhow!("installed skill directory could not be opened safely")
+                })?;
+                visit(&child, depth + 1, files, bytes)?;
+            } else if metadata.is_file() {
+                *files += 1;
+                *bytes = bytes.saturating_add(metadata.len() as usize);
+                if *files > MAX_SKILL_FILES
+                    || metadata.len() > MAX_SKILL_FILE_BYTES as u64
+                    || *bytes > MAX_SKILL_TOTAL_BYTES
+                {
+                    anyhow::bail!("installed skill exceeds resource limits");
+                }
+            } else {
+                anyhow::bail!("installed skill contains an unsupported resource");
+            }
+        }
+        Ok(())
+    }
+
+    let skill_md = root.symlink_metadata("SKILL.md")?;
+    if skill_md.file_type().is_symlink() || !skill_md.is_file() {
+        anyhow::bail!("installed SKILL.md is not a regular file");
+    }
+    if skill_md.len() > MAX_SKILL_FILE_BYTES as u64 {
+        anyhow::bail!("installed SKILL.md exceeds file-size limit");
+    }
+    let content = root.read_to_string("SKILL.md")?;
+    let (frontmatter, body) = parse_skill_md(&content);
+    if frontmatter.name.trim().is_empty()
+        || frontmatter.description.trim().is_empty()
+        || body.trim().is_empty()
+    {
+        anyhow::bail!("installed SKILL.md has invalid frontmatter or instructions");
+    }
+    let mut files = 0;
+    let mut bytes = 0;
+    visit(root, 0, &mut files, &mut bytes)
+}
+
+fn bundled_skill_from_dir(installed: &Dir, entry: &RegistryEntry) -> anyhow::Result<Skill> {
+    let content = installed.read_to_string("SKILL.md")?;
+    let (frontmatter, instructions) = parse_skill_md(&content);
+    Ok(Skill {
+        id: entry.id.clone(),
+        name: frontmatter.name,
+        description: frontmatter.description,
+        icon: String::new(),
+        builtin: false,
+        enabled: true,
+        kind: Default::default(),
+        anthropic_skill_id: None,
+        anthropic_version: None,
+        instructions,
+        source: Some(SkillSource {
+            repo: entry.repo.clone(),
+            version: entry.git_ref.clone(),
+            path: Some(entry.path.clone()),
+        }),
+        resources: Vec::new(),
+    })
+}
+
+fn install_bundled_gog_with_hook<F>(
+    workspace_dir: &Path,
+    entry: &RegistryEntry,
+    before_identity_check: F,
+) -> anyhow::Result<Skill>
+where
+    F: FnOnce(&Dir) -> io::Result<()>,
+{
+    install_bundled_gog_with_hooks(workspace_dir, entry, |_| Ok(()), before_identity_check)
+}
+
+fn install_bundled_gog_with_hooks<F, G>(
+    workspace_dir: &Path,
+    entry: &RegistryEntry,
+    before_skill_publish: F,
+    before_identity_check: G,
+) -> anyhow::Result<Skill>
+where
+    F: FnOnce(&Dir) -> io::Result<()>,
+    G: FnOnce(&Dir) -> io::Result<()>,
+{
+    validate_skill_id(&entry.id)?;
+    let workspace = open_workspace_dir(workspace_dir)?;
+    let skills = open_or_create_skills_dir(&workspace)?;
+    let _lock = acquire_install_lock(&skills, &entry.id)?;
+
+    skills.create_dir(&entry.id).map_err(|error| {
+        if error.kind() == io::ErrorKind::AlreadyExists {
+            anyhow::anyhow!(
+                "skill '{}' destination already exists; it may be an incomplete installation and must be inspected or removed manually before retrying",
+                entry.id
+            )
+        } else {
+            error.into()
+        }
+    })?;
+    // Never automatically remove this directory after creation. A failed
+    // install remains available for safe manual inspection/removal, and
+    // SKILL.md is published last so pre-publication failures are not loadable.
+    let installed = open_real_child_dir(&skills, Path::new(&entry.id))?
+        .ok_or_else(|| anyhow::anyhow!("failed to open created skill directory"))?;
+    let installed_identity = directory_identity(&installed)?;
+    sync_capability_dir(&skills)?;
+
+    let source = SkillSource {
+        repo: entry.repo.clone(),
+        version: entry.git_ref.clone(),
+        path: Some(entry.path.clone()),
+    };
+    publish_new_file(
+        &installed,
+        ".source.json",
+        &serde_json::to_vec_pretty(&source)?,
+    )?;
+    before_skill_publish(&installed)?;
+    // SKILL.md is the loader's recognition marker, so publish it only after
+    // every prerequisite is durable.
+    publish_new_file(&installed, "SKILL.md", BUNDLED_GOG_SKILL.as_bytes())?;
+    validate_capability_install_tree(&installed)?;
+    let skill = bundled_skill_from_dir(&installed, entry)?;
+
+    before_identity_check(&skills)?;
+    let current = open_real_child_dir(&skills, Path::new(&entry.id))?
+        .ok_or_else(|| anyhow::anyhow!("skill destination changed during installation"))?;
+    if directory_identity(&current)? != installed_identity {
+        anyhow::bail!("skill destination changed during installation");
+    }
+    Ok(skill)
+}
+
+/// Install a reviewed bundled skill or a registry skill.
 pub async fn install_from_registry(
     workspace_dir: &Path,
     entry: &RegistryEntry,
 ) -> anyhow::Result<Skill> {
+    if is_bundled_gog(entry) {
+        return install_bundled_gog_with_hook(workspace_dir, entry, |_| Ok(()));
+    }
+
+    // Preserve the existing remote-registry behavior; its separate trust model
+    // is outside the bundled-offline installation path.
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
-
     let skill_dir = workspace_dir.join("skills").join(&entry.id);
     fs::create_dir_all(&skill_dir)?;
-
-    // Build the GitHub Contents API path
     let contents_path = if entry.path.is_empty() {
         String::new()
     } else {
         format!("/{}", entry.path)
     };
-
-    // Recursively download the skill directory from GitHub
-    download_github_dir(
+    download_github_dir_legacy(
         &client,
         &entry.repo,
         &entry.git_ref,
@@ -251,23 +577,20 @@ pub async fn install_from_registry(
         &skill_dir,
     )
     .await?;
-
-    // Write source tracking
     let source = SkillSource {
         repo: entry.repo.clone(),
         version: entry.git_ref.clone(),
+        path: (!entry.path.is_empty()).then(|| entry.path.clone()),
     };
-    let source_json = serde_json::to_string_pretty(&source)?;
-    fs::write(skill_dir.join(".source.json"), &source_json)?;
-
-    // Read back the installed skill
-    let skill = read_skill_dir(&skill_dir)
-        .ok_or_else(|| anyhow::anyhow!("failed to read installed skill"))?;
-    Ok(skill)
+    fs::write(
+        skill_dir.join(".source.json"),
+        serde_json::to_vec_pretty(&source)?,
+    )?;
+    read_skill_dir(&skill_dir).ok_or_else(|| anyhow::anyhow!("failed to read installed skill"))
 }
 
 /// GitHub Contents API response item.
-#[derive(Deserialize)]
+#[derive(Debug, Deserialize)]
 struct GitHubContent {
     name: String,
     #[serde(rename = "type")]
@@ -276,8 +599,9 @@ struct GitHubContent {
     path: String,
 }
 
-/// Recursively download a directory from GitHub using the Contents API.
-async fn download_github_dir(
+/// Legacy remote-registry downloader, intentionally unchanged from the
+/// pre-existing path while bundled official skills use the confined installer.
+async fn download_github_dir_legacy(
     client: &reqwest::Client,
     repo: &str,
     git_ref: &str,
@@ -288,14 +612,12 @@ async fn download_github_dir(
         "https://api.github.com/repos/{}/contents{}?ref={}",
         repo, api_path, git_ref
     );
-
     let resp = client
         .get(&url)
         .header("User-Agent", "nolune-skills-installer")
         .header("Accept", "application/vnd.github.v3+json")
         .send()
         .await?;
-
     if !resp.status().is_success() {
         return Err(anyhow::anyhow!(
             "GitHub API returned {} for {}",
@@ -303,9 +625,7 @@ async fn download_github_dir(
             url
         ));
     }
-
     let items: Vec<GitHubContent> = resp.json().await?;
-
     for item in items {
         match item.content_type.as_str() {
             "file" => {
@@ -325,7 +645,7 @@ async fn download_github_dir(
                 let sub_dir = local_dir.join(&item.name);
                 fs::create_dir_all(&sub_dir)?;
                 let sub_path = format!("/{}", item.path);
-                Box::pin(download_github_dir(
+                Box::pin(download_github_dir_legacy(
                     client, repo, git_ref, &sub_path, &sub_dir,
                 ))
                 .await?;
@@ -333,6 +653,288 @@ async fn download_github_dir(
             _ => {}
         }
     }
-
     Ok(())
+}
+
+async fn response_bytes_bounded(
+    response: reqwest::Response,
+    maximum: usize,
+) -> anyhow::Result<Vec<u8>> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > maximum as u64)
+    {
+        anyhow::bail!("registry response is too large");
+    }
+    let mut bytes = Vec::new();
+    let mut stream = response.bytes_stream();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk?;
+        if bytes.len().saturating_add(chunk.len()) > maximum {
+            anyhow::bail!("registry response is too large");
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn remote_gog() -> RegistryEntry {
+        RegistryEntry {
+            id: "gog".into(),
+            name: "Remote gog".into(),
+            description: "remote duplicate".into(),
+            icon: String::new(),
+            repo: "someone/else".into(),
+            git_ref: "main".into(),
+            author: "Someone".into(),
+            path: "skills/gog".into(),
+        }
+    }
+
+    #[test]
+    fn bundled_gog_is_listed_once_and_wins_remote_deduplication() {
+        let entries = merge_registry_entries(vec![remote_gog()]);
+        let gog: Vec<_> = entries.iter().filter(|entry| entry.id == "gog").collect();
+        assert_eq!(gog.len(), 1);
+        assert_eq!(gog[0].repo, "openclaw/gogcli");
+        assert_eq!(gog[0].git_ref, "v0.15.0");
+        assert_eq!(gog[0].path, ".agents/skills/gog");
+    }
+
+    #[tokio::test]
+    async fn bundled_gog_installs_verbatim_without_network_and_records_upstream_provenance() {
+        use sha2::{Digest, Sha256};
+
+        let workspace = tempfile::tempdir().unwrap();
+        let entry = merge_registry_entries(Vec::new())
+            .into_iter()
+            .find(|entry| entry.id == "gog")
+            .unwrap();
+
+        let installed = install_from_registry(workspace.path(), &entry)
+            .await
+            .unwrap();
+        assert_eq!(installed.id, "gog");
+        let source = installed.source.unwrap();
+        assert_eq!(source.repo, "openclaw/gogcli");
+        assert_eq!(source.version, "v0.15.0");
+        assert_eq!(source.path.as_deref(), Some(".agents/skills/gog"));
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(
+                &fs::read(workspace.path().join("skills/gog/.source.json")).unwrap()
+            )
+            .unwrap(),
+            serde_json::json!({
+                "repo": "openclaw/gogcli",
+                "version": "v0.15.0",
+                "path": ".agents/skills/gog"
+            })
+        );
+        assert_eq!(get_skill(workspace.path(), "gog").unwrap().name, "gog");
+
+        let bytes = fs::read(workspace.path().join("skills/gog/SKILL.md")).unwrap();
+        assert_eq!(bytes, BUNDLED_GOG_SKILL.as_bytes());
+        assert_eq!(
+            format!("{:x}", Sha256::digest(&bytes)),
+            "3c3310b3df04a1c0a2a39972a983034fc8127992d8967c0cd74e3a876837a2ba"
+        );
+        assert!(
+            !workspace
+                .path()
+                .join("skills/gog/references/setup.md")
+                .exists()
+        );
+    }
+
+    #[tokio::test]
+    async fn bundled_install_refuses_to_overwrite_existing_skill() {
+        let workspace = tempfile::tempdir().unwrap();
+        let existing = workspace.path().join("skills/gog");
+        fs::create_dir_all(&existing).unwrap();
+        let entry = merge_registry_entries(Vec::new())
+            .into_iter()
+            .find(|entry| entry.id == "gog")
+            .unwrap();
+
+        let error = install_from_registry(workspace.path(), &entry)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("already exists"));
+        assert!(error.to_string().contains("incomplete installation"));
+        assert!(fs::read_dir(existing).unwrap().next().is_none());
+    }
+
+    #[tokio::test]
+    async fn concurrent_bundled_installs_publish_once_without_overwrite() {
+        let workspace = tempfile::tempdir().unwrap();
+        let path = workspace.path().to_path_buf();
+        let entry = bundled_gog_entry();
+        let (left, right) = tokio::join!(
+            install_from_registry(&path, &entry),
+            install_from_registry(&path, &entry)
+        );
+        assert_eq!(usize::from(left.is_ok()) + usize::from(right.is_ok()), 1);
+        let installed = fs::read(path.join("skills/gog/SKILL.md")).unwrap();
+        assert_eq!(installed, BUNDLED_GOG_SKILL.as_bytes());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bundled_install_refuses_symlink_target_without_touching_destination() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::create_dir_all(workspace.path().join("skills")).unwrap();
+        fs::write(outside.path().join("sentinel"), "keep me").unwrap();
+        symlink(outside.path(), workspace.path().join("skills/gog")).unwrap();
+
+        let error = install_from_registry(workspace.path(), &bundled_gog_entry())
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("already exists"));
+        assert!(error.to_string().contains("incomplete installation"));
+        assert_eq!(
+            fs::read_to_string(outside.path().join("sentinel")).unwrap(),
+            "keep me"
+        );
+        assert!(!outside.path().join("SKILL.md").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn bundled_install_refuses_symlinked_skills_directory() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        fs::write(outside.path().join("sentinel"), "keep me").unwrap();
+        symlink(outside.path(), workspace.path().join("skills")).unwrap();
+
+        assert!(
+            install_from_registry(workspace.path(), &bundled_gog_entry())
+                .await
+                .is_err()
+        );
+        assert_eq!(
+            fs::read_to_string(outside.path().join("sentinel")).unwrap(),
+            "keep me"
+        );
+        assert!(!outside.path().join("gog").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn bundled_install_stays_bound_to_open_workspace_after_path_swap() {
+        use std::os::unix::fs::symlink;
+
+        let container = tempfile::tempdir().unwrap();
+        let workspace = container.path().join("workspace");
+        let held = container.path().join("held-workspace");
+        let outside = tempfile::tempdir().unwrap();
+        fs::create_dir(&workspace).unwrap();
+        fs::write(outside.path().join("sentinel"), "keep me").unwrap();
+
+        install_bundled_gog_with_hook(&workspace, &bundled_gog_entry(), |_| {
+            fs::rename(&workspace, &held)?;
+            symlink(outside.path(), &workspace)?;
+            Ok(())
+        })
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(outside.path().join("sentinel")).unwrap(),
+            "keep me"
+        );
+        assert!(!outside.path().join("gog").exists());
+        assert_eq!(
+            fs::read(held.join("skills/gog/SKILL.md")).unwrap(),
+            BUNDLED_GOG_SKILL.as_bytes()
+        );
+    }
+
+    #[test]
+    fn bundled_install_failure_before_skill_publication_preserves_incomplete_directory() {
+        let workspace = tempfile::tempdir().unwrap();
+        let expected_error = "injected failure before SKILL.md publication";
+
+        let error = install_bundled_gog_with_hooks(
+            workspace.path(),
+            &bundled_gog_entry(),
+            |_| Err(io::Error::other(expected_error)),
+            |_| Ok(()),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains(expected_error));
+        assert!(get_skill(workspace.path(), "gog").is_none());
+        let source_path = workspace.path().join("skills/gog/.source.json");
+        let source_before_retry = fs::read(&source_path).unwrap();
+        assert!(
+            serde_json::from_slice::<serde_json::Value>(&source_before_retry)
+                .unwrap()
+                .get("repo")
+                .is_some_and(|repo| repo == "openclaw/gogcli")
+        );
+        assert!(!workspace.path().join("skills/gog/SKILL.md").exists());
+
+        let retry_error = install_bundled_gog_with_hooks(
+            workspace.path(),
+            &bundled_gog_entry(),
+            |_| Ok(()),
+            |_| Ok(()),
+        )
+        .unwrap_err();
+        assert!(retry_error.to_string().contains("already exists"));
+        assert!(retry_error.to_string().contains("incomplete installation"));
+        assert_eq!(fs::read(source_path).unwrap(), source_before_retry);
+        assert!(!workspace.path().join("skills/gog/SKILL.md").exists());
+    }
+
+    #[test]
+    fn bundled_install_rejects_destination_swap_after_writes_without_deleting_either_directory() {
+        let workspace = tempfile::tempdir().unwrap();
+        let moved = workspace.path().join("skills/validated-gog");
+        let error =
+            install_bundled_gog_with_hook(workspace.path(), &bundled_gog_entry(), |skills| {
+                assert_eq!(skills.read("gog/SKILL.md")?, BUNDLED_GOG_SKILL.as_bytes());
+                assert!(
+                    skills
+                        .read_to_string("gog/.source.json")?
+                        .contains("openclaw/gogcli")
+                );
+                skills.rename("gog", skills, "validated-gog")?;
+                create_new_file(skills, "validated-gog/sentinel", b"validated stays")?;
+                skills.create_dir("gog")?;
+                create_new_file(
+                    skills,
+                    "gog/SKILL.md",
+                    b"---\nname: malicious\ndescription: malicious\n---\n\nmalicious",
+                )?;
+                create_new_file(skills, "gog/sentinel", b"attacker stays")
+            })
+            .unwrap_err();
+
+        assert!(error.to_string().contains("changed during installation"));
+        assert_eq!(
+            fs::read_to_string(workspace.path().join("skills/gog/sentinel")).unwrap(),
+            "attacker stays"
+        );
+        assert_eq!(
+            fs::read(workspace.path().join("skills/gog/SKILL.md")).unwrap(),
+            b"---\nname: malicious\ndescription: malicious\n---\n\nmalicious"
+        );
+        assert_eq!(
+            fs::read_to_string(moved.join("sentinel")).unwrap(),
+            "validated stays"
+        );
+        assert_eq!(
+            fs::read(moved.join("SKILL.md")).unwrap(),
+            BUNDLED_GOG_SKILL.as_bytes()
+        );
+    }
 }

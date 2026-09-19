@@ -3,7 +3,7 @@
 	import ConversationContent from "$lib/components/ai-elements/conversation/conversation-content.svelte";
 	import { untrack } from "svelte";
 	import { goto } from "$app/navigation";
-	import { clearContext, fetchChats, fetchCompanionName, fetchGoogleAccounts, fetchMessages, fetchMood, sendMessage, stopAgent, uploadFile } from "$lib/api/client.js";
+	import { clearContext, fetchChats, fetchCompanionName, fetchMessages, fetchMood, sendMessage, stopAgent, uploadFile } from "$lib/api/client.js";
 	import type { ChatMessage, ChatSummary, ServerEvent } from "$lib/api/types.js";
 	import { getWebSocket } from "$lib/stores/websocket.svelte.js";
 	import MessageBubble from "./MessageBubble.svelte";
@@ -52,7 +52,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 	let historyRequest = 0;
 	let sending = $state(false);
 	let agentRunning = $state(false);
-	let needsGoogleReconnect = $state(false);
+
 	const savedMood = typeof localStorage !== "undefined" ? localStorage.getItem("mood:" + untrack(() => slug)) : null;
 	let mood = $state(savedMood || "calm");
 	let scrollContainer: HTMLDivElement | null = $state(null);
@@ -404,15 +404,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 				.then((res) => { if (res.name) companionName = res.name; })
 				.catch(() => {}); // name is non-critical
 
-			// Check if Google accounts need reconnection (missing drive scope)
-			fetchGoogleAccounts(currentSlug)
-				.then((accounts) => {
-					needsGoogleReconnect = accounts.some((a) =>
-						a.scopes && !a.scopes.includes("auth/drive ") && !a.scopes.endsWith("auth/drive")
-						&& a.scopes.includes("drive.file")
-					);
-				})
-				.catch(() => {});
+
 		});
 
 		const unsub = ws.subscribe((event: ServerEvent) => {
@@ -864,12 +856,7 @@ import McpAppViewer from "./McpAppViewer.svelte";
 		<aside class="chat-sidebar">
 			<div class="sidebar-banners">
 				<HeartbeatUpdateBanner {slug} />
-				{#if needsGoogleReconnect}
-					<CreatureBubble ondismiss={() => needsGoogleReconnect = false}>
-						Google Drive access updated — please reconnect your account in
-						<a href="/{slug}/settings">settings</a>.
-					</CreatureBubble>
-				{/if}
+
 			</div>
 		</aside>
 	</div>

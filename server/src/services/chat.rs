@@ -152,11 +152,6 @@ pub async fn run_single_turn(
         .filter(|s| !s.is_empty())
         .or_else(|| chat_config.as_ref().map(|c| c.auth_token.clone()))
         .unwrap_or_default();
-    let landing_url = chat_config
-        .as_ref()
-        .map(|c| c.landing_url.clone())
-        .unwrap_or_default();
-    let google = crate::services::google::GoogleClient::new(&landing_url, &auth_token);
 
     // Build system prompt with STABLE content first (for Anthropic prompt caching).
     // Anthropic caches the longest matching prefix, so put rarely-changing
@@ -172,36 +167,19 @@ pub async fn run_single_turn(
     // Dynamic tool hint
     let browser_available = matches!(plan, "companion" | "unlimited");
 
-    // Check connected Google accounts for this instance
-    let google_accounts = if let Some(ref g) = google {
-        g.accounts(&instance_slug).await.unwrap_or_default()
-    } else {
-        vec![]
-    };
-    let google_connected = !google_accounts.is_empty();
-
     let email_accounts = crate::config::EmailAccounts::load(workspace_dir, &instance_slug);
     let instance_cfg = crate::config::InstanceConfig::load(workspace_dir, &instance_slug);
     let email_configured = !email_accounts.is_empty();
-    let has_any_email = google_connected || email_configured;
-    let google_hint = if google_connected && email_configured {
-        " email, google calendar, google drive,"
-    } else if google_connected {
-        " gmail, google calendar, google drive,"
-    } else if email_configured {
-        " email,"
-    } else {
-        ""
-    };
+    let email_hint = if email_configured { " email," } else { "" };
     if browser_available {
         system_prompt.push_str(&format!(
-            "\n\n## tools\nyou have built-in tools for web browsing,{google_hint} code search, \
+            "\n\n## tools\nyou have built-in tools for web browsing,{email_hint} code search, \
              project management, creative drops, and more. use them directly when needed — \
              they are automatically available based on the conversation."
         ));
     } else {
         system_prompt.push_str(&format!(
-            "\n\n## tools\nyou have built-in tools for{google_hint} code search, \
+            "\n\n## tools\nyou have built-in tools for{email_hint} code search, \
              project management, creative drops, and more. use them directly when needed — \
              they are automatically available based on the conversation.\n\n\
              note: browser-based features (headless browsing, screenshots, slidev/PDF export) \
@@ -279,11 +257,8 @@ pub async fn run_single_turn(
     }
 
     // Email accounts prompt
-    if has_any_email {
+    if email_configured {
         let mut account_lines = Vec::new();
-        for a in &google_accounts {
-            account_lines.push(format!("- {} (gmail)", a.email));
-        }
         for cfg in &email_accounts {
             let label = if cfg.smtp_from.is_empty() {
                 &cfg.smtp_user
@@ -302,24 +277,7 @@ pub async fn run_single_turn(
         ));
     }
 
-    // Google services (calendar, drive)
-    if google_connected {
-        system_prompt.push_str(
-            "\n\n## google integration\n\
-             available google tools:\n\
-             - list_events / create_event: Google Calendar\n\
-             - list_drive_files / read_drive_file / upload_drive_file: Google Drive\n\
-             use `account` parameter to pick which google account.",
-        );
-    } else {
-        system_prompt.push_str(
-            "\n\n## google integration\n\
-             google is NOT connected. you do NOT have calendar or drive tools.\n\
-             NEVER fabricate calendar events or file listings.",
-        );
-    }
-
-    if !has_any_email {
+    if !email_configured {
         system_prompt.push_str(
             "\nyou do NOT have email tools. \
              NEVER pretend to read or send email. \
@@ -652,7 +610,6 @@ pub async fn run_single_turn(
         llm,
         Some(pending_secrets),
         plan,
-        google,
         email_accounts,
         sent_files,
         Some(mcp_snapshot.clone()),
@@ -1487,7 +1444,7 @@ fn compute_context_stats_local(
     }
 
     // 3. Tools hint (static string)
-    let tools_hint = "## tools\nyou have built-in tools for web browsing, gmail, calendar, drive, \
+    let tools_hint = "## tools\nyou have built-in tools for web browsing, \
          code search, project management, creative drops, and more. use them directly when needed — \
          they are automatically available based on the conversation.";
     sections.push(ContextSection {
@@ -1502,14 +1459,6 @@ fn compute_context_stats_local(
         name: "autonomy".into(),
         chars: autonomy_prompt.len(),
         tokens: estimate_tokens(&autonomy_prompt),
-    });
-
-    // 5. Google integration status
-    let google_status = "## google integration\nstatus shown in system prompt";
-    sections.push(ContextSection {
-        name: "google".into(),
-        chars: google_status.len(),
-        tokens: estimate_tokens(google_status),
     });
 
     // 6. Style (static)
@@ -1887,8 +1836,7 @@ fn load_autonomy_prompt(workspace_dir: &Path, instance_slug: &str) -> String {
          you have real tools: read_file, write_file, edit_file, list_files, share_file, \
          search_code, call_agent, \
          run_command, install_package, web_search, web_fetch, current_time, view_image, \
-         send_email, read_email, list_events, create_event, list_drive_files, read_drive_file, \
-         upload_drive_file, memory_write, memory_read, memory_list, memory_forget, memory_search, \
+         send_email, read_email, memory_write, memory_read, memory_list, memory_forget, memory_search, \
          edit_soul, create_drop, update_config, get_project_state, \
          update_project_state, create_task/update_task/list_tasks, browse.\n\
          users can attach images, PDFs, and text files directly in chat — you see them automatically.\n\
