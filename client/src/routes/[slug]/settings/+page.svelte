@@ -45,6 +45,8 @@
 		updateProvider,
 		fetchRhythmTracking,
 		updateRhythmTracking,
+		fetchProactivePolicy,
+		updateProactivePolicy,
 		fetchMeta,
 		fetchChangelog,
 		getUpdateChannel,
@@ -56,9 +58,40 @@
 	import { Marked } from "marked";
 	import { getToasts } from "$lib/stores/toast.svelte.js";
 	import type { McpServerInfo, EmailConfig } from "$lib/api/client.js";
+	import type { ProactivePolicy } from "$lib/api/types.js";
 	import { SKINS } from "$lib/stores/skin.svelte.js";
 
 	const slug = $derived(page.params.slug!);
+
+	// --- initiative (#92/#94): one policy for everything the companion starts itself ---
+	let policy = $state<ProactivePolicy | null>(null);
+	let policySaving = $state(false);
+	const HOURS = Array.from({ length: 24 }, (_, h) => h);
+	const CHECK_IN_OPTIONS = [
+		{ value: 0.5, label: "Every 30 minutes" },
+		{ value: 1, label: "Every hour" },
+		{ value: 2, label: "Every 2 hours" },
+		{ value: 4, label: "Every 4 hours" },
+		{ value: 12, label: "Twice a day" },
+		{ value: 24, label: "Once a day" },
+	];
+	$effect(() => {
+		fetchProactivePolicy(slug).then((p) => (policy = p)).catch(() => {});
+	});
+	async function savePolicy(next: ProactivePolicy) {
+		if (policySaving) return;
+		policySaving = true;
+		const previous = policy;
+		policy = next;
+		try { await updateProactivePolicy(slug, next); }
+		catch { policy = previous; getToasts().error("Could not save initiative settings."); }
+		finally { policySaving = false; }
+	}
+	function setQuietHours(start: number | null, end: number | null) {
+		if (!policy) return;
+		if (start === null || end === null) return savePolicy({ ...policy, quiet_hours: null });
+		return savePolicy({ ...policy, quiet_hours: { start_hour: start, end_hour: end } });
+	}
 
 	// --- interaction rhythm (#95): bounded aggregate with opt-out ---
 	let rhythmEnabled = $state(true);
@@ -957,6 +990,59 @@
 			</div>
 			<p class="setting-hint">Keeps only a bounded summary of when you tend to write and how quickly you reply, so check-ins land at good moments. Turning it off deletes the summary.</p>
 		</div>
+
+		{#if policy}
+			<div class="setting-row">
+				<span class="setting-label" id="initiative-label">Initiative</span>
+				<div class="setting-input-row">
+					<button class="setting-btn" role="switch" aria-checked={policy.enabled} aria-labelledby="initiative-label" disabled={policySaving} onclick={() => policy && savePolicy({ ...policy, enabled: !policy.enabled })}>
+						{policy.enabled ? "On" : "Off"}
+					</button>
+				</div>
+				<p class="setting-hint">Lets your companion check in, follow schedules, and react when a computer connects. Everything it does on its own is listed under Activity.</p>
+			</div>
+
+			<div class="setting-row">
+				<label class="setting-label" for="check-in-interval">Check-in</label>
+				<select id="check-in-interval" class="setting-input" disabled={!policy.enabled || policySaving} value={String(policy.check_in_interval_hours)} onchange={(e) => policy && savePolicy({ ...policy, check_in_interval_hours: Number((e.currentTarget as HTMLSelectElement).value) })}>
+					{#each CHECK_IN_OPTIONS as option (option.value)}
+						<option value={String(option.value)}>{option.label}</option>
+					{/each}
+				</select>
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label" id="quiet-hours-label">Quiet hours</span>
+				<div class="setting-input-row" aria-labelledby="quiet-hours-label">
+					<label class="sr-only" for="quiet-start">Quiet from</label>
+					<select id="quiet-start" class="setting-input" disabled={policySaving} value={policy.quiet_hours ? String(policy.quiet_hours.start_hour) : ""} onchange={(e) => { const v = (e.currentTarget as HTMLSelectElement).value; setQuietHours(v === "" ? null : Number(v), policy?.quiet_hours?.end_hour ?? 7); }}>
+						<option value="">Off</option>
+						{#each HOURS as h (h)}<option value={String(h)}>from {h}:00</option>{/each}
+					</select>
+					<label class="sr-only" for="quiet-end">Quiet until</label>
+					<select id="quiet-end" class="setting-input" disabled={!policy.quiet_hours || policySaving} value={policy.quiet_hours ? String(policy.quiet_hours.end_hour) : "7"} onchange={(e) => setQuietHours(policy?.quiet_hours?.start_hour ?? 22, Number((e.currentTarget as HTMLSelectElement).value))}>
+						{#each HOURS as h (h)}<option value={String(h)}>until {h}:00</option>{/each}
+					</select>
+				</div>
+				<p class="setting-hint">No spontaneous check-ins or messages during quiet hours, in your companion's timezone.</p>
+			</div>
+
+			<div class="setting-row">
+				<label class="setting-label" for="reach-out-budget">Messages per day</label>
+				<input id="reach-out-budget" class="setting-input" type="number" min="0" max="48" disabled={policySaving} value={policy.daily_reach_out_budget} onchange={(e) => policy && savePolicy({ ...policy, daily_reach_out_budget: Math.max(0, Math.min(48, Number((e.currentTarget as HTMLInputElement).value) || 0)) })} />
+				<p class="setting-hint">How many times a day your companion may message you first.</p>
+			</div>
+
+			<div class="setting-row">
+				<span class="setting-label" id="reflection-label">Reflection</span>
+				<div class="setting-input-row">
+					<button class="setting-btn" role="switch" aria-checked={policy.reflection_enabled} aria-labelledby="reflection-label" disabled={!policy.enabled || policySaving} onclick={() => policy && savePolicy({ ...policy, reflection_enabled: !policy.reflection_enabled })}>
+						{policy.reflection_enabled ? "On" : "Off"}
+					</button>
+				</div>
+				<p class="setting-hint">Every few days your companion writes a reflection into its memory. It can add and connect memories, never delete them.</p>
+			</div>
+		{/if}
 	</section>
 
 	<!-- Model Mode -->

@@ -1,10 +1,10 @@
 <script lang="ts">
 	import { page } from "$app/state";
-	import ThoughtsView from "$lib/components/thoughts/ThoughtsView.svelte";
+	import ActivityView from "$lib/components/activity/ActivityView.svelte";
 
 	const slug = $derived(page.params.slug!);
 </script>
 
 {#key slug}
-	<ThoughtsView {slug} />
+	<ActivityView {slug} />
 {/key}

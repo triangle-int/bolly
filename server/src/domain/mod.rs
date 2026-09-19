@@ -10,5 +10,4 @@ pub mod proactive;
 pub mod rhythm;
 pub mod skill;
 pub mod soul;
-pub mod thought;
 pub mod upload;

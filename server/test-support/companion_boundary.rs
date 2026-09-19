@@ -34,7 +34,8 @@ async fn harness() -> Harness {
     state.vector_store =
         Arc::new(crate::services::vector::VectorStore::connect(workspace.path()).await);
     state.proactive =
-        crate::services::proactive::ProactiveLoop::new(workspace.path(), CANONICAL_SLUG);
+        crate::services::proactive::ProactiveLoop::new(workspace.path(), CANONICAL_SLUG)
+            .with_events(state.events.clone());
     Harness { workspace, state }
 }
 
@@ -177,6 +178,7 @@ async fn multi_instance_routes_are_gone_and_unknown_api_paths_are_404_json() {
 
     for (method, uri) in [
         (Method::GET, "/api/instances"),
+        (Method::GET, "/api/instances/companion/thoughts"),
         (Method::DELETE, "/api/instances/companion"),
         (Method::GET, "/api/instances/companion"),
         (Method::GET, "/api/no-such-route"),

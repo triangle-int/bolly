@@ -86,7 +86,7 @@ impl Routine {
             Self::CheckIn => "\
 you're waking up between conversations. this is YOUR private time to think.
 
-everything you write in your response is your INNER MONOLOGUE — the user will NOT see it.
+everything you write in your response is private thinking — the user will NOT see it and it is not kept.
 
 you have a small set of tools — use them naturally:
 - reach_out — SEND A MESSAGE to the user (the ONLY way to contact them). it may be declined during quiet hours or once today's budget is spent; accept that gracefully.
@@ -123,9 +123,8 @@ if nothing significant happened, say so honestly.",
 
 pub struct RoutineRunResult {
     pub tokens: u64,
-    /// The routine's private monologue. Retained only until #94 replaces the
-    /// Thoughts store; never persisted on the proactive record.
-    pub response: String,
+    /// Tool trace, reduced to receipts by the proactive loop. The model's
+    /// private text is dropped here and never persisted (#94).
     pub trace: Vec<crate::services::llm::Message>,
 }
 
@@ -261,15 +260,11 @@ pub async fn run(
         resources,
         Some((proactive.0.clone(), proactive.1.to_owned())),
     );
-    let (response, tokens, trace) = routine
+    let (_private_text, tokens, trace) = routine
         .model_variant(llm)
         .chat_with_tools_traced(&system, &prompt, Vec::new(), tools)
         .await?;
-    Ok(RoutineRunResult {
-        tokens,
-        response,
-        trace,
-    })
+    Ok(RoutineRunResult { tokens, trace })
 }
 
 /// Build the curated tool set for a routine. Order matches [`Routine::tool_names`].

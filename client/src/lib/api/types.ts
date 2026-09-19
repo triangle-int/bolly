@@ -98,12 +98,37 @@ export interface Drop {
 	image_url?: string;
 }
 
-export interface Thought {
+/** One proactive run (#92/#94): receipts only, never model text. */
+export type Tagged = { kind: string; [key: string]: unknown };
+export interface ActionReceipt { tool: string; summary: string }
+export interface RunOutcome { actions: ActionReceipt[]; messages_sent: number; tokens: number }
+export interface Approval { side_effect: string; allowed: boolean; reason?: string; at: number }
+export interface ProactiveRun {
+	version: number;
 	id: string;
-	raw: string;
-	actions: string[];
-	mood: string;
-	created_at: string;
+	trigger: Tagged;
+	reason: string;
+	target: Tagged;
+	dedupe_key: string;
+	status: Tagged;
+	attempt: number;
+	retry_of?: string;
+	started_at: number;
+	finished_at?: number;
+	approvals: Approval[];
+	outcome?: RunOutcome | null;
+}
+export interface QuietHours { start_hour: number; end_hour: number }
+export interface ProactivePolicy {
+	enabled: boolean;
+	quiet_hours: QuietHours | null;
+	cooldown_secs: number;
+	daily_reach_out_budget: number;
+	retention_max: number;
+	retention_days: number;
+	check_in_interval_hours: number;
+	reflection_enabled: boolean;
+	reflection_interval_hours: number;
 }
 
 
@@ -209,9 +234,9 @@ export type ServerEvent =
 			drop: Drop;
 	  }
 	| {
-			type: "heartbeat_thought";
+			type: "activity_updated";
 			instance_slug: string;
-			thought: Thought;
+			run: ProactiveRun;
 	  }
 	| {
 			type: "context_compacting";
