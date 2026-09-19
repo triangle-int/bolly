@@ -11,6 +11,14 @@ use crate::app::state::AppState;
 use crate::domain::child_agent::ChildAgentConfig;
 use crate::services::child_agents;
 
+fn reject_reserved_agent(name: &str) -> Result<(), (StatusCode, String)> {
+    if child_agents::is_reserved_agent_name(name) {
+        Err((StatusCode::NOT_FOUND, format!("agent '{name}' not found")))
+    } else {
+        Ok(())
+    }
+}
+
 pub fn router() -> Router<AppState> {
     Router::new()
         .route("/api/instances/{instance_slug}/agents", get(list_agents))
@@ -64,19 +72,7 @@ async fn list_agents(
     child_agents::ensure_builtins(&state.workspace_dir, &instance_slug);
 
     let mut result = Vec::new();
-    let entries = fs::read_dir(&agents_dir)
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
-    for entry in entries.filter_map(Result::ok) {
-        let path = entry.path();
-        if path.extension().and_then(|e| e.to_str()) != Some("toml") {
-            continue;
-        }
-        let content = fs::read_to_string(&path)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-        let config: ChildAgentConfig = toml::from_str(&content)
-            .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
-
+    for config in child_agents::load_agents(&state.workspace_dir, &instance_slug) {
         let marker_path = agents_dir.join(format!(".last_run_{}", config.name));
         let last_run: i64 = fs::read_to_string(&marker_path)
             .ok()
@@ -131,6 +127,7 @@ async fn trigger_agent(
     State(state): State<AppState>,
     Path((instance_slug, agent_name)): Path<(String, String)>,
 ) -> Result<Json<serde_json::Value>, super::ProviderRequestError> {
+    reject_reserved_agent(&agent_name)?;
     super::require_provider(&state).await?;
     let agents_dir = state
         .workspace_dir
@@ -219,6 +216,7 @@ async fn agent_history(
     State(state): State<AppState>,
     Path((instance_slug, agent_name)): Path<(String, String)>,
 ) -> Result<Json<Vec<HistoryEntry>>, (StatusCode, String)> {
+    reject_reserved_agent(&agent_name)?;
     let history_path = state
         .workspace_dir
         .join("instances")
@@ -286,13 +284,14 @@ async fn list_runs(
     Path(instance_slug): Path<String>,
     Query(params): Query<ListRunsParams>,
 ) -> Result<Json<Vec<crate::domain::agent_run::AgentRunSummary>>, (StatusCode, String)> {
-    let runs = crate::services::agent_runs::list_runs(
+    let mut runs = crate::services::agent_runs::list_runs(
         &state.workspace_dir,
         &instance_slug,
         params.limit,
         params.agent_name.as_deref(),
     )
     .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()))?;
+    runs.retain(|run| !child_agents::is_reserved_agent_name(&run.agent_name));
     Ok(Json(runs))
 }
 
@@ -302,6 +301,7 @@ async fn get_run(
 ) -> Result<Json<crate::domain::agent_run::AgentRun>, (StatusCode, String)> {
     let run = crate::services::agent_runs::load_run(&state.workspace_dir, &instance_slug, &run_id)
         .map_err(|e| (StatusCode::NOT_FOUND, e.to_string()))?;
+    reject_reserved_agent(&run.agent_name)?;
     Ok(Json(run))
 }
 
@@ -327,6 +327,7 @@ async fn update_agent(
     Path((instance_slug, agent_name)): Path<(String, String)>,
     Json(req): Json<UpdateAgentRequest>,
 ) -> Result<Json<ChildAgentConfig>, (StatusCode, String)> {
+    reject_reserved_agent(&agent_name)?;
     let agent_path = state
         .workspace_dir
         .join("instances")
@@ -375,6 +376,7 @@ async fn reset_agent(
     State(state): State<AppState>,
     Path((instance_slug, agent_name)): Path<(String, String)>,
 ) -> Result<Json<ChildAgentConfig>, (StatusCode, String)> {
+    reject_reserved_agent(&agent_name)?;
     let default = child_agents::get_builtin_default(&agent_name).ok_or_else(|| {
         (
             StatusCode::BAD_REQUEST,

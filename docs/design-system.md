@@ -96,7 +96,7 @@ The `/design-system` conversation example explicitly simulates streaming, stop, 
 
 ## Application surfaces
 
-The same tokens apply to settings, onboarding, authentication, agent management, skills, drops, thoughts, observations, memory, statistics, live screen, file previews, and notification surfaces. Keep collection errors distinct from empty results; zero-activity statistics must not invent a peak hour or day.
+The same tokens apply to settings, onboarding, authentication, agent management, skills, drops, thoughts, memory, statistics, file previews, and notification surfaces. Keep collection errors distinct from empty results; zero-activity statistics must not invent a peak hour or day.
 
 - Shared shadcn Button, Input, and Select triggers default to at least 44px targets. Inputs keep 16px type on phones.
 - Destructive companion confirmation uses shadcn AlertDialog. File previews and secret entry use Bits UI Dialog; keep focus trapping, Escape, and focus restoration intact. New-skill entry uses native dialog semantics.

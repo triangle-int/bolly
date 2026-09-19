@@ -105,13 +105,6 @@ export interface Thought {
 	created_at: string;
 }
 
-export interface ScreenObservation {
-	id: string;
-	upload_id: string;
-	machine_id: string;
-	analysis: string;
-	created_at: string;
-}
 
 export interface ChildAgent {
 	name: string;

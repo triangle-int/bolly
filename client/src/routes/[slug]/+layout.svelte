@@ -39,7 +39,7 @@
 		}
 	});
 
-	const tabs = ["chat", "drops", "thoughts", "observations", "live", "memory", "stats", "agents", "skills", "settings"] as const;
+	const tabs = ["chat", "drops", "thoughts", "memory", "stats", "agents", "skills", "settings"] as const;
 	const activeTab = $derived(
 		tabs.find((t) => page.url.pathname.includes(`/${slug}/${t}`)) ?? "chat"
 	);

@@ -46,3 +46,4 @@ anyhow = "1.0.102"
 bm25 = "2.3.2"
 clap = { version = "4", features = ["derive"] }
 cap-std = "4.0.3"
+cap-fs-ext = "4.0.3"

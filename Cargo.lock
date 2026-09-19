@@ -643,38 +643,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "nolune-desktop"
-version = "0.33.0"
-dependencies = [
- "axum",
- "base64 0.22.1",
- "dirs",
- "enigo",
- "futures-util",
- "gethostname",
- "html-escape",
- "image 0.25.10",
- "keyring",
- "libc",
- "reqwest",
- "screenshots",
- "serde",
- "serde_json",
- "tauri",
- "tauri-build",
- "tauri-nspanel",
- "tauri-plugin-opener",
- "tauri-plugin-process",
- "tauri-plugin-single-instance",
- "tauri-plugin-store",
- "tauri-plugin-updater",
- "tokio",
- "tokio-tungstenite 0.29.0",
- "url",
- "uuid",
-]
-
-[[package]]
 name = "brotli"
 version = "8.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -814,6 +782,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e629a66d692cb9ff1a1c664e41771b3dcaf961985a9774c0eb0bd1b51cf60a48"
 dependencies = [
  "serde_core",
+]
+
+[[package]]
+name = "cap-fs-ext"
+version = "4.0.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "56ff379b70af8e08307a8f65e7040c7301cb4a572538ade16b4984f0da77847f"
+dependencies = [
+ "cap-primitives",
+ "cap-std",
+ "io-lifetimes 3.0.1",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]
@@ -3894,6 +3874,38 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "72ef4a56884ca558e5ddb05a1d1e7e1bfd9a68d9ed024c21704cc98872dae1bb"
 
 [[package]]
+name = "nolune-desktop"
+version = "0.33.0"
+dependencies = [
+ "axum",
+ "base64 0.22.1",
+ "dirs",
+ "enigo",
+ "futures-util",
+ "gethostname",
+ "html-escape",
+ "image 0.25.10",
+ "keyring",
+ "libc",
+ "reqwest",
+ "screenshots",
+ "serde",
+ "serde_json",
+ "tauri",
+ "tauri-build",
+ "tauri-nspanel",
+ "tauri-plugin-opener",
+ "tauri-plugin-process",
+ "tauri-plugin-single-instance",
+ "tauri-plugin-store",
+ "tauri-plugin-updater",
+ "tokio",
+ "tokio-tungstenite 0.29.0",
+ "url",
+ "uuid",
+]
+
+[[package]]
 name = "nom"
 version = "5.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6141,6 +6153,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bm25",
+ "cap-fs-ext",
  "cap-std",
  "chrono",
  "chrono-tz",

@@ -440,9 +440,6 @@ export function fetchThoughts(slug: string): Promise<Thought[]> {
 	return json(`/api/instances/${encodeURIComponent(slug)}/thoughts`);
 }
 
-export function fetchObservations(slug: string): Promise<import("./types.js").ScreenObservation[]> {
-	return json(`/api/instances/${encodeURIComponent(slug)}/observations`);
-}
 
 export function machineHello(slug: string): Promise<void> {
 	return authedFetch(`/api/instances/${encodeURIComponent(slug)}/machine-hello`, { method: "POST" }).then(() => {});

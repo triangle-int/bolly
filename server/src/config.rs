@@ -196,10 +196,6 @@ pub struct InstanceConfig {
     /// Visual skin for this instance. Default: "moon" (Little Moon).
     #[serde(default = "default_skin")]
     pub skin: String,
-    /// Whether to record the user's screen between heartbeats and analyze it.
-    /// Disabled by default — the agent can suggest enabling it.
-    #[serde(default)]
-    pub screen_recording: bool,
 }
 
 fn default_skin() -> String {
@@ -213,7 +209,6 @@ impl Default for InstanceConfig {
             elevenlabs_voice_id: String::new(),
             voice_enabled: false,
             skin: default_skin(),
-            screen_recording: false,
         }
     }
 }

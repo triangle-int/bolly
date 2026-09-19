@@ -3,7 +3,6 @@
   import { invoke } from "@tauri-apps/api/core";
   import { onMount } from "svelte";
 
-  let recording = $state(false);
   let visible = $state(false);
   let serverUrl = $state("");
   let actionQueue = $state<{ id: number; text: string; icon: string }[]>([]);
@@ -18,7 +17,7 @@
   function resetHideTimer() {
     if (hideTimer) clearTimeout(hideTimer);
     hideTimer = setTimeout(() => {
-      if (!recording) visible = false;
+      visible = false;
     }, 10000);
   }
 
@@ -27,17 +26,13 @@
     middle_click: "\u{1F5B1}\uFE0F", double_click: "\u{1F5B1}\uFE0F\u{1F5B1}\uFE0F",
     mouse_move: "\u2197\uFE0F", scroll: "\u2195\uFE0F", type: "\u2328\uFE0F", key: "\u2318",
     bash: "\u{1F4BB}", switch_desktop: "\u{1F5A5}\uFE0F",
-    start_recording: "\u{1F534}", stop_recording: "\u{23F9}\uFE0F",
-    collect_screen_recording: "\u{1F3AC}", get_frame: "\u{1F4F8}",
   };
 
   const actionLabels: Record<string, string> = {
     screenshot: "screenshot", left_click: "click", right_click: "right click",
     middle_click: "middle click", double_click: "double click", mouse_move: "move",
     scroll: "scroll", type: "typing", key: "key", bash: "command",
-    switch_desktop: "switch space", start_recording: "recording started",
-    stop_recording: "recording stopped", collect_screen_recording: "collecting",
-    get_frame: "frame",
+    switch_desktop: "switch space",
   };
 
   function flashAction(name: string, detail: string) {
@@ -52,11 +47,6 @@
   onMount(() => {
     let disposed = false;
     void (async () => {
-      try {
-        const isRec = await invoke<boolean>("get_screen_recording_allowed");
-        if (!disposed && isRec) recording = true;
-      } catch {}
-
       // Get server URL for video source
       try {
         const url = await invoke<string>("get_server_url");
@@ -77,12 +67,7 @@
     });
 
     const unlistenDone = listen("computer-use-idle", () => {
-      if (!recording) visible = false;
-    });
-
-    const unlistenRec = listen<boolean>("screen-recording-state", (e) => {
-      recording = e.payload;
-      if (e.payload) visible = true;
+      visible = false;
     });
 
     const unlistenUrl = listen<string>("server-url", (e) => {
@@ -93,29 +78,17 @@
       disposed = true;
       unlistenAction.then(fn => fn());
       unlistenDone.then(fn => fn());
-      unlistenRec.then(fn => fn());
       unlistenUrl.then(fn => fn());
     };
   });
 </script>
 
-<div class="overlay" class:overlay-visible={visible || recording}>
-  <div class="pip" class:pip-recording={recording}>
-    {#if recording}
-      <div class="pip-ring"></div>
-      <div class="pip-ring pip-ring-2"></div>
-    {/if}
-
+<div class="overlay" class:overlay-visible={visible}>
+  <div class="pip">
     {#if avatarSrc}
       <img src={avatarSrc} class="pip-avatar" alt="Nolune" />
     {:else}
       <div class="pip-placeholder"></div>
-    {/if}
-
-    {#if recording}
-      <div class="pip-rec">
-        <div class="pip-rec-dot"></div>
-      </div>
     {/if}
   </div>
 
@@ -178,52 +151,6 @@
     height: 100%;
     border-radius: 50%;
     border: 2px solid #51485F;
-  }
-
-  /* Recording rings */
-  .pip-ring {
-    position: absolute;
-    inset: -4px;
-    border-radius: 50%;
-    border: 2px solid oklch(0.65 0.22 25 / 60%);
-    animation: ring-pulse 2s ease-in-out infinite;
-    z-index: 2;
-  }
-  .pip-ring-2 {
-    inset: -8px;
-    border-color: oklch(0.65 0.22 25 / 25%);
-    animation-delay: 0.5s;
-  }
-  @keyframes ring-pulse {
-    0%, 100% { transform: scale(1); opacity: 0.6; }
-    50% { transform: scale(1.08); opacity: 0.2; }
-  }
-
-  .pip-recording .pip-avatar {
-    border-color: oklch(0.65 0.22 25 / 40%);
-  }
-
-  /* REC dot */
-  .pip-rec {
-    position: absolute;
-    top: -2px;
-    right: -2px;
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    z-index: 3;
-  }
-  .pip-rec-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    background: oklch(0.62 0.25 25);
-    box-shadow: 0 0 10px oklch(0.62 0.25 25 / 90%);
-    animation: rec-pulse 1.5s ease-in-out infinite;
-  }
-  @keyframes rec-pulse {
-    0%, 100% { opacity: 1; transform: scale(1); }
-    50% { opacity: 0.4; transform: scale(0.85); }
   }
 
   /* Flashes */

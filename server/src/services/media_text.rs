@@ -5,6 +5,7 @@
 //! by the user-readable representation text. Sidecars are reserved and are never
 //! independent text memories.
 
+use cap_fs_ext::{FollowSymlinks, OpenOptionsFollowExt, OpenOptionsMaybeDirExt};
 use cap_std::{
     ambient_authority,
     fs::{Dir, OpenOptions},
@@ -12,6 +13,7 @@ use cap_std::{
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::{
+    collections::{HashMap, HashSet},
     io::{self, BufReader, Read, Write},
     path::{Component, Path, PathBuf},
 };
@@ -20,6 +22,10 @@ pub const VERSION: u32 = 1;
 const HEADER_PREFIX: &str = "NOLUNE_MEDIA_TEXT ";
 const HASH_BUFFER_BYTES: usize = 64 * 1024;
 const MAX_UPLOAD_METADATA_BYTES: usize = 1024 * 1024;
+const MAX_LEGACY_OBSERVATION_BYTES: usize = 1024 * 1024;
+const MAX_LEGACY_CLEANUP_ENTRIES: usize = 10_000;
+const LEGACY_CLEANUP_TOMBSTONE_PREFIX: &str = ".legacy-screen-cleanup-";
+const LEGACY_CLEANUP_TOMBSTONE_SUFFIX: &str = ".json";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DirectoryEntry {
@@ -39,6 +45,8 @@ pub struct MediaStore {
     root: Dir,
     #[cfg(test)]
     fail_next_write: std::sync::atomic::AtomicBool,
+    #[cfg(test)]
+    legacy_cleanup_failures: std::sync::Mutex<std::collections::HashSet<String>>,
 }
 
 impl MediaStore {
@@ -51,6 +59,8 @@ impl MediaStore {
             root: Dir::open_ambient_dir(workspace_root, ambient_authority())?,
             #[cfg(test)]
             fail_next_write: std::sync::atomic::AtomicBool::new(false),
+            #[cfg(test)]
+            legacy_cleanup_failures: std::sync::Mutex::new(std::collections::HashSet::new()),
         })
     }
 
@@ -124,6 +134,363 @@ impl MediaStore {
         }
         slugs.sort();
         Ok(slugs)
+    }
+
+    /// Remove unpublished passive-screen-capture artifacts through persistently
+    /// opened capability directories. Only strict observation/upload pairs are
+    /// reconciled; malformed, ambiguous, and unreferenced data is preserved.
+    pub fn cleanup_legacy_screen_capture(&self) -> io::Result<()> {
+        let Some(instances) = open_real_child_dir(&self.root, "instances")? else {
+            return Ok(());
+        };
+        let mut errors = Vec::new();
+        let entries = instances.read_dir(".")?;
+        for entry in entries {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    errors.push(format!("instance entry: {error}"));
+                    continue;
+                }
+            };
+            let slug = match entry.file_name().into_string() {
+                Ok(slug) => slug,
+                Err(_) => {
+                    errors.push("non-UTF-8 instance name".to_owned());
+                    continue;
+                }
+            };
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(error) => {
+                    errors.push(format!("{slug}: {error}"));
+                    continue;
+                }
+            };
+            if file_type.is_symlink() || !file_type.is_dir() {
+                continue;
+            }
+            let instance = match open_real_child_dir(&instances, &slug) {
+                Ok(Some(instance)) => instance,
+                Ok(None) => continue,
+                Err(error) => {
+                    errors.push(format!("{slug}: {error}"));
+                    continue;
+                }
+            };
+            if let Err(error) = self.cleanup_legacy_screen_capture_instance(&slug, &instance) {
+                errors.push(format!("{slug}: {error}"));
+            }
+        }
+        finish_aggregated(errors)
+    }
+
+    fn cleanup_legacy_screen_capture_instance(&self, slug: &str, instance: &Dir) -> io::Result<()> {
+        let Some(observations) = open_real_child_dir(instance, "observations")? else {
+            return Ok(());
+        };
+        let mut scan_errors = Vec::new();
+        let mut candidates = Vec::new();
+        let mut reference_counts = HashMap::<String, usize>::new();
+        let mut entry_names = HashSet::new();
+        let mut inspected = 0_usize;
+
+        for entry in observations.read_dir(".")? {
+            inspected += 1;
+            if inspected > MAX_LEGACY_CLEANUP_ENTRIES {
+                scan_errors.push("legacy observation cleanup entry limit exceeded".to_owned());
+                break;
+            }
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    scan_errors.push(format!("observation entry: {error}"));
+                    continue;
+                }
+            };
+            let raw_name = entry.file_name();
+            let display_name = raw_name.to_string_lossy();
+            let utf8_name = raw_name.to_str().map(str::to_owned);
+            if let Some(name) = &utf8_name {
+                // Include every name, including symlinks and non-files, so a
+                // later rename can never replace a pre-existing tombstone path.
+                entry_names.insert(name.clone());
+            }
+            if self.take_legacy_cleanup_failure(slug, &format!("scan-entry:{display_name}")) {
+                scan_errors.push(format!(
+                    "observations/{display_name}: injected directory entry failure"
+                ));
+                continue;
+            }
+            if self.take_legacy_cleanup_failure(slug, &format!("scan-file-type:{display_name}")) {
+                scan_errors.push(format!(
+                    "observations/{display_name}: injected file type failure"
+                ));
+                continue;
+            }
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(error) => {
+                    scan_errors.push(format!("observations/{display_name}: {error}"));
+                    continue;
+                }
+            };
+            if file_type.is_symlink() || !file_type.is_file() {
+                continue;
+            }
+            let Some(name) = utf8_name else {
+                continue;
+            };
+            let Some(source) = legacy_observation_source(&name) else {
+                continue;
+            };
+            if self.take_legacy_cleanup_failure(slug, &format!("scan-read:{name}")) {
+                scan_errors.push(format!("observations/{name}: injected read failure"));
+                continue;
+            }
+            let bytes =
+                match read_named_regular_file(&observations, &name, MAX_LEGACY_OBSERVATION_BYTES) {
+                    Ok(Some(bytes)) => bytes,
+                    Ok(None) => {
+                        scan_errors.push(format!(
+                            "observations/{name}: regular file changed during scan"
+                        ));
+                        continue;
+                    }
+                    Err(error) => {
+                        scan_errors.push(format!("observations/{name}: {error}"));
+                        continue;
+                    }
+                };
+            let observation: LegacyScreenObservation = match serde_json::from_slice(&bytes) {
+                Ok(observation) => observation,
+                Err(_) => continue,
+            };
+            // Every schema-valid preserved observation participates in
+            // ambiguity. Producer validation decides deletion eligibility,
+            // not whether its reference can protect an upload.
+            *reference_counts
+                .entry(observation.upload_id.clone())
+                .or_default() += 1;
+            if parse_prefixed_millis(&observation.id, "obs_", "").is_none() {
+                continue;
+            }
+            if parse_ascii_millis(&observation.created_at).is_none()
+                || parse_prefixed_millis(&observation.upload_id, "upload_", ".mp4").is_none()
+                || !source.matches(&name, &observation.id)
+            {
+                continue;
+            }
+            candidates.push(LegacyObservationCandidate {
+                name,
+                source,
+                observation,
+            });
+        }
+
+        // No mutation in this instance is permitted until every observation
+        // directory entry and every relevant bounded file read completed.
+        if !scan_errors.is_empty() {
+            return finish_aggregated(scan_errors);
+        }
+
+        let uploads = open_real_child_dir(instance, "uploads")?;
+        let mut errors = Vec::new();
+        if let Some(uploads) = uploads {
+            for candidate in candidates {
+                if reference_counts.get(&candidate.observation.upload_id) != Some(&1) {
+                    continue;
+                }
+                if let Err(error) = self.reconcile_legacy_observation(
+                    slug,
+                    &observations,
+                    &uploads,
+                    &entry_names,
+                    &candidate,
+                ) {
+                    errors.push(format!("observations/{}: {error}", candidate.name));
+                }
+            }
+        }
+
+        match observations.read_dir(".") {
+            Ok(mut entries) => {
+                if entries.next().is_none()
+                    && let Err(error) = instance.remove_dir("observations")
+                    && error.kind() != io::ErrorKind::NotFound
+                {
+                    errors.push(format!("observations: {error}"));
+                }
+            }
+            Err(error) => errors.push(format!("observations: {error}")),
+        }
+        finish_aggregated(errors)
+    }
+
+    fn reconcile_legacy_observation(
+        &self,
+        slug: &str,
+        observations: &Dir,
+        uploads: &Dir,
+        entry_names: &HashSet<String>,
+        candidate: &LegacyObservationCandidate,
+    ) -> io::Result<()> {
+        let observation = &candidate.observation;
+        let metadata_name = format!("{}.json", observation.upload_id);
+        let expected_stored_name = format!("{}_blob.mp4", observation.upload_id);
+        let upload =
+            match read_named_regular_file(uploads, &metadata_name, MAX_UPLOAD_METADATA_BYTES)? {
+                Some(metadata_bytes) => {
+                    let upload: LegacyUploadMetadata = match serde_json::from_slice(&metadata_bytes)
+                    {
+                        Ok(upload) => upload,
+                        Err(_) => return Ok(()),
+                    };
+                    if !upload.matches_observation(
+                        observation,
+                        &metadata_name,
+                        &expected_stored_name,
+                    ) {
+                        return Ok(());
+                    }
+                    Some(upload)
+                }
+                None if candidate.source == LegacyObservationSource::Tombstone => {
+                    match uploads.symlink_metadata(&metadata_name) {
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => None,
+                        Ok(_) => return Ok(()),
+                        Err(error) => return Err(error),
+                    }
+                }
+                None => return Ok(()),
+            };
+
+        match uploads.symlink_metadata(&expected_stored_name) {
+            Ok(metadata)
+                if metadata.file_type().is_symlink()
+                    || !metadata.is_file()
+                    || upload
+                        .as_ref()
+                        .is_none_or(|upload| metadata.len() != upload.size) =>
+            {
+                return Ok(());
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+
+        let tombstone_name = legacy_cleanup_tombstone_name(&observation.id);
+        if candidate.source == LegacyObservationSource::Normal {
+            // Never replace an arbitrary pre-existing hidden file.
+            if entry_names.contains(&tombstone_name) {
+                return Ok(());
+            }
+            observations.rename(&candidate.name, observations, &tombstone_name)?;
+            self.fail_legacy_cleanup_after(slug, "rename")?;
+        }
+
+        // A tombstone observed after a failed/unclean rename is not durable
+        // proof until this directory sync succeeds. Never delete upload state
+        // first, even on a retry.
+        sync_capability_dir(observations)?;
+
+        self.remove_legacy_file(slug, "uploads", uploads, &expected_stored_name)?;
+        sync_capability_dir(uploads)?;
+        self.fail_legacy_cleanup_after(slug, "blob")?;
+
+        self.remove_legacy_file(slug, "uploads", uploads, &metadata_name)?;
+        sync_capability_dir(uploads)?;
+        self.fail_legacy_cleanup_after(slug, "metadata")?;
+
+        self.remove_legacy_file(slug, "observations", observations, &tombstone_name)?;
+        sync_capability_dir(observations)?;
+        self.fail_legacy_cleanup_after(slug, "tombstone")?;
+        log::info!("removed legacy passive screen recording observation for {slug}");
+        Ok(())
+    }
+
+    fn fail_legacy_cleanup_after(&self, _slug: &str, _step: &str) -> io::Result<()> {
+        if self.take_legacy_cleanup_failure(_slug, &format!("after-{_step}")) {
+            return Err(io::Error::other(format!(
+                "injected legacy cleanup failure after {_step}"
+            )));
+        }
+        Ok(())
+    }
+
+    fn take_legacy_cleanup_failure(&self, _slug: &str, _point: &str) -> bool {
+        #[cfg(test)]
+        {
+            return self
+                .legacy_cleanup_failures
+                .lock()
+                .unwrap()
+                .remove(&format!("{_slug}/{_point}"));
+        }
+        #[cfg(not(test))]
+        false
+    }
+
+    fn remove_legacy_file(
+        &self,
+        _slug: &str,
+        _dir: &str,
+        handle: &Dir,
+        name: &str,
+    ) -> io::Result<()> {
+        remove_one_if_present(handle, Path::new(name))
+    }
+
+    /// Remove retired observer state through the same persistent workspace
+    /// capability used by media cleanup. Runtime agent loading remains separate.
+    pub fn cleanup_legacy_observers(&self) -> io::Result<()> {
+        let Some(instances) = open_real_child_dir(&self.root, "instances")? else {
+            return Ok(());
+        };
+        let mut errors = Vec::new();
+        for entry in instances.read_dir(".")? {
+            let entry = match entry {
+                Ok(entry) => entry,
+                Err(error) => {
+                    errors.push(format!("instance entry: {error}"));
+                    continue;
+                }
+            };
+            let slug = entry.file_name().to_string_lossy().into_owned();
+            let file_type = match entry.file_type() {
+                Ok(file_type) => file_type,
+                Err(error) => {
+                    errors.push(format!("{slug}: {error}"));
+                    continue;
+                }
+            };
+            if file_type.is_symlink() || !file_type.is_dir() {
+                continue;
+            }
+            let instance = match open_real_child_dir(&instances, &slug) {
+                Ok(Some(instance)) => instance,
+                Ok(None) => continue,
+                Err(error) => {
+                    errors.push(format!("{slug}: {error}"));
+                    continue;
+                }
+            };
+            let agents = match open_real_child_dir(&instance, "agents") {
+                Ok(Some(agents)) => agents,
+                Ok(None) => continue,
+                Err(error) => {
+                    errors.push(format!("{slug}/agents: {error}"));
+                    continue;
+                }
+            };
+            for name in ["observer.toml", ".last_run_observer"] {
+                if let Err(error) = self.remove_legacy_file(&slug, "agents", &agents, name) {
+                    errors.push(format!("{slug}/agents/{name}: {error}"));
+                }
+            }
+        }
+        finish_aggregated(errors)
     }
 
     pub fn memory_exists(&self, slug: &str, path: &str) -> io::Result<bool> {
@@ -450,6 +817,13 @@ impl MediaStore {
         self.fail_next_write
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
+
+    fn inject_legacy_cleanup_failure(&self, slug: &str, point: &str) {
+        self.legacy_cleanup_failures
+            .lock()
+            .unwrap()
+            .insert(format!("{slug}/{point}"));
+    }
 }
 
 #[derive(Deserialize, Serialize)]
@@ -457,6 +831,108 @@ impl MediaStore {
 struct Header {
     version: u32,
     sha256: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyScreenObservation {
+    id: String,
+    upload_id: String,
+    #[serde(rename = "machine_id")]
+    _machine_id: String,
+    #[serde(rename = "analysis")]
+    _analysis: String,
+    created_at: String,
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct LegacyUploadMetadata {
+    id: String,
+    original_name: String,
+    stored_name: String,
+    mime_type: String,
+    size: u64,
+    uploaded_at: String,
+    #[serde(default, rename = "anthropic_file_id")]
+    _anthropic_file_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LegacyObservationSource {
+    Normal,
+    Tombstone,
+}
+
+impl LegacyObservationSource {
+    fn matches(self, name: &str, observation_id: &str) -> bool {
+        match self {
+            Self::Normal => name == format!("{observation_id}.json"),
+            Self::Tombstone => name == legacy_cleanup_tombstone_name(observation_id),
+        }
+    }
+}
+
+struct LegacyObservationCandidate {
+    name: String,
+    source: LegacyObservationSource,
+    observation: LegacyScreenObservation,
+}
+
+impl LegacyUploadMetadata {
+    fn matches_observation(
+        &self,
+        observation: &LegacyScreenObservation,
+        metadata_name: &str,
+        expected_stored_name: &str,
+    ) -> bool {
+        let Some(upload_millis) = parse_prefixed_millis(&self.id, "upload_", ".mp4") else {
+            return false;
+        };
+        self.id == observation.upload_id
+            && metadata_name == format!("{}.json", self.id)
+            && self.original_name == "screen_recording.mp4"
+            && self.mime_type == "video/mp4"
+            && self.stored_name == expected_stored_name
+            && parse_ascii_millis(&self.uploaded_at) == Some(upload_millis)
+    }
+}
+
+fn parse_ascii_millis(value: &str) -> Option<u128> {
+    // The retired producers formatted a u128 millisecond value. Bound the
+    // decimal width and use checked arithmetic so hostile values never wrap or
+    // trigger an oversized allocation.
+    if value.is_empty()
+        || value.len() > 39
+        || (value.len() > 1 && value.starts_with('0'))
+        || !value.bytes().all(|byte| byte.is_ascii_digit())
+    {
+        return None;
+    }
+    value.bytes().try_fold(0_u128, |parsed, byte| {
+        parsed.checked_mul(10)?.checked_add(u128::from(byte - b'0'))
+    })
+}
+
+fn parse_prefixed_millis(value: &str, prefix: &str, suffix: &str) -> Option<u128> {
+    let digits = value.strip_prefix(prefix)?.strip_suffix(suffix)?;
+    parse_ascii_millis(digits)
+}
+
+fn legacy_cleanup_tombstone_name(observation_id: &str) -> String {
+    format!("{LEGACY_CLEANUP_TOMBSTONE_PREFIX}{observation_id}{LEGACY_CLEANUP_TOMBSTONE_SUFFIX}")
+}
+
+fn legacy_observation_source(name: &str) -> Option<LegacyObservationSource> {
+    if name.starts_with(LEGACY_CLEANUP_TOMBSTONE_PREFIX)
+        && name.ends_with(LEGACY_CLEANUP_TOMBSTONE_SUFFIX)
+    {
+        Some(LegacyObservationSource::Tombstone)
+    } else if name.ends_with(".json") {
+        Some(LegacyObservationSource::Normal)
+    } else {
+        None
+    }
 }
 
 pub fn source_type(path: &str) -> Option<&'static str> {
@@ -606,10 +1082,14 @@ fn temporary_path(target: &Path) -> io::Result<PathBuf> {
 }
 
 fn read_bounded(root: &Dir, path: &Path, max_bytes: usize) -> io::Result<Vec<u8>> {
-    let mut file = root.open(path)?;
+    let file = root.open(path)?;
     if !file.metadata()?.is_file() {
         return Err(invalid_path("target must be a regular file"));
     }
+    read_bounded_file(file, max_bytes)
+}
+
+fn read_bounded_file(mut file: cap_std::fs::File, max_bytes: usize) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::new();
     std::io::Read::by_ref(&mut file)
         .take(
@@ -625,6 +1105,49 @@ fn read_bounded(root: &Dir, path: &Path, max_bytes: usize) -> io::Result<Vec<u8>
         ));
     }
     Ok(bytes)
+}
+
+fn open_real_child_dir(parent: &Dir, name: &str) -> io::Result<Option<Dir>> {
+    let mut options = OpenOptions::new();
+    options
+        .read(true)
+        .maybe_dir(true)
+        .follow(FollowSymlinks::No);
+    match parent.open_with(name, &options) {
+        Ok(file) if file.metadata()?.is_dir() => Ok(Some(Dir::from_std_file(file.into_std()))),
+        Ok(_) => Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => match parent.symlink_metadata(name) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_dir() => Ok(None),
+            _ => Err(error),
+        },
+    }
+}
+
+fn read_named_regular_file(dir: &Dir, name: &str, max_bytes: usize) -> io::Result<Option<Vec<u8>>> {
+    let mut options = OpenOptions::new();
+    options.read(true).follow(FollowSymlinks::No);
+    match dir.open_with(name, &options) {
+        Ok(file) if file.metadata()?.is_file() => read_bounded_file(file, max_bytes).map(Some),
+        Ok(_) => Ok(None),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
+        Err(error) => match dir.symlink_metadata(name) {
+            Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => Ok(None),
+            _ => Err(error),
+        },
+    }
+}
+
+fn finish_aggregated(errors: Vec<String>) -> io::Result<()> {
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(io::Error::other(errors.join("; ")))
+    }
+}
+
+fn sync_capability_dir(dir: &Dir) -> io::Result<()> {
+    dir.open(".")?.sync_all()
 }
 
 fn atomic_publish(
@@ -1358,5 +1881,673 @@ mod tests {
 
         assert_eq!(std::fs::read(&outside_owner).unwrap(), expected_owner);
         assert_eq!(std::fs::read(&outside_sidecar).unwrap(), expected_sidecar);
+    }
+
+    fn upload_metadata(id: &str, original_name: &str, stored_name: &str, size: u64) -> String {
+        let uploaded_at = parse_prefixed_millis(id, "upload_", ".mp4")
+            .map(|millis| millis.to_string())
+            .unwrap_or_else(|| "1".to_owned());
+        serde_json::json!({
+            "id": id,
+            "original_name": original_name,
+            "stored_name": stored_name,
+            "mime_type": "video/mp4",
+            "size": size,
+            "uploaded_at": uploaded_at
+        })
+        .to_string()
+    }
+
+    fn observation(id: &str, upload_id: &str) -> String {
+        let created_at = parse_prefixed_millis(id, "obs_", "")
+            .map(|millis| millis.to_string())
+            .unwrap_or_else(|| "1".to_owned());
+        serde_json::json!({
+            "id": id,
+            "upload_id": upload_id,
+            "machine_id": "machine-one",
+            "analysis": "legacy analysis",
+            "created_at": created_at
+        })
+        .to_string()
+    }
+
+    fn seed_strict_legacy_pair(
+        workspace: &Path,
+        slug: &str,
+        observation_millis: u64,
+        upload_millis: u64,
+    ) -> (PathBuf, PathBuf, String, String, String) {
+        let instance = workspace.join("instances").join(slug);
+        let observations = instance.join("observations");
+        let uploads = instance.join("uploads");
+        std::fs::create_dir_all(&observations).unwrap();
+        std::fs::create_dir_all(&uploads).unwrap();
+        let observation_id = format!("obs_{observation_millis}");
+        let upload_id = format!("upload_{upload_millis}.mp4");
+        let stored_name = format!("{upload_id}_blob.mp4");
+        std::fs::write(uploads.join(&stored_name), b"data").unwrap();
+        std::fs::write(
+            uploads.join(format!("{upload_id}.json")),
+            upload_metadata(&upload_id, "screen_recording.mp4", &stored_name, 4),
+        )
+        .unwrap();
+        std::fs::write(
+            observations.join(format!("{observation_id}.json")),
+            observation(&observation_id, &upload_id),
+        )
+        .unwrap();
+        (
+            observations,
+            uploads,
+            observation_id,
+            upload_id,
+            stored_name,
+        )
+    }
+
+    #[test]
+    fn cleanup_reconciles_only_strictly_referenced_recording_pairs_and_is_idempotent() {
+        let workspace = tempfile::tempdir().unwrap();
+        let instance = workspace.path().join("instances/one");
+        let observations = instance.join("observations");
+        let uploads = instance.join("uploads");
+        std::fs::create_dir_all(&observations).unwrap();
+        std::fs::create_dir_all(&uploads).unwrap();
+
+        let recording_id = "upload_1000.mp4";
+        let recording_blob = "upload_1000.mp4_blob.mp4";
+        std::fs::write(uploads.join(recording_blob), b"legacy").unwrap();
+        std::fs::write(
+            uploads.join(format!("{recording_id}.json")),
+            upload_metadata(recording_id, "screen_recording.mp4", recording_blob, 6),
+        )
+        .unwrap();
+        std::fs::write(
+            observations.join("obs_1001.json"),
+            observation("obs_1001", recording_id),
+        )
+        .unwrap();
+
+        // A confirmed observation whose blob is already absent is retry-clean.
+        let missing_id = "upload_2000.mp4";
+        std::fs::write(
+            uploads.join(format!("{missing_id}.json")),
+            upload_metadata(
+                missing_id,
+                "screen_recording.mp4",
+                "upload_2000.mp4_blob.mp4",
+                4,
+            ),
+        )
+        .unwrap();
+        std::fs::write(
+            observations.join("obs_2001.json"),
+            observation("obs_2001", missing_id),
+        )
+        .unwrap();
+
+        // Filename alone is never enough: this exact-looking pair is unreferenced.
+        let unreferenced_id = "upload_3000.mp4";
+        let unreferenced_blob = "upload_3000.mp4_blob.mp4";
+        std::fs::write(uploads.join(unreferenced_blob), b"keep").unwrap();
+        std::fs::write(
+            uploads.join(format!("{unreferenced_id}.json")),
+            upload_metadata(
+                unreferenced_id,
+                "screen_recording.mp4",
+                unreferenced_blob,
+                4,
+            ),
+        )
+        .unwrap();
+
+        // Malformed, extra-field, and filename/id-mismatched observations are preserved.
+        std::fs::write(observations.join("malformed.json"), "{").unwrap();
+        let mut extra: serde_json::Value =
+            serde_json::from_str(&observation("obs_3001", unreferenced_id)).unwrap();
+        extra["unexpected"] = serde_json::json!(true);
+        std::fs::write(observations.join("extra.json"), extra.to_string()).unwrap();
+        std::fs::write(
+            observations.join("wrong-filename.json"),
+            observation("obs_3002", unreferenced_id),
+        )
+        .unwrap();
+
+        let store = MediaStore::open(workspace.path()).unwrap();
+        store.cleanup_legacy_screen_capture().unwrap();
+        assert!(!uploads.join(recording_blob).exists());
+        assert!(!uploads.join(format!("{recording_id}.json")).exists());
+        assert!(!observations.join("obs_1001.json").exists());
+        assert!(!uploads.join(format!("{missing_id}.json")).exists());
+        assert!(!observations.join("obs_2001.json").exists());
+        for path in [
+            uploads.join(unreferenced_blob),
+            uploads.join(format!("{unreferenced_id}.json")),
+            observations.join("malformed.json"),
+            observations.join("extra.json"),
+            observations.join("wrong-filename.json"),
+        ] {
+            assert!(path.exists(), "{} must be preserved", path.display());
+        }
+        assert!(instance.join("observations").is_dir());
+
+        store.cleanup_legacy_screen_capture().unwrap();
+    }
+
+    #[test]
+    fn cleanup_preserves_ambiguous_duplicate_references_and_mismatched_pairs() {
+        let workspace = tempfile::tempdir().unwrap();
+        let instance = workspace.path().join("instances/one");
+        let uploads = instance.join("uploads");
+        let observations = instance.join("observations");
+        std::fs::create_dir_all(&uploads).unwrap();
+        std::fs::create_dir_all(&observations).unwrap();
+        let duplicate_id = "upload_4000.mp4";
+        let duplicate_blob = "upload_4000.mp4_blob.mp4";
+        std::fs::write(uploads.join(duplicate_blob), b"keep").unwrap();
+        std::fs::write(
+            uploads.join(format!("{duplicate_id}.json")),
+            upload_metadata(duplicate_id, "screen_recording.mp4", duplicate_blob, 4),
+        )
+        .unwrap();
+        std::fs::write(
+            observations.join("obs_4001.json"),
+            observation("obs_4001", duplicate_id),
+        )
+        .unwrap();
+        std::fs::write(
+            observations.join("obs_4002.json"),
+            observation("obs_4002", duplicate_id),
+        )
+        .unwrap();
+        let wrong_size_id = "upload_5000.mp4";
+        let wrong_size_blob = "upload_5000.mp4_blob.mp4";
+        std::fs::write(uploads.join(wrong_size_blob), b"two").unwrap();
+        std::fs::write(
+            uploads.join(format!("{wrong_size_id}.json")),
+            upload_metadata(wrong_size_id, "screen_recording.mp4", wrong_size_blob, 99),
+        )
+        .unwrap();
+        std::fs::write(
+            observations.join("obs_5001.json"),
+            observation("obs_5001", wrong_size_id),
+        )
+        .unwrap();
+
+        let store = MediaStore::open(workspace.path()).unwrap();
+        store.cleanup_legacy_screen_capture().unwrap();
+        for path in [
+            uploads.join(duplicate_blob),
+            uploads.join(format!("{duplicate_id}.json")),
+            observations.join("obs_4001.json"),
+            observations.join("obs_4002.json"),
+            uploads.join(wrong_size_blob),
+            uploads.join(format!("{wrong_size_id}.json")),
+            observations.join("obs_5001.json"),
+        ] {
+            assert!(path.exists(), "{} must be preserved", path.display());
+        }
+    }
+
+    #[test]
+    fn cleanup_preserves_ambiguity_across_normal_observations_and_tombstones() {
+        let workspace = tempfile::tempdir().unwrap();
+        let (observations, uploads, _, upload_id, stored_name) =
+            seed_strict_legacy_pair(workspace.path(), "one", 5501, 5500);
+        std::fs::write(
+            observations.join(legacy_cleanup_tombstone_name("obs_5502")),
+            observation("obs_5502", &upload_id),
+        )
+        .unwrap();
+
+        let store = MediaStore::open(workspace.path()).unwrap();
+        store.cleanup_legacy_screen_capture().unwrap();
+        assert!(observations.join("obs_5501.json").exists());
+        assert!(
+            observations
+                .join(legacy_cleanup_tombstone_name("obs_5502"))
+                .exists()
+        );
+        assert!(uploads.join(format!("{upload_id}.json")).exists());
+        assert!(uploads.join(stored_name).exists());
+    }
+
+    #[test]
+    fn cleanup_counts_schema_valid_preserved_references_as_ambiguous() {
+        let workspace = tempfile::tempdir().unwrap();
+        let (observations, uploads, _, upload_id, stored_name) =
+            seed_strict_legacy_pair(workspace.path(), "one", 5551, 5550);
+        std::fs::write(
+            observations.join("custom.json"),
+            observation("custom", &upload_id),
+        )
+        .unwrap();
+
+        let store = MediaStore::open(workspace.path()).unwrap();
+        store.cleanup_legacy_screen_capture().unwrap();
+        assert!(observations.join("obs_5551.json").exists());
+        assert!(observations.join("custom.json").exists());
+        assert!(uploads.join(format!("{upload_id}.json")).exists());
+        assert!(uploads.join(stored_name).exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_never_replaces_a_preexisting_tombstone_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(outside.path(), b"outside sentinel").unwrap();
+        let (observations, uploads, observation_id, upload_id, stored_name) =
+            seed_strict_legacy_pair(workspace.path(), "one", 5561, 5560);
+        let tombstone = observations.join(legacy_cleanup_tombstone_name(&observation_id));
+        symlink(outside.path(), &tombstone).unwrap();
+
+        let store = MediaStore::open(workspace.path()).unwrap();
+        store.cleanup_legacy_screen_capture().unwrap();
+        assert!(observations.join(format!("{observation_id}.json")).exists());
+        assert!(
+            tombstone
+                .symlink_metadata()
+                .unwrap()
+                .file_type()
+                .is_symlink()
+        );
+        assert_eq!(std::fs::read(outside.path()).unwrap(), b"outside sentinel");
+        assert!(uploads.join(format!("{upload_id}.json")).exists());
+        assert!(uploads.join(stored_name).exists());
+    }
+
+    #[test]
+    fn cleanup_requires_exact_bounded_ascii_producer_identifiers() {
+        assert_eq!(parse_ascii_millis("0"), Some(0));
+        assert_eq!(
+            parse_ascii_millis("340282366920938463463374607431768211455"),
+            Some(u128::MAX)
+        );
+        for invalid in [
+            "",
+            "01",
+            "١",
+            "１２",
+            "+1",
+            "-1",
+            "1.0",
+            "340282366920938463463374607431768211456",
+            "1000000000000000000000000000000000000000",
+        ] {
+            assert_eq!(parse_ascii_millis(invalid), None, "accepted {invalid:?}");
+        }
+        assert_eq!(parse_prefixed_millis("obs_42", "obs_", ""), Some(42));
+        assert_eq!(
+            parse_prefixed_millis("upload_42.mp4", "upload_", ".mp4"),
+            Some(42)
+        );
+        for invalid in ["obs-anything", "obs_01", "obs_١", "obs_1.json"] {
+            assert_eq!(parse_prefixed_millis(invalid, "obs_", ""), None);
+        }
+        for invalid in [
+            "upload_1",
+            "upload_1.mov",
+            "upload_01.mp4",
+            "upload_١.mp4",
+            "anything",
+        ] {
+            assert_eq!(parse_prefixed_millis(invalid, "upload_", ".mp4"), None);
+        }
+
+        let workspace = tempfile::tempdir().unwrap();
+        let instance = workspace.path().join("instances/one");
+        let observations = instance.join("observations");
+        let uploads = instance.join("uploads");
+        std::fs::create_dir_all(&observations).unwrap();
+        std::fs::create_dir_all(&uploads).unwrap();
+        std::fs::write(uploads.join("custom_blob.mp4"), b"data").unwrap();
+        std::fs::write(
+            uploads.join("custom.json"),
+            upload_metadata("custom", "screen_recording.mp4", "custom_blob.mp4", 4),
+        )
+        .unwrap();
+        std::fs::write(
+            observations.join("custom.json"),
+            observation("custom", "custom"),
+        )
+        .unwrap();
+
+        let store = MediaStore::open(workspace.path()).unwrap();
+        store.cleanup_legacy_screen_capture().unwrap();
+        assert!(observations.join("custom.json").exists());
+        assert!(uploads.join("custom.json").exists());
+        assert!(uploads.join("custom_blob.mp4").exists());
+    }
+
+    #[test]
+    fn cleanup_preserves_pairs_with_any_non_producer_metadata_field() {
+        for (index, field, invalid_value) in [
+            (0_u64, "id", serde_json::json!("upload_9999.mp4")),
+            (1, "original_name", serde_json::json!("recording.mp4")),
+            (2, "stored_name", serde_json::json!("other.mp4")),
+            (
+                3,
+                "mime_type",
+                serde_json::json!("application/octet-stream"),
+            ),
+            (4, "size", serde_json::json!(5)),
+            (5, "uploaded_at", serde_json::json!("9999")),
+        ] {
+            let workspace = tempfile::tempdir().unwrap();
+            let (observations, uploads, observation_id, upload_id, stored_name) =
+                seed_strict_legacy_pair(workspace.path(), "one", 5601 + index, 5600 + index);
+            let metadata_path = uploads.join(format!("{upload_id}.json"));
+            let mut metadata: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&metadata_path).unwrap()).unwrap();
+            metadata[field] = invalid_value;
+            std::fs::write(&metadata_path, metadata.to_string()).unwrap();
+
+            let store = MediaStore::open(workspace.path()).unwrap();
+            store.cleanup_legacy_screen_capture().unwrap();
+            assert!(observations.join(format!("{observation_id}.json")).exists());
+            assert!(metadata_path.exists());
+            assert!(uploads.join(stored_name).exists());
+        }
+    }
+
+    #[test]
+    fn cleanup_preserves_observation_with_non_ascii_or_noncanonical_created_at() {
+        for (index, created_at) in ["١", "01", "+1", "340282366920938463463374607431768211456"]
+            .into_iter()
+            .enumerate()
+        {
+            let workspace = tempfile::tempdir().unwrap();
+            let (observations, uploads, observation_id, upload_id, stored_name) =
+                seed_strict_legacy_pair(
+                    workspace.path(),
+                    "one",
+                    5701 + index as u64,
+                    5700 + index as u64,
+                );
+            let observation_path = observations.join(format!("{observation_id}.json"));
+            let mut value: serde_json::Value =
+                serde_json::from_slice(&std::fs::read(&observation_path).unwrap()).unwrap();
+            value["created_at"] = serde_json::json!(created_at);
+            std::fs::write(&observation_path, value.to_string()).unwrap();
+
+            let store = MediaStore::open(workspace.path()).unwrap();
+            store.cleanup_legacy_screen_capture().unwrap();
+            assert!(observation_path.exists());
+            assert!(uploads.join(format!("{upload_id}.json")).exists());
+            assert!(uploads.join(stored_name).exists());
+        }
+    }
+
+    #[test]
+    fn cleanup_retry_converges_after_every_durable_transition() {
+        for (index, step) in ["rename", "blob", "metadata", "tombstone"]
+            .into_iter()
+            .enumerate()
+        {
+            let workspace = tempfile::tempdir().unwrap();
+            let (observations, uploads, observation_id, upload_id, stored_name) =
+                seed_strict_legacy_pair(
+                    workspace.path(),
+                    "one",
+                    6001 + index as u64,
+                    6000 + index as u64,
+                );
+            let tombstone = observations.join(legacy_cleanup_tombstone_name(&observation_id));
+            let store = MediaStore::open(workspace.path()).unwrap();
+            store.inject_legacy_cleanup_failure("one", &format!("after-{step}"));
+
+            let error = store.cleanup_legacy_screen_capture().unwrap_err();
+            assert!(error.to_string().contains(&format!("after {step}")));
+            assert!(!observations.join(format!("{observation_id}.json")).exists());
+            match step {
+                "rename" => {
+                    assert!(uploads.join(&stored_name).exists());
+                    assert!(uploads.join(format!("{upload_id}.json")).exists());
+                    assert!(tombstone.exists());
+                }
+                "blob" => {
+                    assert!(!uploads.join(&stored_name).exists());
+                    assert!(uploads.join(format!("{upload_id}.json")).exists());
+                    assert!(tombstone.exists());
+                }
+                "metadata" => {
+                    assert!(!uploads.join(&stored_name).exists());
+                    assert!(!uploads.join(format!("{upload_id}.json")).exists());
+                    assert!(tombstone.exists());
+                }
+                "tombstone" => assert!(!tombstone.exists()),
+                _ => unreachable!(),
+            }
+
+            store.cleanup_legacy_screen_capture().unwrap();
+            assert!(!uploads.join(&stored_name).exists());
+            assert!(!uploads.join(format!("{upload_id}.json")).exists());
+            assert!(!tombstone.exists());
+        }
+    }
+
+    #[test]
+    fn cleanup_scan_failures_are_fail_closed_per_instance_and_other_instances_continue() {
+        for point in ["scan-entry", "scan-file-type", "scan-read"] {
+            let workspace = tempfile::tempdir().unwrap();
+            let (one_observations, one_uploads, one_observation_id, one_upload_id, one_blob) =
+                seed_strict_legacy_pair(workspace.path(), "one", 7001, 7000);
+            let (_, two_uploads, _, two_upload_id, two_blob) =
+                seed_strict_legacy_pair(workspace.path(), "two", 8001, 8000);
+            let store = MediaStore::open(workspace.path()).unwrap();
+            store.inject_legacy_cleanup_failure(
+                "one",
+                &format!("{point}:{one_observation_id}.json"),
+            );
+
+            let error = store.cleanup_legacy_screen_capture().unwrap_err();
+            assert!(error.to_string().contains("injected"));
+            assert!(
+                one_observations
+                    .join(format!("{one_observation_id}.json"))
+                    .exists()
+            );
+            assert!(one_uploads.join(format!("{one_upload_id}.json")).exists());
+            assert!(one_uploads.join(&one_blob).exists());
+            assert!(!two_uploads.join(format!("{two_upload_id}.json")).exists());
+            assert!(!two_uploads.join(&two_blob).exists());
+        }
+    }
+
+    #[test]
+    fn cleanup_aborts_instance_before_deleting_on_over_limit_duplicate_scan() {
+        let workspace = tempfile::tempdir().unwrap();
+        let instance = workspace.path().join("instances/one");
+        let observations = instance.join("observations");
+        let uploads = instance.join("uploads");
+        std::fs::create_dir_all(&observations).unwrap();
+        std::fs::create_dir_all(&uploads).unwrap();
+
+        let upload_id = "upload_1000.mp4";
+        let stored_name = "upload_1000.mp4_blob.mp4";
+        std::fs::write(uploads.join(stored_name), b"data").unwrap();
+        std::fs::write(
+            uploads.join(format!("{upload_id}.json")),
+            serde_json::json!({
+                "id": upload_id,
+                "original_name": "screen_recording.mp4",
+                "stored_name": stored_name,
+                "mime_type": "video/mp4",
+                "size": 4,
+                "uploaded_at": "1000"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            observations.join("obs_1001.json"),
+            observation("obs_1001", upload_id),
+        )
+        .unwrap();
+        for index in 0..MAX_LEGACY_CLEANUP_ENTRIES {
+            let duplicate_id = format!("obs_{}", 10_000 + index);
+            std::fs::write(
+                observations.join(format!("{duplicate_id}.json")),
+                observation(&duplicate_id, upload_id),
+            )
+            .unwrap();
+        }
+
+        let store = MediaStore::open(workspace.path()).unwrap();
+        let error = store.cleanup_legacy_screen_capture().unwrap_err();
+        assert!(error.to_string().contains("entry limit exceeded"));
+        assert!(observations.join("obs_1001.json").exists());
+        assert!(uploads.join(format!("{upload_id}.json")).exists());
+        assert!(uploads.join(stored_name).exists());
+    }
+
+    #[test]
+    fn cleanup_aborts_instance_before_deleting_when_regular_file_read_is_incomplete() {
+        let workspace = tempfile::tempdir().unwrap();
+        let instance = workspace.path().join("instances/one");
+        let observations = instance.join("observations");
+        let uploads = instance.join("uploads");
+        std::fs::create_dir_all(&observations).unwrap();
+        std::fs::create_dir_all(&uploads).unwrap();
+
+        let upload_id = "upload_2000.mp4";
+        let stored_name = "upload_2000.mp4_blob.mp4";
+        std::fs::write(uploads.join(stored_name), b"data").unwrap();
+        std::fs::write(
+            uploads.join(format!("{upload_id}.json")),
+            serde_json::json!({
+                "id": upload_id,
+                "original_name": "screen_recording.mp4",
+                "stored_name": stored_name,
+                "mime_type": "video/mp4",
+                "size": 4,
+                "uploaded_at": "2000"
+            })
+            .to_string(),
+        )
+        .unwrap();
+        std::fs::write(
+            observations.join("obs_2001.json"),
+            observation("obs_2001", upload_id),
+        )
+        .unwrap();
+        std::fs::write(
+            observations.join("unreadable.json"),
+            vec![b'x'; MAX_LEGACY_OBSERVATION_BYTES + 1],
+        )
+        .unwrap();
+
+        let store = MediaStore::open(workspace.path()).unwrap();
+        let error = store.cleanup_legacy_screen_capture().unwrap_err();
+        assert!(error.to_string().contains("file is too large"));
+        assert!(observations.join("obs_2001.json").exists());
+        assert!(uploads.join(format!("{upload_id}.json")).exists());
+        assert!(uploads.join(stored_name).exists());
+    }
+
+    #[test]
+    fn observer_cleanup_removes_only_retired_files_via_store_capability() {
+        let workspace = tempfile::tempdir().unwrap();
+        let agents = workspace.path().join("instances/one/agents");
+        std::fs::create_dir_all(&agents).unwrap();
+        std::fs::write(agents.join("observer.toml"), b"legacy").unwrap();
+        std::fs::write(agents.join(".last_run_observer"), b"1").unwrap();
+        std::fs::write(agents.join("custom.toml"), b"keep").unwrap();
+
+        let store = MediaStore::open(workspace.path()).unwrap();
+        store.cleanup_legacy_observers().unwrap();
+        assert!(!agents.join("observer.toml").exists());
+        assert!(!agents.join(".last_run_observer").exists());
+        assert!(agents.join("custom.toml").exists());
+        store.cleanup_legacy_observers().unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn observer_cleanup_preserves_preexisting_agents_symlink_target() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(workspace.path().join("instances/one")).unwrap();
+        std::fs::write(outside.path().join("observer.toml"), b"outside sentinel").unwrap();
+        std::fs::write(outside.path().join(".last_run_observer"), b"outside marker").unwrap();
+        symlink(
+            outside.path(),
+            workspace.path().join("instances/one/agents"),
+        )
+        .unwrap();
+
+        let store = MediaStore::open(workspace.path()).unwrap();
+        store.cleanup_legacy_observers().unwrap();
+        assert_eq!(
+            std::fs::read(outside.path().join("observer.toml")).unwrap(),
+            b"outside sentinel"
+        );
+        assert_eq!(
+            std::fs::read(outside.path().join(".last_run_observer")).unwrap(),
+            b"outside marker"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn observer_cleanup_does_not_follow_swapped_instances_parent() {
+        use std::os::unix::fs::symlink;
+
+        let parent = tempfile::tempdir().unwrap();
+        let workspace = parent.path().join("workspace");
+        let parked_instances = parent.path().join("parked-instances");
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(workspace.join("instances/one/agents")).unwrap();
+        std::fs::create_dir_all(outside.path().join("one/agents")).unwrap();
+        std::fs::write(
+            outside.path().join("one/agents/observer.toml"),
+            b"outside sentinel",
+        )
+        .unwrap();
+        let store = MediaStore::open(&workspace).unwrap();
+        std::fs::rename(workspace.join("instances"), &parked_instances).unwrap();
+        symlink(outside.path(), workspace.join("instances")).unwrap();
+
+        store.cleanup_legacy_observers().unwrap();
+        assert_eq!(
+            std::fs::read(outside.path().join("one/agents/observer.toml")).unwrap(),
+            b"outside sentinel"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn cleanup_does_not_follow_observation_or_upload_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let instance = workspace.path().join("instances/one");
+        let uploads = instance.join("uploads");
+        std::fs::create_dir_all(&uploads).unwrap();
+        std::fs::write(outside.path().join("sentinel"), b"keep").unwrap();
+        symlink(outside.path(), instance.join("observations")).unwrap();
+        symlink(outside.path().join("sentinel"), uploads.join("linked.mp4")).unwrap();
+        std::fs::write(
+            uploads.join("linked.json"),
+            upload_metadata("linked", "screen_recording.mp4", "linked.mp4", 4),
+        )
+        .unwrap();
+
+        let store = MediaStore::open(workspace.path()).unwrap();
+        store.cleanup_legacy_screen_capture().unwrap();
+        assert_eq!(
+            std::fs::read(outside.path().join("sentinel")).unwrap(),
+            b"keep"
+        );
+        assert!(instance.join("observations").symlink_metadata().is_ok());
+        assert!(uploads.join("linked.json").exists());
+        assert!(uploads.join("linked.mp4").symlink_metadata().is_ok());
     }
 }

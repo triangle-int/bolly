@@ -1,9 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { invoke } from "@tauri-apps/api/core";
   import { auth, init, saveConnection, testConnection, openConnection, disconnect } from "$lib/auth.svelte";
   import { updater, checkForUpdates, installUpdate, dismissUpdate } from "$lib/updater.svelte";
-
 
   let splash = $state(true);
   let splashFading = $state(false);
@@ -14,7 +12,6 @@
   onMount(() => {
     init();
     checkForUpdates();
-    invoke("get_screen_recording_allowed").catch(() => {});
     const fallback = setTimeout(endSplash, 5000);
     return () => clearTimeout(fallback);
   });
@@ -452,7 +449,5 @@
   .paste-input::placeholder {
     color: oklch(0.50 0.03 240);
   }
-
-
 
 </style>

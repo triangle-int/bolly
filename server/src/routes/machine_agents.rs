@@ -8,7 +8,6 @@ use axum::{
     response::Response,
     routing::{get, post},
 };
-use base64::Engine;
 use serde::Deserialize;
 
 use crate::app::state::AppState;
@@ -25,41 +24,6 @@ pub fn router() -> Router<AppState> {
             "/api/instances/{instance_slug}/machine-bye",
             post(machine_bye),
         )
-        .route("/api/instances/{instance_slug}/live-frame", get(live_frame))
-}
-
-/// Called by the client when the user enters an instance — notifies
-/// Get the latest screen frame as JPEG.
-async fn live_frame(
-    State(state): State<AppState>,
-    Path(_instance_slug): Path<String>,
-) -> axum::response::Response {
-    use axum::body::Body;
-    use axum::http::header;
-
-    let machines = state.machine_registry.list().await;
-    let machine_id = match machines.first() {
-        Some(m) => m.machine_id.clone(),
-        None => {
-            return axum::response::Response::builder()
-                .status(StatusCode::NOT_FOUND)
-                .body(Body::from("no desktop connected"))
-                .unwrap();
-        }
-    };
-
-    match state.machine_registry.get_latest_frame(&machine_id).await {
-        Some(frame) => axum::response::Response::builder()
-            .status(StatusCode::OK)
-            .header(header::CONTENT_TYPE, "image/jpeg")
-            .header(header::CACHE_CONTROL, "no-cache, no-store")
-            .body(Body::from(frame.jpeg))
-            .unwrap(),
-        None => axum::response::Response::builder()
-            .status(StatusCode::NO_CONTENT)
-            .body(Body::empty())
-            .unwrap(),
-    }
 }
 
 /// the companion that a desktop is connected (if any machines are online).
@@ -74,23 +38,12 @@ async fn machine_hello(
 
     let machine = &machines[0];
     let mid = machine.machine_id.clone();
-    let machine_os = machine.os.clone();
-    let rec_allowed = machine.screen_recording_allowed;
 
     tokio::spawn({
         let bg_state = state.clone();
-        let registry = state.machine_registry.clone();
         let slug = instance_slug.clone();
         async move {
-            on_machine_connected(
-                &bg_state,
-                &registry,
-                &mid,
-                &machine_os,
-                rec_allowed,
-                Some(&slug),
-            )
-            .await;
+            on_machine_connected(&bg_state, &mid, Some(&slug)).await;
         }
     });
 
@@ -137,8 +90,6 @@ enum AgentMessage {
         screen_width: u32,
         screen_height: u32,
         #[serde(default)]
-        screen_recording_allowed: bool,
-        #[serde(default)]
         instance_slug: Option<String>,
     },
     /// Agent sends back the result of a toolcall.
@@ -149,28 +100,16 @@ enum AgentMessage {
     },
     /// Heartbeat/ping from agent.
     Heartbeat { machine_id: String },
-    /// Screen frame from desktop (base64 JPEG).
-    ScreenFrame {
-        machine_id: String,
-        /// Base64-encoded JPEG image.
-        image: String,
-        width: u32,
-        height: u32,
-    },
 }
 
 async fn handle_agent(mut socket: WebSocket, state: AppState) {
     // The agent must send a Register message first.
-    let (machine_id, _screen_recording_allowed, _os, _instance_slug, mut agent_rx) =
-        match wait_for_registration(&mut socket, &state).await {
-            Some(v) => v,
-            None => return,
-        };
+    let (machine_id, mut agent_rx) = match wait_for_registration(&mut socket, &state).await {
+        Some(v) => v,
+        None => return,
+    };
 
     log::info!("[machine-ws] agent '{machine_id}' connected");
-
-    // Recording starts when user enters a profile (machine-hello),
-    // not on WebSocket connect.
 
     let mut ping_interval = tokio::time::interval(std::time::Duration::from_secs(15));
     ping_interval.tick().await; // skip first immediate tick
@@ -205,17 +144,6 @@ async fn handle_agent(mut socket: WebSocket, state: AppState) {
                                 }
                                 AgentMessage::Register { .. } => {
                                     // Already registered, ignore duplicate
-                                }
-                                AgentMessage::ScreenFrame { machine_id: mid, image, width, height } => {
-                                    if let Ok(jpeg) = base64::engine::general_purpose::STANDARD.decode(&image) {
-                                        let frame = crate::services::machine_registry::ScreenFrame {
-                                            jpeg,
-                                            width,
-                                            height,
-                                            timestamp: chrono::Utc::now().timestamp(),
-                                        };
-                                        state.machine_registry.push_frame(&mid, frame).await;
-                                    }
                                 }
                             }
                         } else {
@@ -254,17 +182,11 @@ async fn handle_agent(mut socket: WebSocket, state: AppState) {
 }
 
 /// Wait for the agent to send a Register message.
-/// Returns (machine_id, screen_recording_allowed, os, instance_slug, mpsc receiver for toolcalls).
+/// Returns the machine ID and receiver used to forward tool calls.
 async fn wait_for_registration(
     socket: &mut WebSocket,
     state: &AppState,
-) -> Option<(
-    String,
-    bool,
-    String,
-    Option<String>,
-    tokio::sync::mpsc::UnboundedReceiver<String>,
-)> {
+) -> Option<(String, tokio::sync::mpsc::UnboundedReceiver<String>)> {
     // Give agent 10s to register
     let deadline = tokio::time::sleep(std::time::Duration::from_secs(10));
     tokio::pin!(deadline);
@@ -278,7 +200,7 @@ async fn wait_for_registration(
             incoming = socket.recv() => {
                 match incoming {
                     Some(Ok(Message::Text(text))) => {
-                        if let Ok(AgentMessage::Register { machine_id, os, hostname, screen_width, screen_height, screen_recording_allowed, instance_slug }) =
+                        if let Ok(AgentMessage::Register { machine_id, os, hostname, screen_width, screen_height, instance_slug }) =
                             serde_json::from_str::<AgentMessage>(&text)
                         {
                             let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
@@ -289,7 +211,6 @@ async fn wait_for_registration(
                                 screen_width,
                                 screen_height,
                                 last_seen: chrono::Utc::now().timestamp(),
-                                screen_recording_allowed,
                                 instance_slug: instance_slug.clone(),
                             };
                             state.machine_registry.register(info, tx).await;
@@ -298,7 +219,7 @@ async fn wait_for_registration(
                             let ack = serde_json::json!({"type": "registered", "machine_id": machine_id});
                             let _ = socket.send(Message::Text(serde_json::to_string(&ack).unwrap().into())).await;
 
-                            return Some((machine_id, screen_recording_allowed, os, instance_slug, rx));
+                            return Some((machine_id, rx));
                         }
                     }
                     Some(Ok(Message::Ping(payload))) => {
@@ -313,16 +234,8 @@ async fn wait_for_registration(
 }
 
 /// When any desktop machine connects, notify the companion agent.
-/// If screen recording is enabled on both sides, start recording too.
 /// If `bound_slug` is set, only notify that instance.
-async fn on_machine_connected(
-    state: &AppState,
-    registry: &crate::services::machine_registry::MachineRegistry,
-    machine_id: &str,
-    os: &str,
-    screen_recording_allowed: bool,
-    bound_slug: Option<&str>,
-) {
+async fn on_machine_connected(state: &AppState, machine_id: &str, bound_slug: Option<&str>) {
     let instances_dir = state.workspace_dir.join("instances");
     let entries = match std::fs::read_dir(&instances_dir) {
         Ok(e) => e,
@@ -332,19 +245,14 @@ async fn on_machine_connected(
         }
     };
 
-    let all_slugs: Vec<(String, bool)> = entries
+    let all_slugs: Vec<String> = entries
         .filter_map(Result::ok)
         .filter(|e| e.path().is_dir() && e.path().join("soul.md").exists())
         .filter(|e| match bound_slug {
             Some(s) => e.file_name().to_string_lossy() == s,
             None => true,
         })
-        .map(|e| {
-            let slug = e.file_name().to_string_lossy().to_string();
-            let sr =
-                crate::config::InstanceConfig::load(&state.workspace_dir, &slug).screen_recording;
-            (slug, sr)
-        })
+        .map(|e| e.file_name().to_string_lossy().to_string())
         .collect();
 
     if all_slugs.is_empty() {
@@ -380,39 +288,12 @@ async fn on_machine_connected(
         "[machine-connect] '{}' connected, notifying {} instance(s): {:?}",
         machine_id,
         all_slugs.len(),
-        all_slugs
-            .iter()
-            .map(|(s, _)| s.as_str())
-            .collect::<Vec<_>>()
+        all_slugs.iter().map(String::as_str).collect::<Vec<_>>()
     );
 
-    // Start recording if both the desktop and any instance have it enabled
-    let any_instance_recording = all_slugs.iter().any(|(_, sr)| *sr);
-    if screen_recording_allowed && any_instance_recording {
-        log::info!(
-            "[machine-connect] starting screen recording on '{}'",
-            machine_id
-        );
-        crate::services::tools::screen::start_recording_on_machine(registry, machine_id, os).await;
-    }
-
     // Notify ALL matching instances about the connection
-    for (slug, instance_recording) in &all_slugs {
-        let recording_status = match (screen_recording_allowed, *instance_recording) {
-            (true, true) => "screen recording is active — recording started.",
-            (true, false) => {
-                "screen recording is off on the server (instance config). the user can ask you to enable it with update_config."
-            }
-            (false, true) => {
-                "screen recording is on in config but the desktop has it turned off in Settings."
-            }
-            (false, false) => "screen recording is off.",
-        };
-
-        let msg = format!(
-            "[system] desktop '{}' connected. {}",
-            machine_id, recording_status
-        );
+    for slug in &all_slugs {
+        let msg = format!("[system] desktop '{}' connected.", machine_id);
         if let Err(e) =
             crate::services::chat::save_system_message(&state.workspace_dir, slug, "default", &msg)
         {
@@ -431,10 +312,10 @@ async fn on_machine_connected(
             let agents = crate::services::child_agents::load_agents(&state.workspace_dir, slug);
             if let Some(companion) = agents.iter().find(|a| a.name == "companion") {
                 let task = format!(
-                    "the user's desktop computer '{}' just connected. {}.\n\
+                    "the user's desktop computer '{}' just connected.\n\
                      USE reach_out NOW to let the user know their computer is connected. \
                      keep it brief and friendly.",
-                    machine_id, recording_status
+                    machine_id
                 );
                 log::info!(
                     "[machine-connect] triggering companion for {slug} (task: machine_connected)"

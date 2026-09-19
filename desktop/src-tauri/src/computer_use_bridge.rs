@@ -1,4 +1,3 @@
-use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
 use std::sync::Mutex;
 use tauri::Emitter;
@@ -41,11 +40,6 @@ fn request_text(frame: Message) -> Result<String, ()> {
         Message::Binary(bytes) => String::from_utf8(bytes.to_vec()).map_err(|_| ()),
         _ => Err(()),
     }
-}
-
-fn stop_recording_after_connection_loss() {
-    let _ = crate::screen_recorder::stop();
-    *RECORDING_ACTIVE.lock().unwrap_or_else(|e| e.into_inner()) = false;
 }
 
 // Each connection owns a distinct cancellation generation. Work holds a permit
@@ -118,12 +112,6 @@ struct Bridge {
 }
 static BRIDGE_TASK: Mutex<Option<Bridge>> = Mutex::new(None);
 
-/// Whether this machine allows screen recording for observation (off by default).
-static SCREEN_RECORDING_ALLOWED: Mutex<bool> = Mutex::new(false);
-
-/// Whether screen recording is currently active (for overlay indicator).
-static RECORDING_ACTIVE: Mutex<bool> = Mutex::new(false);
-
 /// Instance slug this machine is bound to (set from URL or explicitly).
 static INSTANCE_SLUG: Mutex<Option<String>> = Mutex::new(None);
 
@@ -154,13 +142,8 @@ pub async fn connect_computer_use(
                 .await
                 .is_none()
             {
-                // `until_stopped` drops `run_agent`, so its normal connection-loss
-                // cleanup does not run. Stop capture before waiting for any
-                // non-cooperative in-flight action to drain.
-                stop_recording_after_connection_loss();
                 break;
             }
-            stop_recording_after_connection_loss();
             // A dropped network future may have dispatched a native callback.
             // Drain it before another socket/session can receive work.
             running.drain().await;
@@ -184,42 +167,14 @@ pub async fn disconnect_computer_use(app: tauri::AppHandle) -> Result<(), String
     let task = BRIDGE_TASK.lock().map_err(|e| e.to_string())?.take();
     if let Some(task) = task {
         task.session.cancel();
-        // Privacy teardown must not wait behind an in-flight native action.
-        stop_recording_after_connection_loss();
-        app.emit("screen-recording-state", false).ok();
         overlay::hide(&app);
         let _ = task.task.await;
         task.session.drain().await;
     }
     *SERVER_URL.lock().map_err(|e| e.to_string())? = None;
     *INSTANCE_SLUG.lock().map_err(|e| e.to_string())? = None;
-    *RECORDING_ACTIVE.lock().map_err(|e| e.to_string())? = false;
-    let recording = crate::screen_recorder::stop();
-    app.emit("screen-recording-state", false).ok();
     overlay::hide(&app);
-    recording
-}
-
-#[tauri::command]
-pub fn set_screen_recording_allowed(app: tauri::AppHandle, allowed: bool) -> Result<(), String> {
-    use tauri_plugin_store::StoreExt;
-    *SCREEN_RECORDING_ALLOWED.lock().map_err(|e| e.to_string())? = allowed;
-    let store = app.store("settings.json").map_err(|e| e.to_string())?;
-    store.set("screen_recording_allowed", serde_json::Value::Bool(allowed));
-    store.save().map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-pub fn get_screen_recording_allowed(app: tauri::AppHandle) -> Result<bool, String> {
-    use tauri_plugin_store::StoreExt;
-    let allowed = app
-        .store("settings.json")
-        .map_err(|e| e.to_string())?
-        .get("screen_recording_allowed")
-        .and_then(|value| value.as_bool())
-        .unwrap_or(false);
-    *SCREEN_RECORDING_ALLOWED.lock().map_err(|e| e.to_string())? = allowed;
-    Ok(allowed)
+    Ok(())
 }
 
 #[tauri::command]
@@ -239,17 +194,6 @@ pub fn set_instance_slug(slug: String) -> Result<(), String> {
     Ok(())
 }
 
-/// Stop and join active native screen capture.
-#[tauri::command]
-pub fn stop_screen_recording(app: tauri::AppHandle) -> Result<(), String> {
-    let mut rec = RECORDING_ACTIVE.lock().map_err(|e| e.to_string())?;
-    *rec = false;
-    crate::screen_recorder::stop()?;
-    app.emit("screen-recording-state", false).ok();
-    overlay::hide(&app);
-    Ok(())
-}
-
 async fn run_agent(
     app: &tauri::AppHandle,
     instance_url: &str,
@@ -258,8 +202,6 @@ async fn run_agent(
 ) -> Result<(), String> {
     let result = run_agent_connection(app, instance_url, auth_token, session).await;
     session.cancel_connection();
-    stop_recording_after_connection_loss();
-    app.emit("screen-recording-state", false).ok();
     overlay::hide(app);
     result
 }
@@ -293,8 +235,6 @@ async fn run_agent_connection(
         })
         .unwrap_or((1920, 1080));
 
-    let screen_recording_allowed = SCREEN_RECORDING_ALLOWED.lock().map(|v| *v).unwrap_or(false);
-
     // Instance slug: only set explicitly via set_instance_slug.
     let instance_slug = INSTANCE_SLUG.lock().ok().and_then(|v| v.clone());
 
@@ -305,7 +245,6 @@ async fn run_agent_connection(
         "hostname": machine_id,
         "screen_width": sw,
         "screen_height": sh,
-        "screen_recording_allowed": screen_recording_allowed,
         "instance_slug": instance_slug,
     });
     write
@@ -325,9 +264,6 @@ async fn run_agent_connection(
     ping_interval.tick().await;
     let mut last_pong = std::time::Instant::now();
 
-    // Frame streaming interval (1 fps when recording)
-    let mut frame_interval = tokio::time::interval(std::time::Duration::from_secs(1));
-    frame_interval.tick().await;
     let mut queued_requests = std::collections::VecDeque::new();
     let mut queued_request_bytes: usize = 0;
 
@@ -366,24 +302,6 @@ async fn run_agent_connection(
                     }
                     continue;
                 }
-                _ = frame_interval.tick() => {
-                    if crate::screen_recorder::is_recording() {
-                        if let Some(jpeg) = crate::screen_recorder::get_last_frame() {
-                            let b64 = base64::engine::general_purpose::STANDARD.encode(&jpeg);
-                            let message = serde_json::json!({
-                                "type": "screen_frame",
-                                "machine_id": machine_id,
-                                "image": b64,
-                                "width": 0,
-                                "height": 0,
-                            });
-                            if write.send(Message::Text(message.to_string().into())).await.is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    continue;
-                }
             };
             (frame, false)
         };
@@ -411,10 +329,8 @@ async fn run_agent_connection(
             .unwrap_or("")
             .to_string();
 
-        // Temporarily hide overlay before screenshot so it doesn't appear in the capture
-        // But never hide when recording — the REC indicator must stay visible
-        let hide_for_screenshot =
-            action == "screenshot" && !RECORDING_ACTIVE.lock().map(|v| *v).unwrap_or(false);
+        // Temporarily hide the action overlay so it does not appear in explicit screenshots.
+        let hide_for_screenshot = action == "screenshot";
         if hide_for_screenshot {
             overlay::set_visible(app, false);
             tokio::time::sleep(std::time::Duration::from_millis(200)).await;
@@ -484,8 +400,6 @@ async fn run_agent_connection(
                     Some(Ok(Message::Ping(data))) => {
                         if write.send(Message::Pong(data)).await.is_err() {
                             session.cancel_connection();
-                            stop_recording_after_connection_loss();
-                            app.emit("screen-recording-state", false).ok();
                             overlay::hide(app);
                             let _ = action_future.await;
                             break None;
@@ -501,8 +415,6 @@ async fn run_agent_connection(
                         .is_err()
                         {
                             session.cancel_connection();
-                            stop_recording_after_connection_loss();
-                            app.emit("screen-recording-state", false).ok();
                             overlay::hide(app);
                             let _ = action_future.await;
                             break None;
@@ -510,8 +422,6 @@ async fn run_agent_connection(
                     }
                     Some(Ok(Message::Close(_))) | None | Some(Err(_)) => {
                         session.cancel_connection();
-                        stop_recording_after_connection_loss();
-                        app.emit("screen-recording-state", false).ok();
                         overlay::hide(app);
                         let _ = action_future.await;
                         break None;
@@ -526,18 +436,6 @@ async fn run_agent_connection(
 
         if session.cancelled() {
             break;
-        }
-
-        // Detect screen recording start/stop
-        if action == "start_recording" && result.is_ok() {
-            let mut rec = RECORDING_ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
-            *rec = true;
-            overlay::show(app);
-            app.emit("screen-recording-state", true).ok();
-        } else if action == "stop_recording" {
-            let mut rec = RECORDING_ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
-            *rec = false;
-            app.emit("screen-recording-state", false).ok();
         }
 
         // Show overlay after any action (restore if hidden for screenshot)
@@ -635,13 +533,8 @@ async fn run_agent_connection(
         }
     }
 
-    // Connection lost — reset everything and hide overlay
-    {
-        let mut rec = RECORDING_ACTIVE.lock().unwrap_or_else(|e| e.into_inner());
-        *rec = false;
-    }
+    // Connection lost — reset the action overlay.
     overlay::emit_idle(app);
-    app.emit("screen-recording-state", false).ok();
     overlay::hide(app);
 
     Ok(())
@@ -728,28 +621,6 @@ fn execute_action(
             // Wait for animation to complete
             std::thread::sleep(std::time::Duration::from_millis(700));
             Ok(AgentResult::Action)
-        }
-        // ── Native screen capture ──
-        "start_recording" => crate::screen_recorder::start()
-            .map(|_| AgentResult::Output("streaming started".into()))
-            .map_err(|e| format!("start_recording: {e}")),
-        "stop_recording" => crate::screen_recorder::stop()
-            .map(|_| AgentResult::Output("streaming stopped".into()))
-            .map_err(|e| format!("stop_recording: {e}")),
-        "get_frame" => {
-            // Get the latest captured frame as base64 JPEG
-            match crate::screen_recorder::get_last_frame() {
-                Some(jpeg) => {
-                    let b64 = base64::engine::general_purpose::STANDARD.encode(&jpeg);
-                    Ok(AgentResult::Screenshot {
-                        image: b64,
-                        width: 0,
-                        height: 0,
-                        scale: 1.0,
-                    })
-                }
-                None => Err("no frame captured yet".into()),
-            }
         }
         // ── Bash ──
         "bash" => {
@@ -1060,9 +931,7 @@ fn upload_file_to_server(
         Err(e) => return Err(format!("file not found: {path} ({e})")),
     };
     if size < 1000 {
-        return Err(format!(
-            "file too small ({size} bytes), recording may not have started: {path}"
-        ));
+        return Err(format!("file too small to upload ({size} bytes): {path}"));
     }
 
     let output = cancellable_output(
@@ -1165,15 +1034,6 @@ mod tests {
         assert_eq!(ids, ["one", "two"]);
         let oversized = Message::Binary(vec![0; MAX_QUEUED_REQUEST_BYTES + 1].into());
         assert!(enqueue_request(&mut queue, &mut bytes, oversized).is_err());
-    }
-
-    #[test]
-    fn connection_loss_stops_active_screen_capture_state() {
-        crate::screen_recorder::mark_recording_for_test();
-        *RECORDING_ACTIVE.lock().unwrap() = true;
-        stop_recording_after_connection_loss();
-        assert!(!crate::screen_recorder::is_recording());
-        assert!(!*RECORDING_ACTIVE.lock().unwrap());
     }
 
     async fn work(session: &Session) -> Work {

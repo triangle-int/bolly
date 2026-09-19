@@ -255,8 +255,6 @@ async fn run_agent_tick(
     }
 }
 
-// Screen observation types moved to services/tools/screen.rs
-
 fn unix_millis() -> u128 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
