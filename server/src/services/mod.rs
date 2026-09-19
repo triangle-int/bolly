@@ -13,6 +13,8 @@ pub mod machine_registry;
 pub mod mcp;
 pub mod media_text;
 pub mod memory;
+#[allow(dead_code)] // Foundation for route/producer migration in #116.
+pub(crate) mod resource_capability;
 pub mod rhythm;
 pub mod scheduler;
 pub mod skills;
