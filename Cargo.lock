@@ -3884,7 +3884,7 @@ checksum = "72ef4a56884ca558e5ddb05a1d1e7e1bfd9a68d9ed024c21704cc98872dae1bb"
 
 [[package]]
 name = "nolune-desktop"
-version = "0.33.0"
+version = "0.34.0"
 dependencies = [
  "axum",
  "base64 0.22.1",
@@ -6156,7 +6156,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.33.0"
+version = "0.34.0"
 dependencies = [
  "anyhow",
  "axum",

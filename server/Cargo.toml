@@ -1,6 +1,6 @@
 [package]
 name = "server"
-version = "0.33.0"
+version = "0.34.0"
 edition = "2024"
 description = "Nolune — AI companion server"
 authors = ["Triangle Interactive LLC"]
