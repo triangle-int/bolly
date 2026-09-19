@@ -23,6 +23,7 @@ async fn main() {
     // No subcommand → run the server
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .filter_module("tracing::span", log::LevelFilter::Warn)
+        .format(app::logging::format_record)
         .init();
 
     let mut config = config::load_config().unwrap_or_else(|err| {
@@ -32,6 +33,7 @@ async fn main() {
         )
     });
 
+    services::tools::register_control_secret(&config.auth_token);
     let host = config.host.clone();
     let port = config.port;
     let static_dir = if config.static_dir.is_empty() {
@@ -119,6 +121,7 @@ async fn main() {
             state.vector_store.clone(),
             google_ai_key.clone(),
             state.machine_registry.clone(),
+            state.resources.clone(),
         );
 
         // Backfill missing or invalid local indexes from memory files (background, non-blocking)

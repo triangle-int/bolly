@@ -1,15 +1,27 @@
 <script lang="ts">
 	import { Dialog } from "bits-ui";
-	import { getViewerFile, closeFile } from "$lib/stores/fileviewer.svelte.js";
+	import { getViewerFile, closeFile, refreshViewerResource, reissueViewerResource } from "$lib/stores/fileviewer.svelte.js";
 
 	const file = $derived(getViewerFile());
+	let downloadError = $state("");
 
 	async function download() {
 		if (!file) return;
-		try {
-			const res = await fetch(file.url);
+		async function fetchBlob(url: string) {
+			const res = await fetch(url);
 			if (!res.ok) throw new Error("Download failed");
-			const blob = await res.blob();
+			return res.blob();
+		}
+		try {
+			downloadError = "";
+			let blob: Blob;
+			try {
+				blob = await fetchBlob(file.url);
+			} catch {
+				const fresh = await reissueViewerResource();
+				if (!fresh) throw new Error("Download failed");
+				blob = await fetchBlob(fresh);
+			}
 			const blobUrl = URL.createObjectURL(blob);
 			const a = document.createElement("a");
 			a.href = blobUrl;
@@ -19,7 +31,7 @@
 			document.body.removeChild(a);
 			setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
 		} catch {
-			window.open(file.url, "_blank");
+			downloadError = "Could not download this file. Please try again.";
 		}
 	}
 </script>
@@ -33,10 +45,10 @@
 <div class="viewer-content">
 
 			{#if file.type === "image"}
-				<img src={file.url} alt={file.name} class="viewer-img" />
+				<img src={file.url} alt={file.name} class="viewer-img" onerror={refreshViewerResource} />
 			{:else if file.type === "video"}
 				<!-- svelte-ignore a11y_media_has_caption -->
-				<video src={file.url} controls autoplay class="viewer-media"></video>
+				<video src={file.url} controls autoplay class="viewer-media" onerror={refreshViewerResource}></video>
 			{:else if file.type === "audio"}
 				<div class="viewer-audio-wrap">
 					<div class="viewer-icon">
@@ -44,7 +56,7 @@
 					</div>
 					<span class="viewer-label">{file.name}</span>
 					<!-- svelte-ignore a11y_media_has_caption -->
-					<audio src={file.url} controls autoplay class="viewer-audio"></audio>
+					<audio src={file.url} controls autoplay class="viewer-audio" onerror={refreshViewerResource}></audio>
 				</div>
 			{:else if file.type === "pdf"}
 				<iframe src={file.url} title={file.name} class="viewer-pdf"></iframe>
@@ -62,6 +74,7 @@
 		</div>
 
 		<div class="viewer-toolbar">
+			{#if downloadError}<span role="alert" class="viewer-error">{downloadError}</span>{/if}
 			<span class="viewer-name">{file.name}</span>
 			<div class="viewer-actions">
 				<button class="viewer-btn" onclick={download} title="Download" aria-label="Download file">

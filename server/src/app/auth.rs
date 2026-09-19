@@ -32,12 +32,16 @@ pub async fn auth_middleware(
         .and_then(|v| v.strip_prefix("Bearer "))
         .map(|s| s.to_string());
 
-    // Check ?token=<value> query param (for WebSocket connections)
-    let query_token = request.uri().query().and_then(|q| {
-        q.split('&')
-            .find_map(|p| p.strip_prefix("token="))
-            .map(|s| s.to_string())
-    });
+    // ISSUE-112: sole query-control-token exemption; WebSocket handshake only.
+    let query_token = if request.uri().path() == "/api/ws" && request.method() == "GET" {
+        request.uri().query().and_then(|q| {
+            q.split('&')
+                .find_map(|p| p.strip_prefix("token="))
+                .map(str::to_owned)
+        })
+    } else {
+        None
+    };
 
     let provided = bearer.or(query_token);
 

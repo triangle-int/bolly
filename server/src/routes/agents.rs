@@ -180,6 +180,7 @@ async fn trigger_agent(
             None,
             "manual",
             None,
+            &state.resources,
         )
         .await
         {

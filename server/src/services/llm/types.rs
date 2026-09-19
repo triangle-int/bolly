@@ -32,9 +32,17 @@ pub enum ContentBlock {
     #[serde(rename = "text")]
     Text { text: String },
     #[serde(rename = "image")]
-    Image { source: ImageSource },
+    Image {
+        source: ImageSource,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resource_provenance: Option<ResourceProvenance>,
+    },
     #[serde(rename = "document")]
-    Document { source: DocumentSource },
+    Document {
+        source: DocumentSource,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        resource_provenance: Option<ResourceProvenance>,
+    },
     #[serde(rename = "tool_use")]
     ToolCall {
         id: String,
@@ -79,9 +87,17 @@ enum StrictToolOutputBlock {
     #[serde(rename = "text")]
     Text { text: String },
     #[serde(rename = "image")]
-    Image { source: StrictSource },
+    Image {
+        source: StrictSource,
+        #[serde(default)]
+        resource_provenance: Option<ResourceProvenance>,
+    },
     #[serde(rename = "document")]
-    Document { source: StrictSource },
+    Document {
+        source: StrictSource,
+        #[serde(default)]
+        resource_provenance: Option<ResourceProvenance>,
+    },
 }
 
 #[derive(serde::Deserialize)]
@@ -110,14 +126,26 @@ impl StrictSource {
 }
 
 impl StrictToolOutputBlock {
-    fn into_content(self) -> ContentBlock {
+    fn into_content(self, trusted_resource_provenance: bool) -> ContentBlock {
         match self {
             Self::Text { text } => ContentBlock::Text { text },
-            Self::Image { source } => ContentBlock::Image {
+            Self::Image {
+                source,
+                resource_provenance,
+            } => ContentBlock::Image {
                 source: source.into_image(),
+                resource_provenance: trusted_resource_provenance
+                    .then_some(resource_provenance)
+                    .flatten(),
             },
-            Self::Document { source } => ContentBlock::Document {
+            Self::Document {
+                source,
+                resource_provenance,
+            } => ContentBlock::Document {
                 source: source.into_document(),
+                resource_provenance: trusted_resource_provenance
+                    .then_some(resource_provenance)
+                    .flatten(),
             },
         }
     }
@@ -128,7 +156,11 @@ impl ContentBlock {
         ContentBlock::Text { text: text.into() }
     }
 
-    pub fn tool_output(call_id: String, content: String) -> Self {
+    pub fn tool_output(
+        call_id: String,
+        content: String,
+        trusted_resource_provenance: bool,
+    ) -> Self {
         // ToolDyn blanket impl wraps String output via serde_json::to_string,
         // which adds JSON quotes: `[...]` becomes `"[...]"`. Unwrap that layer.
         let inner = if content.starts_with('"') && content.ends_with('"') {
@@ -148,7 +180,7 @@ impl ContentBlock {
             .map(|blocks| {
                 blocks
                     .into_iter()
-                    .map(StrictToolOutputBlock::into_content)
+                    .map(|block| block.into_content(trusted_resource_provenance))
                     .collect()
             })
             .map(ToolOutputContent::Blocks)
@@ -217,6 +249,53 @@ pub enum DocumentSource {
     Base64 { media_type: String, data: String },
     #[serde(rename = "url")]
     Url { url: String },
+}
+
+/// Stable, non-authorizing identity for a persisted local resource. Capability
+/// URLs are deliberately excluded so histories survive signing-key rotation.
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum ResourceProvenance {
+    UploadedFile {
+        version: u8,
+        slug: String,
+        id: String,
+    },
+    MemoryPath {
+        version: u8,
+        slug: String,
+        path: String,
+    },
+}
+
+impl ResourceProvenance {
+    pub fn uploaded_file(slug: impl Into<String>, id: impl Into<String>) -> Self {
+        Self::UploadedFile {
+            version: 1,
+            slug: slug.into(),
+            id: id.into(),
+        }
+    }
+
+    pub(crate) fn capability_resource(
+        &self,
+        expected_slug: &str,
+    ) -> Option<crate::services::resource_capability::CapabilityResource> {
+        use crate::services::resource_capability::CapabilityResource;
+        match self {
+            Self::UploadedFile {
+                version: 1,
+                slug,
+                id,
+            } if slug == expected_slug => CapabilityResource::uploaded_file(id.clone()).ok(),
+            Self::MemoryPath {
+                version: 1,
+                slug,
+                path,
+            } if slug == expected_slug => CapabilityResource::memory(path.clone()).ok(),
+            _ => None,
+        }
+    }
 }
 
 /// Result of a tool-using LLM call.
@@ -296,7 +375,10 @@ impl<'de> serde::Deserialize<'de> for ToolOutputContent {
                 return Ok(Self::Blocks(
                     blocks
                         .into_iter()
-                        .map(StrictToolOutputBlock::into_content)
+                        // Persisted history has already crossed the trusted
+                        // execution boundary. Preserve typed provenance so it
+                        // can renew after a signing-key rotation or restart.
+                        .map(|block| block.into_content(true))
                         .collect(),
                 ));
             }

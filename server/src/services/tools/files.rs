@@ -17,16 +17,21 @@ pub struct ReadFileTool {
     pub(super) instance_dir: PathBuf,
     instance_slug: String,
     public_url: String,
-    auth_token: String,
+    resources: crate::services::resource_access::ResourceAccess,
 }
 
 impl ReadFileTool {
-    pub fn new(workspace_dir: &Path, instance_slug: &str, public_url: &str) -> Self {
+    pub fn new(
+        workspace_dir: &Path,
+        instance_slug: &str,
+        public_url: &str,
+        resources: &crate::services::resource_access::ResourceAccess,
+    ) -> Self {
         Self {
             instance_dir: workspace_dir.join("instances").join(instance_slug),
             instance_slug: instance_slug.to_string(),
             public_url: public_url.to_string(),
-            auth_token: std::env::var("NOLUNE_AUTH_TOKEN").unwrap_or_default(),
+            resources: resources.clone(),
         }
     }
 
@@ -54,6 +59,7 @@ pub struct ReadFileArgs {
 
 impl Tool for ReadFileTool {
     const NAME: &'static str = "read_file";
+    const TRUSTS_RESOURCE_PROVENANCE: bool = true;
     type Error = ToolExecError;
     type Args = ReadFileArgs;
     type Output = String;
@@ -95,10 +101,12 @@ impl Tool for ReadFileTool {
                         &self.public_url,
                         &self.instance_slug,
                         &upload_id,
-                        &self.auth_token,
+                        &self.resources,
                     );
                     return Ok(serde_json::to_string(&serde_json::json!([
-                        {"type": "image", "source": {"type": "url", "url": url}}
+                        {"type": "image", "source": {"type": "url", "url": url},
+                         "resource_provenance": {"kind": "uploaded_file", "version": 1,
+                             "slug": self.instance_slug, "id": upload_id}}
                     ]))
                     .unwrap());
                 }
@@ -132,10 +140,12 @@ impl Tool for ReadFileTool {
                         &self.public_url,
                         &self.instance_slug,
                         &upload_id,
-                        &self.auth_token,
+                        &self.resources,
                     );
                     return Ok(serde_json::to_string(&serde_json::json!([
-                        {"type": "document", "source": {"type": "url", "url": url}}
+                        {"type": "document", "source": {"type": "url", "url": url},
+                         "resource_provenance": {"kind": "uploaded_file", "version": 1,
+                             "slug": self.instance_slug, "id": upload_id}}
                     ]))
                     .unwrap());
                 }
@@ -412,16 +422,21 @@ pub struct UploadFileTool {
     workspace_dir: PathBuf,
     instance_slug: String,
     public_url: String,
-    auth_token: String,
+    resources: crate::services::resource_access::ResourceAccess,
 }
 
 impl UploadFileTool {
-    pub fn new(workspace_dir: &Path, instance_slug: &str, public_url: &str) -> Self {
+    pub fn new(
+        workspace_dir: &Path,
+        instance_slug: &str,
+        public_url: &str,
+        resources: &crate::services::resource_access::ResourceAccess,
+    ) -> Self {
         Self {
             workspace_dir: workspace_dir.to_path_buf(),
             instance_slug: instance_slug.to_string(),
             public_url: public_url.to_string(),
-            auth_token: std::env::var("NOLUNE_AUTH_TOKEN").unwrap_or_default(),
+            resources: resources.clone(),
         }
     }
 }
@@ -487,7 +502,7 @@ impl Tool for UploadFileTool {
             &self.public_url,
             &self.instance_slug,
             &meta.id,
-            &self.auth_token,
+            &self.resources,
         );
 
         let size_mb = bytes.len() as f64 / 1024.0 / 1024.0;

@@ -336,6 +336,7 @@ pub async fn run_agent_loop(
             &google_ai_key,
             state.machine_registry.clone(),
             &public_url,
+            &state.resources,
         );
 
         let result = tokio::select! {

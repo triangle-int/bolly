@@ -76,3 +76,5 @@ mod provider_error_tests {
         assert!(body["message"].as_str().unwrap().contains("Codex"));
     }
 }
+
+pub(crate) mod resources;

@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, VecDeque},
     fmt,
     future::Future,
     path::{Path, PathBuf},
@@ -15,55 +15,59 @@ use regex::Regex;
 
 use crate::domain::events::ServerEvent;
 
-/// Build a public file URL, omitting `?token=` when the token is empty.
-pub fn public_file_url(base: &str, instance_slug: &str, file_id: &str, token: &str) -> String {
-    if token.is_empty() {
-        format!("{base}/public/files/{instance_slug}/{file_id}")
-    } else {
-        format!("{base}/public/files/{instance_slug}/{file_id}?token={token}")
-    }
+/// Mint a bounded, retryable model-provider resource URL.
+pub fn public_file_url(
+    base: &str,
+    instance_slug: &str,
+    file_id: &str,
+    resources: &crate::services::resource_access::ResourceAccess,
+) -> String {
+    use crate::services::resource_capability::{CapabilityAudience, CapabilityResource};
+    CapabilityResource::uploaded_file(file_id)
+        .and_then(|resource| {
+            resources.url(
+                base,
+                instance_slug,
+                resource,
+                CapabilityAudience::ModelProvider,
+            )
+        })
+        .unwrap_or_default()
 }
 
-/// Build a public memory URL, omitting `?token=` when the token is empty.
-pub fn public_memory_url(base: &str, instance_slug: &str, path: &str, token: &str) -> String {
-    let path = encode_url_path(path);
-    let instance_slug = encode_url_path(instance_slug);
-    let token = encode_url_path(token).replace('/', "%2F");
-    if token.is_empty() {
-        format!("{base}/public/memory/{instance_slug}/{path}")
-    } else {
-        format!("{base}/public/memory/{instance_slug}/{path}?token={token}")
-    }
-}
-
-/// Escape UTF-8 path bytes while preserving directory separators.
-pub fn encode_url_path(path: &str) -> String {
-    use std::fmt::Write;
-    let mut encoded = String::new();
-    for byte in path.bytes() {
-        if byte.is_ascii_alphanumeric() || b"-._~/".contains(&byte) {
-            encoded.push(char::from(byte));
-        } else {
-            write!(encoded, "%{byte:02X}").expect("write to string");
-        }
-    }
-    encoded
+pub fn public_memory_url(
+    base: &str,
+    instance_slug: &str,
+    path: &str,
+    resources: &crate::services::resource_access::ResourceAccess,
+) -> String {
+    use crate::services::resource_capability::{CapabilityAudience, CapabilityResource};
+    CapabilityResource::memory(path)
+        .and_then(|resource| {
+            resources.url(
+                base,
+                instance_slug,
+                resource,
+                CapabilityAudience::ModelProvider,
+            )
+        })
+        .unwrap_or_default()
 }
 
 pub fn media_result_url(
     base: &str,
     slug: &str,
     result: &crate::services::vector::VectorSearchResult,
-    token: &str,
+    resources: &crate::services::resource_access::ResourceAccess,
 ) -> Option<String> {
     if base.is_empty() || !result.source_type.starts_with("media_") {
         return None;
     }
     let id = result.upload_id.as_deref()?;
     Some(if id == result.path || id.contains('/') {
-        public_memory_url(base, slug, id, token)
+        public_memory_url(base, slug, id, resources)
     } else {
-        public_file_url(base, slug, id, token)
+        public_file_url(base, slug, id, resources)
     })
 }
 
@@ -174,6 +178,68 @@ pub fn chat_file_lock(path: &Path) -> Arc<Mutex<()>> {
 // Secret redaction
 // ---------------------------------------------------------------------------
 
+const MAX_CONTROL_SECRETS: usize = 64;
+const MAX_CAPABILITY_TOKENS: usize = 4096;
+
+#[derive(Default)]
+struct ControlSecretRegistry {
+    secrets: VecDeque<String>,
+}
+
+impl ControlSecretRegistry {
+    fn register(&mut self, secret: &str) {
+        if secret.is_empty() {
+            return;
+        }
+        if let Some(index) = self.secrets.iter().position(|value| value == secret) {
+            self.secrets.remove(index);
+        }
+        self.secrets.push_back(secret.into());
+        while self.secrets.len() > MAX_CONTROL_SECRETS {
+            self.secrets.pop_front();
+        }
+    }
+}
+
+static CONTROL_SECRETS: OnceLock<Mutex<ControlSecretRegistry>> = OnceLock::new();
+pub(crate) fn register_control_secret(secret: &str) {
+    CONTROL_SECRETS
+        .get_or_init(Default::default)
+        .lock()
+        .expect("secrets lock")
+        .register(secret);
+}
+
+#[derive(Default)]
+struct CapabilityTokenRegistry {
+    tokens: VecDeque<String>,
+}
+
+impl CapabilityTokenRegistry {
+    fn register(&mut self, token: &str) {
+        if token.is_empty() {
+            return;
+        }
+        if let Some(index) = self.tokens.iter().position(|value| value == token) {
+            self.tokens.remove(index);
+        }
+        self.tokens.push_back(token.into());
+        while self.tokens.len() > MAX_CAPABILITY_TOKENS {
+            self.tokens.pop_front();
+        }
+    }
+}
+
+static CAPABILITY_TOKENS: OnceLock<Mutex<CapabilityTokenRegistry>> = OnceLock::new();
+
+pub(crate) fn register_capability_token(token: &str) {
+    CAPABILITY_TOKENS
+        .get_or_init(Default::default)
+        .lock()
+        .expect("capability token lock")
+        .register(token);
+}
+
 fn secret_values() -> &'static Vec<String> {
     use std::sync::OnceLock;
     static SECRETS: OnceLock<Vec<String>> = OnceLock::new();
@@ -184,8 +250,7 @@ fn secret_values() -> &'static Vec<String> {
             "OPENROUTER_API_KEY",
             "BRAVE_SEARCH_API_KEY",
             "DATABASE_URL",
-            // Note: NOLUNE_AUTH_TOKEN excluded — it's used in image/document URLs
-            // that Anthropic needs to fetch. Redacting it breaks content blocks.
+            "NOLUNE_AUTH_TOKEN",
             "NOLUNE_RELEASE_TOKEN",
             "STRIPE_SECRET_KEY",
             "GITHUB_TOKEN",
@@ -199,6 +264,36 @@ fn secret_values() -> &'static Vec<String> {
             .filter(|v| v.len() >= 8)
             .collect()
     })
+}
+
+pub(crate) fn redact_value(mut value: serde_json::Value) -> serde_json::Value {
+    match &mut value {
+        serde_json::Value::String(s) => *s = redact_secrets(s),
+        serde_json::Value::Array(items) => {
+            for item in items {
+                *item = redact_value(std::mem::take(item));
+            }
+        }
+        serde_json::Value::Object(map) => {
+            *map = std::mem::take(map)
+                .into_iter()
+                .map(|(key, value)| {
+                    let sensitive = matches!(
+                        key.to_ascii_lowercase().as_str(),
+                        "authorization" | "token" | "auth_token" | "control_token"
+                    );
+                    let value = if sensitive && value.is_string() {
+                        serde_json::Value::String("[REDACTED]".into())
+                    } else {
+                        redact_value(value)
+                    };
+                    (redact_secrets(&key), value)
+                })
+                .collect();
+        }
+        _ => {}
+    }
+    value
 }
 
 /// Redact known secret patterns and exact env var values from text.
@@ -216,19 +311,108 @@ pub fn redact_secrets(text: &str) -> String {
         r"AIza[A-Za-z0-9_\-]{30,}",
     ];
 
+    let capability_tokens = CAPABILITY_TOKENS
+        .get_or_init(Default::default)
+        .lock()
+        .expect("capability token lock")
+        .tokens
+        .iter()
+        .cloned()
+        .collect::<Vec<_>>();
     let mut result = text.to_string();
+    for secret in CONTROL_SECRETS
+        .get_or_init(Default::default)
+        .lock()
+        .expect("secrets lock")
+        .secrets
+        .iter()
+    {
+        result = replace_exact_secret(&result, secret, &capability_tokens);
+    }
 
     for pat in &patterns {
         if let Ok(re) = Regex::new(pat) {
-            result = re.replace_all(&result, "[REDACTED]").to_string();
+            result = replace_regex_preserving_capabilities(&result, &re, &capability_tokens);
         }
     }
 
     for secret in secret_values() {
-        result = result.replace(secret.as_str(), "[REDACTED]");
+        result = replace_exact_secret(&result, secret, &capability_tokens);
     }
 
     result
+}
+
+fn replace_exact_secret(text: &str, secret: &str, capability_tokens: &[String]) -> String {
+    if secret.is_empty() {
+        return text.to_owned();
+    }
+
+    let exempt = capability_ranges(text, capability_tokens);
+    let mut output = String::with_capacity(text.len());
+    let mut cursor = 0;
+    while let Some(relative) = text[cursor..].find(secret) {
+        let start = cursor + relative;
+        let end = start + secret.len();
+        output.push_str(&text[cursor..start]);
+        if exempt
+            .iter()
+            .any(|range| start >= range.start && end <= range.end)
+        {
+            output.push_str(secret);
+        } else {
+            output.push_str("[REDACTED]");
+        }
+        cursor = end;
+    }
+    output.push_str(&text[cursor..]);
+    output
+}
+
+fn capability_ranges(text: &str, capability_tokens: &[String]) -> Vec<std::ops::Range<usize>> {
+    fn capability_byte(byte: u8) -> bool {
+        byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'~' | b'-')
+    }
+
+    let mut ranges = Vec::new();
+    for token in capability_tokens {
+        let needle = format!("cap={token}");
+        let mut cursor = 0;
+        while let Some(relative) = text[cursor..].find(&needle) {
+            let cap_start = cursor + relative;
+            let value_start = cap_start + 4;
+            let value_end = value_start + token.len();
+            let left_is_name = cap_start > 0
+                && (text.as_bytes()[cap_start - 1].is_ascii_alphanumeric()
+                    || text.as_bytes()[cap_start - 1] == b'_');
+            let right_continues_value =
+                value_end < text.len() && capability_byte(text.as_bytes()[value_end]);
+            if !left_is_name && !right_continues_value {
+                ranges.push(value_start..value_end);
+            }
+            cursor = value_end;
+        }
+    }
+    ranges.sort_by_key(|range| range.start);
+    ranges.dedup();
+    ranges
+}
+
+fn replace_regex_preserving_capabilities(
+    text: &str,
+    regex: &Regex,
+    capability_tokens: &[String],
+) -> String {
+    let ranges = capability_ranges(text, capability_tokens);
+    let mut output = String::with_capacity(text.len());
+    let mut cursor = 0;
+    for range in ranges {
+        output.push_str(&regex.replace_all(&text[cursor..range.start], "[REDACTED]"));
+        output.push_str(&text[range.clone()]);
+        cursor = range.end;
+    }
+    output.push_str(&regex.replace_all(&text[cursor..], "[REDACTED]"));
+    output
 }
 
 // ---------------------------------------------------------------------------
@@ -259,16 +443,13 @@ pub fn tool_summary(name: &str, args: &str) -> String {
         "write_file" => format!("writing {}", v["path"].as_str().unwrap_or("?")),
         "edit_file" => format!("editing {}", v["path"].as_str().unwrap_or("?")),
         "list_files" => format!("listing {}", v["path"].as_str().unwrap_or(".")),
-        "run_command" => {
-            let cmd = v["command"].as_str().unwrap_or("?");
-            format!("$ {cmd}")
-        }
+        "run_command" => "running command".into(),
         "edit_soul" => "rewriting soul.md".into(),
         "set_mood" => format!("mood → {}", v["mood"].as_str().unwrap_or("?")),
         "remember" => "storing a memory".into(),
         "recall" => format!("recalling '{}'", v["query"].as_str().unwrap_or("?")),
         "web_search" => format!("web search: {}", v["query"].as_str().unwrap_or("?")),
-        "web_fetch" => format!("fetching {}", v["url"].as_str().unwrap_or("?")),
+        "web_fetch" => "fetching URL".into(),
         "update_config" => "updating config".into(),
         "create_drop" => format!("creating drop: {}", v["title"].as_str().unwrap_or("?")),
         "get_settings" => "reading current settings".into(),
@@ -338,6 +519,10 @@ impl ToolDyn for ObservableTool {
         self.inner.name()
     }
 
+    fn trusts_resource_provenance(&self) -> bool {
+        self.inner.trusts_resource_provenance()
+    }
+
     fn definition(
         &self,
         prompt: String,
@@ -350,7 +535,7 @@ impl ToolDyn for ObservableTool {
         args: String,
     ) -> Pin<Box<dyn Future<Output = Result<String, ToolError>> + Send + '_>> {
         let tool_name = self.inner.name();
-        let summary = tool_summary(&tool_name, &args);
+        let summary = redact_secrets(&tool_summary(&tool_name, &args));
 
         let start_msg = crate::domain::chat::ChatMessage {
             id: format!("tool_{}_{}", tool_call_counter(), unix_millis()),
@@ -385,8 +570,8 @@ impl ToolDyn for ObservableTool {
                         created_at: unix_millis().to_string(),
                         kind: crate::domain::chat::MessageKind::McpApp,
                         tool_name: Some(tool_name.clone()),
-                        mcp_app_html: Some(html),
-                        mcp_app_input: Some(args.clone()),
+                        mcp_app_html: Some(redact_secrets(&html)),
+                        mcp_app_input: Some(redact_secrets(&args)),
                         model: None,
                     };
                     let _ = self.events.send(ServerEvent::ChatMessageCreated {
@@ -418,7 +603,9 @@ impl ToolDyn for ObservableTool {
                         Ok(redacted)
                     }
                 }
-                Err(e) => Err(e),
+                Err(e) => Err(ToolError::ToolCallError(Box::new(ToolExecError(
+                    redact_secrets(&e.to_string()),
+                )))),
             };
             // Send tool result to the MCP App viewer
             if let Some(msg_id) = mcp_app_msg_id {
@@ -497,6 +684,7 @@ pub fn build_tools(
     google_ai_key: &str,
     machine_registry: crate::services::machine_registry::MachineRegistry,
     public_url: &str,
+    resources: &crate::services::resource_access::ResourceAccess,
 ) -> (Vec<Box<dyn ToolDyn>>, SentFiles) {
     let snap = mcp_snapshot;
     let wrap = |tool: Box<dyn ToolDyn>| -> Box<dyn ToolDyn> {
@@ -516,6 +704,7 @@ pub fn build_tools(
             workspace_dir,
             instance_slug,
             public_url,
+            resources,
         ))),
         wrap(Box::new(WriteFileTool::new(workspace_dir, instance_slug))),
         wrap(Box::new(EditFileTool::new(workspace_dir, instance_slug))),
@@ -523,6 +712,7 @@ pub fn build_tools(
             workspace_dir,
             instance_slug,
             public_url,
+            resources,
         ))),
         wrap(Box::new(ListFilesTool::new(workspace_dir, instance_slug))),
         wrap(Box::new(MemoryWriteTool::new(
@@ -535,6 +725,7 @@ pub fn build_tools(
             instance_slug,
             public_url,
             vector_store.clone(),
+            resources,
         ))),
         wrap(Box::new(MemoryListTool::new(
             workspace_dir,
@@ -551,6 +742,7 @@ pub fn build_tools(
             instance_slug,
             vector_store.clone(),
             public_url,
+            resources,
         ))),
         wrap(Box::new(MemoryConnectTool::new(
             instance_slug,
@@ -619,14 +811,12 @@ pub fn build_tools(
     // web_search and web_fetch are native Anthropic server tools (added in llm.rs)
     tools.push(wrap(Box::new(ViewImageTool)));
     {
-        let cfg = crate::config::load_config().ok();
-        let auth_token = cfg.as_ref().map(|c| c.auth_token.as_str()).unwrap_or("");
         tools.push(wrap(Box::new(WatchVideoTool::new(
             google_ai_key,
             workspace_dir,
             instance_slug,
             public_url,
-            auth_token,
+            resources,
         ))));
     }
     // ── Agents ──
@@ -637,6 +827,7 @@ pub fn build_tools(
         events.clone(),
         vector_store.clone(),
         google_ai_key,
+        resources,
     ))));
 
     // ── Creative ──
@@ -668,14 +859,12 @@ pub fn build_tools(
         machine_registry.clone(),
     ))));
     {
-        let cfg = crate::config::load_config().ok();
-        let auth_token = cfg.as_ref().map(|c| c.auth_token.as_str()).unwrap_or("");
         tools.push(wrap(Box::new(ComputerUseTool::new(
             machine_registry.clone(),
             workspace_dir,
             instance_slug,
             public_url,
-            auth_token,
+            resources,
         ))));
     }
     tools.push(wrap(Box::new(RemoteBashTool::new(
@@ -753,5 +942,151 @@ mod email_tool_tests {
     #[test]
     fn unconfigured_email_builds_no_email_tools() {
         assert!(configured_email_tools(Vec::new()).is_empty());
+    }
+
+    #[test]
+    fn short_control_token_redacts_text_but_not_scoped_capability_values() {
+        let value = replace_exact_secret(
+            "prompt v1 /resources/browser/files/moon/id?cap=abc.v1.xyz&note=v1 token=v1 Bearer v1",
+            "v1",
+            &["abc.v1.xyz".into()],
+        );
+        assert_eq!(value.matches("v1").count(), 1);
+        assert!(value.contains("cap=abc.v1.xyz"));
+        assert!(!value.contains("note=v1"));
+        assert!(!value.contains("token=v1"));
+        assert!(!value.contains("Bearer v1"));
+    }
+
+    #[test]
+    fn forged_scoped_cap_equal_to_control_token_is_redacted() {
+        let secret = "issue116-forged-cap-secret";
+        let value = replace_exact_secret(
+            &format!("/resources/model-provider/files/moon/id?cap={secret}"),
+            secret,
+            &[],
+        );
+        assert_eq!(
+            value,
+            "/resources/model-provider/files/moon/id?cap=[REDACTED]"
+        );
+    }
+
+    #[test]
+    fn forged_secret_variants_are_fully_redacted() {
+        let secret = "control-secret";
+        let text = format!(
+            "/resources/browser/files/moon/id?cap={secret} cap=x{secret}x Bearer {secret}X arbitrary={secret}"
+        );
+        let value = replace_exact_secret(&text, secret, &[]);
+        assert!(!value.contains(secret));
+        assert_eq!(value.matches("[REDACTED]").count(), 4);
+    }
+
+    #[test]
+    fn only_exact_registered_cap_values_are_exempt() {
+        let registered = "abc.v1.xyz".to_string();
+        let text = "cap=abc.v1.xyz cap=xabc.v1.xyz cap=abc.v1.xyzX Bearer abc.v1.xyz";
+        let value = replace_exact_secret(text, "v1", &[registered]);
+        assert_eq!(
+            value,
+            "cap=abc.v1.xyz cap=xabc.[REDACTED].xyz cap=abc.[REDACTED].xyzX Bearer abc.[REDACTED].xyz"
+        );
+    }
+
+    #[test]
+    fn registered_capability_is_byte_exact_even_when_it_contains_a_secret_pattern() {
+        let registered = format!("abc.sk-{}.xyz", "A".repeat(24));
+        let text = format!("cap={registered} forged={registered}");
+        let regex = Regex::new(r"sk-[A-Za-z0-9]{20,}").unwrap();
+        let value = replace_regex_preserving_capabilities(&text, &regex, &[registered.clone()]);
+        assert!(value.starts_with(&format!("cap={registered}")));
+        assert_eq!(value.matches(&registered).count(), 1);
+        assert!(value.ends_with("forged=abc.[REDACTED].xyz"));
+    }
+
+    #[test]
+    fn capability_registry_is_bounded_deduplicated_fifo() {
+        let mut registry = CapabilityTokenRegistry::default();
+        for index in 0..=MAX_CAPABILITY_TOKENS {
+            registry.register(&format!("cap-{index}"));
+        }
+        assert_eq!(registry.tokens.len(), MAX_CAPABILITY_TOKENS);
+        assert!(!registry.tokens.iter().any(|token| token == "cap-0"));
+        registry.register("cap-1");
+        registry.register("cap-new");
+        assert_eq!(registry.tokens.len(), MAX_CAPABILITY_TOKENS);
+        assert_eq!(registry.tokens.back().map(String::as_str), Some("cap-new"));
+        assert!(registry.tokens.iter().any(|token| token == "cap-1"));
+        assert!(!registry.tokens.iter().any(|token| token == "cap-2"));
+    }
+
+    #[test]
+    fn capability_registry_is_parallel_safe() {
+        let registry = Arc::new(Mutex::new(CapabilityTokenRegistry::default()));
+        std::thread::scope(|scope| {
+            for worker in 0..8 {
+                let registry = registry.clone();
+                scope.spawn(move || {
+                    for index in 0..1024 {
+                        registry
+                            .lock()
+                            .unwrap()
+                            .register(&format!("worker-{worker}-cap-{index}"));
+                    }
+                });
+            }
+        });
+        let registry = registry.lock().unwrap();
+        assert_eq!(registry.tokens.len(), MAX_CAPABILITY_TOKENS);
+        let unique = registry
+            .tokens
+            .iter()
+            .collect::<std::collections::HashSet<_>>();
+        assert_eq!(unique.len(), registry.tokens.len());
+    }
+
+    #[test]
+    fn control_secret_rotations_are_bounded() {
+        let mut registry = ControlSecretRegistry::default();
+        for index in 0..=MAX_CONTROL_SECRETS {
+            registry.register(&format!("rotation-secret-{index}"));
+        }
+        assert_eq!(registry.secrets.len(), MAX_CONTROL_SECRETS);
+        assert!(
+            !registry
+                .secrets
+                .iter()
+                .any(|value| value == "rotation-secret-0")
+        );
+        assert!(
+            registry
+                .secrets
+                .iter()
+                .any(|value| value == "rotation-secret-1")
+        );
+        assert!(
+            registry
+                .secrets
+                .iter()
+                .any(|value| value == "rotation-secret-64")
+        );
+
+        registry.register("rotation-secret-1");
+        registry.register("rotation-secret-65");
+        assert_eq!(registry.secrets.len(), MAX_CONTROL_SECRETS);
+        assert_eq!(registry.secrets.back().unwrap(), "rotation-secret-65");
+        assert!(
+            registry
+                .secrets
+                .iter()
+                .any(|value| value == "rotation-secret-1")
+        );
+        assert!(
+            !registry
+                .secrets
+                .iter()
+                .any(|value| value == "rotation-secret-2")
+        );
     }
 }

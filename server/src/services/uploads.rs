@@ -7,7 +7,7 @@ use std::{
 
 use crate::domain::upload::UploadMeta;
 
-const MAX_FILE_SIZE: u64 = 500 * 1024 * 1024; // 500 MB
+pub(crate) const MAX_FILE_SIZE: u64 = 500 * 1024 * 1024; // 500 MB
 
 const BLOCKED_EXTENSIONS: &[&str] = &[
     "exe", "dll", "so", "dylib", "bin", "msi", "dmg", "iso", "bat", "cmd", "com", "scr", "vbs",
@@ -35,7 +35,7 @@ pub fn validate_upload(name: &str, size: u64) -> Result<String, String> {
     Ok(ext)
 }
 
-fn mime_from_ext(ext: &str) -> &'static str {
+pub(crate) fn mime_from_ext(ext: &str) -> &'static str {
     match ext {
         "jpg" | "jpeg" => "image/jpeg",
         "png" => "image/png",

@@ -149,7 +149,7 @@ pub struct MemoryReadTool {
     instance_slug: String,
     media: Arc<crate::services::media_text::MediaStore>,
     public_url: String,
-    auth_token: String,
+    resources: crate::services::resource_access::ResourceAccess,
 }
 
 impl MemoryReadTool {
@@ -158,12 +158,13 @@ impl MemoryReadTool {
         instance_slug: &str,
         public_url: &str,
         vector_store: Arc<VectorStore>,
+        resources: &crate::services::resource_access::ResourceAccess,
     ) -> Self {
         Self {
             instance_slug: instance_slug.to_string(),
             media: vector_store.media_store(),
             public_url: public_url.to_string(),
-            auth_token: std::env::var("NOLUNE_AUTH_TOKEN").unwrap_or_default(),
+            resources: resources.clone(),
         }
     }
 }
@@ -177,6 +178,7 @@ pub struct MemoryReadArgs {
 
 impl Tool for MemoryReadTool {
     const NAME: &'static str = "memory_read";
+    const TRUSTS_RESOURCE_PROVENANCE: bool = true;
     type Error = ToolExecError;
     type Args = MemoryReadArgs;
     type Output = String;
@@ -239,12 +241,14 @@ impl Tool for MemoryReadTool {
                     &self.public_url,
                     &self.instance_slug,
                     &clean_path,
-                    &self.auth_token,
+                    &self.resources,
                 );
                 let block_type = if is_image { "image" } else { "document" };
                 let blocks = serde_json::json!([
                     {"type": "text", "text": format!("memory file: {clean_path}")},
-                    {"type": block_type, "source": {"type": "url", "url": url}},
+                    {"type": block_type, "source": {"type": "url", "url": url},
+                     "resource_provenance": {"kind": "memory_path", "version": 1,
+                         "slug": self.instance_slug, "path": clean_path}},
                 ]);
                 Ok(serde_json::to_string(&blocks).unwrap())
             } else if is_media {
@@ -257,9 +261,11 @@ impl Tool for MemoryReadTool {
                 };
                 let mut out = format!("[{kind}: {clean_path}, {:.1} KB]", size as f64 / 1024.0);
                 if !self.public_url.is_empty() {
-                    let url = format!(
-                        "{}/public/memory/{}/{}?token={}",
-                        self.public_url, self.instance_slug, clean_path, self.auth_token,
+                    let url = super::public_memory_url(
+                        &self.public_url,
+                        &self.instance_slug,
+                        clean_path,
+                        &self.resources,
                     );
                     out.push_str(&format!("\ndownload: {url}"));
                 }
@@ -460,7 +466,7 @@ pub struct MemorySearchTool {
     instance_slug: String,
     vector_store: Arc<VectorStore>,
     public_url: String,
-    auth_token: String,
+    resources: crate::services::resource_access::ResourceAccess,
 }
 
 impl MemorySearchTool {
@@ -469,13 +475,14 @@ impl MemorySearchTool {
         instance_slug: &str,
         vector_store: Arc<VectorStore>,
         public_url: &str,
+        resources: &crate::services::resource_access::ResourceAccess,
     ) -> Self {
-        let auth_token = std::env::var("NOLUNE_AUTH_TOKEN").unwrap_or_default();
+        let resources = resources.clone();
         Self {
             instance_slug: instance_slug.to_string(),
             vector_store,
             public_url: public_url.to_string(),
-            auth_token,
+            resources,
         }
     }
 }
@@ -491,6 +498,7 @@ pub struct MemorySearchArgs {
 
 impl Tool for MemorySearchTool {
     const NAME: &'static str = "memory_search";
+    const TRUSTS_RESOURCE_PROVENANCE: bool = true;
     type Error = ToolExecError;
     type Args = MemorySearchArgs;
     type Output = String;
@@ -543,7 +551,7 @@ impl Tool for MemorySearchTool {
                     &self.public_url,
                     &self.instance_slug,
                     r,
-                    &self.auth_token,
+                    &self.resources,
                 ) {
                     output.push_str(&format!("media: {url}\n\n"));
                 }
@@ -565,7 +573,7 @@ impl Tool for MemorySearchTool {
                 r.score,
             ));
             if let Some(url) =
-                super::media_result_url(&self.public_url, &self.instance_slug, r, &self.auth_token)
+                super::media_result_url(&self.public_url, &self.instance_slug, r, &self.resources)
             {
                 text_buf.push_str(&format!("media: {url}\n\n"));
             }
@@ -577,25 +585,33 @@ impl Tool for MemorySearchTool {
                         blocks.push(serde_json::json!({"type": "text", "text": text_buf.trim()}));
                         text_buf.clear();
                     }
-                    // Memory-originated images use /public/memory/, uploads use /public/files/
-                    let url = if upload_id == &r.path || upload_id.contains('/') {
+                    // Preserve the exact memory or upload identity when minting the provider URL.
+                    let memory_identity = upload_id == &r.path || upload_id.contains('/');
+                    let url = if memory_identity {
                         super::public_memory_url(
                             &self.public_url,
                             &self.instance_slug,
                             upload_id,
-                            &self.auth_token,
+                            &self.resources,
                         )
                     } else {
                         super::public_file_url(
                             &self.public_url,
                             &self.instance_slug,
                             upload_id,
-                            &self.auth_token,
+                            &self.resources,
                         )
                     };
-                    blocks.push(
-                        serde_json::json!({"type": "image", "source": {"type": "url", "url": url}}),
-                    );
+                    let provenance = if memory_identity {
+                        serde_json::json!({"kind": "memory_path", "version": 1,
+                            "slug": self.instance_slug, "path": upload_id})
+                    } else {
+                        serde_json::json!({"kind": "uploaded_file", "version": 1,
+                            "slug": self.instance_slug, "id": upload_id})
+                    };
+                    blocks.push(serde_json::json!({"type": "image",
+                        "source": {"type": "url", "url": url},
+                        "resource_provenance": provenance}));
                 }
             }
         }
@@ -784,7 +800,13 @@ mod embedding_fallback_tests {
         );
         let hits = store.search_text("one", "Orion", 5).await;
         assert_eq!(hits[0].path, "preferences.md");
-        let search = MemorySearchTool::new(workspace.path(), "one", store, "");
+        let search = MemorySearchTool::new(
+            workspace.path(),
+            "one",
+            store,
+            "",
+            &crate::services::resource_access::ResourceAccess::new(""),
+        );
         assert!(
             search
                 .call(MemorySearchArgs {
@@ -1163,7 +1185,13 @@ mod media_tests {
             crate::services::media_text::write(&dir, path, "Orion").unwrap();
         }
         let store = Arc::new(VectorStore::connect(ws.path()).await);
-        let search = MemorySearchTool::new(ws.path(), "one", store, "https://memory.example");
+        let search = MemorySearchTool::new(
+            ws.path(),
+            "one",
+            store,
+            "https://memory.example",
+            &crate::services::resource_access::ResourceAccess::new(""),
+        );
         let output = search
             .call(MemorySearchArgs {
                 query: "Orion".into(),
@@ -1173,7 +1201,7 @@ mod media_tests {
             .unwrap();
         for path in ["photo.png", "paper.pdf", "voice.mp3", "clip.mp4"] {
             assert!(
-                output.contains(&format!("/public/memory/one/{path}")),
+                output.contains(&format!("/resources/model-provider/memory/one/{path}")),
                 "{output}"
             );
         }

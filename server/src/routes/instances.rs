@@ -16,8 +16,7 @@ use crate::{
     services::{chat, companion, memory, tools, workspace},
 };
 
-/// Public memory file route (no auth middleware) — uses ?token= query param.
-/// Used by LLM providers (Anthropic) to fetch memory images via URL.
+/// Retired control-token resource namespace; always denies access.
 pub fn public_memory_router() -> Router<AppState> {
     Router::new().route(
         "/public/memory/{instance_slug}/{*path}",
@@ -454,8 +453,19 @@ async fn get_context_stats(
 ) -> Json<chat::ContextStats> {
     let wd = state.workspace_dir.clone();
     let slug = instance_slug.clone();
+    let public_url = state.config.read().await.public_url.clone();
+    let resources = state.resources.clone();
+    let http_client = state.http_client.clone();
     let stats = tokio::spawn(async move {
-        chat::compute_context_stats_async(wd, slug, "default".to_string()).await
+        chat::compute_context_stats_async(
+            wd,
+            slug,
+            "default".to_string(),
+            public_url,
+            resources,
+            http_client,
+        )
+        .await
     })
     .await
     .unwrap_or_else(|_| {
@@ -471,11 +481,16 @@ async fn get_context_stats_chat(
     let wd = state.workspace_dir.clone();
     let slug = instance_slug.clone();
     let cid = chat_id.clone();
-    let stats = tokio::spawn(async move { chat::compute_context_stats_async(wd, slug, cid).await })
-        .await
-        .unwrap_or_else(|_| {
-            chat::compute_context_stats(&state.workspace_dir, &instance_slug, &chat_id)
-        });
+    let public_url = state.config.read().await.public_url.clone();
+    let resources = state.resources.clone();
+    let http_client = state.http_client.clone();
+    let stats = tokio::spawn(async move {
+        chat::compute_context_stats_async(wd, slug, cid, public_url, resources, http_client).await
+    })
+    .await
+    .unwrap_or_else(|_| {
+        chat::compute_context_stats(&state.workspace_dir, &instance_slug, &chat_id)
+    });
     Json(stats)
 }
 
@@ -653,11 +668,6 @@ async fn search_memory(
 
     let media = state.vector_store.media_store();
 
-    let cfg = state.config.read().await;
-    let auth_token = cfg.auth_token.clone();
-    let public_url = cfg.public_url.clone();
-    drop(cfg);
-
     let json: Vec<serde_json::Value> = results
         .into_iter()
         .map(|r| {
@@ -681,32 +691,24 @@ async fn search_memory(
             // For media results, include a URL to the file
             if is_media {
                 if let Some(upload_id) = &r.upload_id {
-                    let url = if upload_id == &r.path || upload_id.contains('/') {
-                        if public_url.is_empty() {
-                            format!(
-                                "/api/instances/{instance_slug}/memory/{}",
-                                crate::services::tools::encode_url_path(upload_id)
-                            )
-                        } else {
-                            crate::services::tools::public_memory_url(
-                                &public_url,
-                                &instance_slug,
-                                upload_id,
-                                &auth_token,
-                            )
-                        }
-                    } else {
-                        if public_url.is_empty() {
-                            format!("/api/instances/{instance_slug}/uploads/{upload_id}/file")
-                        } else {
-                            crate::services::tools::public_file_url(
-                                &public_url,
-                                &instance_slug,
-                                upload_id,
-                                &auth_token,
-                            )
-                        }
+                    use crate::services::resource_capability::{
+                        CapabilityAudience, CapabilityResource,
                     };
+                    let resource = if upload_id == &r.path || upload_id.contains('/') {
+                        CapabilityResource::memory(upload_id)
+                    } else {
+                        CapabilityResource::uploaded_file(upload_id)
+                    };
+                    let url = resource
+                        .and_then(|resource| {
+                            state.resources.url(
+                                "",
+                                &instance_slug,
+                                resource,
+                                CapabilityAudience::Browser,
+                            )
+                        })
+                        .unwrap_or_default();
                     obj["media_url"] = serde_json::Value::String(url);
                 }
             }
@@ -773,21 +775,8 @@ async fn reindex_memory(
     Ok(Json(serde_json::json!({ "status": "reindexing" })))
 }
 
-#[derive(Deserialize)]
-struct MemoryTokenQuery {
-    token: Option<String>,
-}
-
-async fn serve_memory_file_public(
-    State(state): State<AppState>,
-    Path((instance_slug, file_path)): Path<(String, String)>,
-    axum::extract::Query(query): axum::extract::Query<MemoryTokenQuery>,
-) -> Result<axum::response::Response<axum::body::Body>, StatusCode> {
-    let expected = state.config.read().await.auth_token.clone();
-    if expected.is_empty() || query.token.as_deref() != Some(&expected) {
-        return Err(StatusCode::UNAUTHORIZED);
-    }
-    serve_memory_file_inner(&state, &instance_slug, &file_path).await
+async fn serve_memory_file_public() -> StatusCode {
+    StatusCode::UNAUTHORIZED
 }
 
 async fn read_memory_file(
@@ -797,7 +786,7 @@ async fn read_memory_file(
     serve_memory_file_inner(&state, &instance_slug, &file_path).await
 }
 
-async fn serve_memory_file_inner(
+pub(super) async fn serve_memory_file_inner(
     state: &AppState,
     instance_slug: &str,
     file_path: &str,
@@ -824,6 +813,15 @@ async fn serve_memory_file_inner(
         Some("webp") => "image/webp",
         Some("svg") => "image/svg+xml",
         Some("mp4") => "video/mp4",
+        Some("webm") => "video/webm",
+        Some("mov") => "video/quicktime",
+        Some("ogg") => "audio/ogg",
+        Some("m4a") => "audio/mp4",
+        Some("flac") => "audio/flac",
+        Some("aac") => "audio/aac",
+        Some("avif") => "image/avif",
+        Some("bmp") => "image/bmp",
+        Some("ico") => "image/x-icon",
         Some("mp3") => "audio/mpeg",
         Some("wav") => "audio/wav",
         Some("pdf") => "application/pdf",
@@ -846,7 +844,7 @@ async fn serve_memory_file_inner(
             axum::http::header::CONTENT_DISPOSITION,
             format!("{disposition}; filename=\"{filename}\""),
         )
-        .header(axum::http::header::CACHE_CONTROL, "public, max-age=86400")
+        .header(axum::http::header::CACHE_CONTROL, "private, no-store")
         .body(axum::body::Body::from(bytes))
         .map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)
 }
@@ -1257,6 +1255,7 @@ mod media_tests {
             .unwrap();
         let app = router()
             .merge(public_memory_router())
+            .merge(crate::routes::resources::router())
             .with_state(state.clone());
         let response = app
             .clone()
@@ -1281,18 +1280,10 @@ mod media_tests {
                     .starts_with("media_")
             );
             let url = result["media_url"].as_str().unwrap();
-            assert!(
-                url.starts_with("https://memory.example/public/memory/one/"),
-                "{url}"
-            );
+            assert!(url.starts_with("/resources/browser/memory/one/"), "{url}");
             let response = app
                 .clone()
-                .oneshot(
-                    Request::builder()
-                        .uri(url.strip_prefix("https://memory.example").unwrap())
-                        .body(Body::empty())
-                        .unwrap(),
-                )
+                .oneshot(Request::builder().uri(url).body(Body::empty()).unwrap())
                 .await
                 .unwrap();
             assert_eq!(response.status(), StatusCode::OK, "{url}");
@@ -1327,7 +1318,7 @@ mod media_tests {
             r["media_url"]
                 .as_str()
                 .unwrap()
-                .starts_with("/api/instances/one/memory/")
+                .starts_with("/resources/browser/memory/one/")
         }));
         assert_eq!(
             delete_memory_file(

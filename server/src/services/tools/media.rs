@@ -18,7 +18,7 @@ pub struct MediaContext {
     workspace_dir: PathBuf,
     instance_slug: String,
     public_url: String,
-    auth_token: String,
+    resources: crate::services::resource_access::ResourceAccess,
 }
 
 impl MediaContext {
@@ -27,14 +27,14 @@ impl MediaContext {
         workspace_dir: &Path,
         instance_slug: &str,
         public_url: &str,
-        auth_token: &str,
+        resources: &crate::services::resource_access::ResourceAccess,
     ) -> Self {
         Self {
             google_ai_key: google_ai_key.to_string(),
             workspace_dir: workspace_dir.to_path_buf(),
             instance_slug: instance_slug.to_string(),
             public_url: public_url.to_string(),
-            auth_token: auth_token.to_string(),
+            resources: resources.clone(),
         }
     }
 
@@ -62,7 +62,7 @@ impl MediaContext {
             &self.public_url,
             &self.instance_slug,
             &meta.id,
-            &self.auth_token,
+            &self.resources,
         ))
     }
 
@@ -120,7 +120,7 @@ impl WatchVideoTool {
         workspace_dir: &Path,
         instance_slug: &str,
         public_url: &str,
-        auth_token: &str,
+        resources: &crate::services::resource_access::ResourceAccess,
     ) -> Self {
         Self {
             ctx: MediaContext::new(
@@ -128,7 +128,7 @@ impl WatchVideoTool {
                 workspace_dir,
                 instance_slug,
                 public_url,
-                auth_token,
+                resources,
             ),
         }
     }
